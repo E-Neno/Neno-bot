@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Neno Test</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #f6f7fb;
+      color: #222;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      height: 100vh;
+    }
+
+    .chat {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #e5e7eb;
+      background: #ffffff;
+    }
+
+    .header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .title {
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .session-box {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      color: #64748b;
+    }
+
+    .session-box input {
+      width: 150px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      padding: 7px 9px;
+      outline: none;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .msg {
+      margin-bottom: 14px;
+      max-width: 75%;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .user {
+      margin-left: auto;
+      background: #2563eb;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 16px 16px 4px 16px;
+    }
+
+    .bot {
+      margin-right: auto;
+      background: #f1f5f9;
+      color: #111827;
+      padding: 10px 14px;
+      border-radius: 16px 16px 16px 4px;
+    }
+
+    .input-area {
+      display: flex;
+      gap: 8px;
+      padding: 14px;
+      border-top: 1px solid #e5e7eb;
+      background: #fff;
+    }
+
+    textarea {
+      flex: 1;
+      resize: none;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 15px;
+      outline: none;
+      min-height: 52px;
+    }
+
+    textarea:focus {
+      border-color: #2563eb;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 6px 10px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #64748b;
+    }
+
+    button.danger {
+      background: #dc2626;
+    }
+
+    button.good {
+      background: #16a34a;
+    }
+
+    .side {
+      padding: 10px;
+      overflow-y: auto;
+      background: #f8fafc;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 10px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    .card h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+    }
+
+    .small {
+      color: #64748b;
+      font-size: 13px;
+      margin-top: 4px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .stats-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 7px;
+      background: #f8fafc;
+      min-width: 0;
+    }
+
+    .stats-label {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 3px;
+    }
+
+    .stats-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111827;
+      word-break: break-word;
+    }
+
+    .memory-item {
+      border-top: 1px solid #e5e7eb;
+      padding: 8px 10px;
+      margin-top: 6px;
+      line-height: 1.35;
+    }
+
+    .session-item {
+      border-top: 1px solid #e5e7eb;
+      padding: 8px 10px;
+      margin-top: 6px;
+      line-height: 1.35;
+    }
+
+    .session-title {
+      font-weight: 700;
+      font-size: 14px;
+      color: #334155;
+      margin-bottom: 4px;
+    }
+
+    .session-meta {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.25;
+    }
+
+    .session-item .row {
+      margin-top: 6px;
+    }
+
+    .session-item button {
+      padding: 6px 10px;
+      border-radius: 9px;
+      font-size: 12px;
+    }
+
+    .memory-content {
+      font-size: 14px;
+      line-height: 1.35;
+      margin-bottom: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .tag {
+      display: inline-block;
+      font-size: 12px;
+      color: #475569;
+      background: #e2e8f0;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+
+    .row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .status {
+      font-size: 13px;
+      color: #64748b;
+      margin-top: 6px;
+      white-space: pre-wrap;
+    }
+
+    .config-line {
+      font-size: 13px;
+      margin: 4px 0;
+      color: #334155;
+      word-break: break-all;
+    }
+
+    .config-form {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .config-field {
+      display: grid;
+      gap: 3px;
+    }
+
+    .config-field label {
+      font-size: 12px;
+      color: #475569;
+    }
+
+    .config-field input,
+    .config-field select {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      padding: 7px 8px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .config-help {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.35;
+      margin-top: 6px;
+    }
+
+    .panel-list {
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    #sessionList,
+    #memoryList,
+    #proactiveCandidateList,
+    #usedMemories {
+      white-space: normal;
+    }
+
+    .memory-meta {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.3;
+    }
+
+    .used-memory-item {
+      border-top: 1px solid #e5e7eb;
+      padding: 8px 10px;
+      margin-top: 6px;
+      line-height: 1.35;
+    }
+
+    .used-memory-score {
+      font-size: 12px;
+      color: #475569;
+      margin-top: 3px;
+    }
+
+    .relationship-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .relationship-metric {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 6px 8px;
+      background: #f8fafc;
+      min-width: 0;
+    }
+
+    .relationship-label {
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .relationship-value {
+      color: #111827;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .relationship-stage-actions button {
+      flex: 1 1 120px;
+      padding: 6px 8px;
+      border-radius: 9px;
+      font-size: 12px;
+    }
+
+    .relationship-context-box {
+      max-height: 96px;
+      overflow-y: auto;
+      margin-top: 6px;
+      padding: 7px 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        height: 50vh;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <section class="chat">
+      <div class="header">
+        <div class="title">Neno 测试页</div>
+
+        <div class="session-box">
+          <span>session_id</span>
+          <input id="sessionInput" value="web-test" maxlength="128" />
+          <button id="loadSessionMessagesBtn" class="secondary">加载历史</button>
+          <button id="clearSessionBtn" class="danger">清空</button>
+        </div>
+      </div>
+
+      <div id="messages" class="messages">
+        <div class="msg bot">我在。你可以直接发消息测试。</div>
+      </div>
+
+      <div class="input-area">
+        <textarea id="messageInput" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="sendBtn">发送</button>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="card">
+       <h3>会话列表</h3>
+       <div class="row">
+        <button id="loadSessionsBtn">刷新会话</button>
+       </div>
+       <div id="sessionList" class="small panel-list">还没加载</div>
+      </div>
+      
+      <div class="card">
+        <h3>当前配置</h3>
+        <div class="config-form">
+          <div class="config-field">
+            <label for="adminTokenInput">Admin Token</label>
+            <input id="adminTokenInput" type="password" autocomplete="off" />
+          </div>
+        </div>
+        <div class="row">
+          <button id="saveAdminTokenBtn" class="secondary">保存 Token</button>
+          <button id="clearAdminTokenBtn" class="danger">清除 Token</button>
+        </div>
+        <div id="adminTokenStatus" class="status"></div>
+        <div class="config-help">测试台仅限本人使用，不要暴露到公网。</div>
+        <div id="configBox" class="small">加载中...</div>
+        <div class="config-form">
+          <div class="config-field">
+            <label for="chatModelInput">chat_model</label>
+            <input id="chatModelInput" />
+          </div>
+          <div class="config-field">
+            <label for="memoryModelInput">memory_model</label>
+            <input id="memoryModelInput" />
+          </div>
+          <div class="config-field">
+            <label for="historyLimitInput">history_limit</label>
+            <input id="historyLimitInput" type="number" min="1" max="50" />
+          </div>
+          <div class="config-field">
+            <label for="memoryLimitInput">memory_limit</label>
+            <input id="memoryLimitInput" type="number" min="0" max="20" />
+          </div>
+        </div>
+        <div class="row">
+          <button id="loadConfigBtn">刷新配置</button>
+          <button id="saveConfigBtn" class="secondary">保存配置</button>
+        </div>
+        <div class="config-help">修改模型或上下文配置后，需要执行：nereboot</div>
+        <div id="configStatus" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h3>运行状态 / 使用统计</h3>
+        <div class="row">
+          <button id="loadStatsSummaryBtn">刷新状态</button>
+        </div>
+        <div class="stats-grid">
+          <div class="stats-item">
+            <div class="stats-label">今日消息</div>
+            <div id="statsToday" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">24小时消息</div>
+            <div id="stats24h" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">24小时错误</div>
+            <div id="statsErrors" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">平均延迟</div>
+            <div id="statsLatency" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">最近消息</div>
+            <div id="statsLastMessage" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">最近 QQ 消息</div>
+            <div id="statsLastQq" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">后端状态</div>
+            <div id="statsBackend" class="stats-value">-</div>
+          </div>
+          <div class="stats-item">
+            <div class="stats-label">OpenClaw 推测</div>
+            <div id="statsOpenClaw" class="stats-value">-</div>
+          </div>
+        </div>
+        <div class="small">
+          当前聊天模型：<span id="statsModel">-</span>
+        </div>
+        <div id="statsStatus" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h3>主动消息候选</h3>
+        <div class="config-form">
+          <div class="config-field">
+            <label for="proactivePlatformSelect">平台</label>
+            <select id="proactivePlatformSelect">
+              <option value="">默认</option>
+              <option value="qq">QQ</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <button id="generateProactiveCandidateBtn">生成候选</button>
+          <button id="loadProactiveCandidatesBtn" class="secondary">刷新候选</button>
+        </div>
+        <div class="config-help">主动自动消息只支持 QQ；自动发送状态由 .env 控制。</div>
+        <div id="proactiveAutoStatus" class="small">自动状态未加载</div>
+        <details class="config-panel">
+          <summary>自动主动消息配置</summary>
+          <div class="config-help">保存后需要重启 emotion-bot；网页不会执行 systemctl。</div>
+          <div class="config-form">
+            <div class="config-field">
+              <label for="proactiveEnabledInput">enabled</label>
+              <select id="proactiveEnabledInput">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="proactiveCheckIntervalInput">check interval</label>
+              <input id="proactiveCheckIntervalInput" type="number" min="30" max="86400" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveDailyLimitInput">daily limit</label>
+              <input id="proactiveDailyLimitInput" type="number" min="0" max="10" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveMinIntervalInput">min interval</label>
+              <input id="proactiveMinIntervalInput" type="number" min="1" max="1440" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveRecentSkipInput">recent chat skip</label>
+              <input id="proactiveRecentSkipInput" type="number" min="0" max="1440" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveActiveStartInput">active start</label>
+              <input id="proactiveActiveStartInput" type="time" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveActiveEndInput">active end</label>
+              <input id="proactiveActiveEndInput" type="time" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveRandomProbabilityInput">random probability</label>
+              <input id="proactiveRandomProbabilityInput" type="number" min="0" max="1" step="0.01" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveAllowedHashesInput">allowed target hashes</label>
+              <input id="proactiveAllowedHashesInput" type="text" autocomplete="off" />
+            </div>
+            <div class="config-field">
+              <label for="proactiveBridgeUrlInput">bridge URL</label>
+              <input id="proactiveBridgeUrlInput" type="text" autocomplete="off" />
+            </div>
+          </div>
+          <div class="small" id="proactiveAllowedHashesPreview">白名单未加载</div>
+          <div class="row">
+            <button id="loadProactiveConfigBtn" class="secondary">刷新配置</button>
+            <button id="saveProactiveConfigBtn">保存配置</button>
+          </div>
+          <div class="config-help">重启后点“刷新配置”和“刷新候选”查看最新状态。</div>
+          <div id="proactiveConfigStatus" class="status"></div>
+        </details>
+        <div id="proactiveCandidateStatus" class="status"></div>
+        <div id="proactiveCandidateList" class="small panel-list">还没加载</div>
+      </div>
+
+      <div class="card">
+        <h3>关系状态</h3>
+        <div class="row">
+          <button id="loadRelationshipStateBtn">刷新关系</button>
+          <button id="resetRelationshipStateBtn" class="danger">重置关系</button>
+        </div>
+        <div class="relationship-grid">
+          <div class="relationship-metric">
+            <div class="relationship-label">阶段</div>
+            <div id="relStageLabel" class="relationship-value">-</div>
+          </div>
+          <div class="relationship-metric">
+            <div class="relationship-label">轮次</div>
+            <div id="relConversationCount" class="relationship-value">0</div>
+          </div>
+          <div class="relationship-metric">
+            <div class="relationship-label">熟悉度</div>
+            <div id="relFamiliarityScore" class="relationship-value">0</div>
+          </div>
+          <div class="relationship-metric">
+            <div class="relationship-label">信任度</div>
+            <div id="relTrustScore" class="relationship-value">0</div>
+          </div>
+          <div class="relationship-metric">
+            <div class="relationship-label">情绪深度</div>
+            <div id="relEmotionalDepthScore" class="relationship-value">0</div>
+          </div>
+          <div class="relationship-metric">
+            <div class="relationship-label">边界稳定度</div>
+            <div id="relBoundaryScore" class="relationship-value">0</div>
+          </div>
+        </div>
+        <div class="row relationship-stage-actions">
+          <button class="secondary" data-stage-preset="stranger">设置陌生</button>
+          <button class="secondary" data-stage-preset="familiar">设置初步熟悉</button>
+          <button class="secondary" data-stage-preset="stable">设置稳定聊天对象</button>
+          <button class="secondary" data-stage-preset="close">设置比较亲近</button>
+          <button class="secondary" data-stage-preset="deep">设置深度陪伴</button>
+        </div>
+        <div class="relationship-label">本轮关系提示</div>
+        <div id="relationshipContextBox" class="relationship-context-box">暂无</div>
+        <div id="relationshipStatus" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h3>本轮命中记忆</h3>
+        <div id="usedMemories" class="small panel-list">暂无命中</div>
+      </div>
+
+      <div class="card">
+        <h3>候选记忆</h3>
+        <div id="candidateBox" class="small">暂无候选记忆</div>
+        <div class="row">
+          <button id="confirmCandidateBtn" class="good">确认记忆</button>
+          <button id="clearCandidateBtn" class="secondary">忽略</button>
+        </div>
+        <div id="candidateStatus" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h3>记忆库</h3>
+        <div class="row">
+          <button id="loadMemoriesBtn">刷新</button>
+          <button id="toggleOnlyActiveBtn" class="secondary">切换全部/启用</button>
+        </div>
+        <div id="memoryList" class="small panel-list">还没加载</div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/test.js"></script>
+</body>
+</html>
