@@ -329,6 +329,19 @@
       line-height: 1.3;
     }
 
+    .candidate-state-text,
+    .candidate-action-note {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      font-size: 12px;
+      color: #64748b;
+    }
+
+    .candidate-state-text {
+      font-weight: 700;
+    }
+
     .used-memory-item {
       border-top: 1px solid #e5e7eb;
       padding: 8px 10px;
@@ -405,6 +418,361 @@
       .header {
         flex-direction: column;
         align-items: flex-start;
+      }
+    }
+
+    .app.app-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      height: 100vh;
+      background: #f6f7fb;
+    }
+
+    .console-sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      border-right: 1px solid #d8dee8;
+      background: #f8fafc;
+      padding: 18px 12px;
+      overflow-y: auto;
+      box-shadow: 1px 0 0 rgba(15, 23, 42, 0.03);
+    }
+
+    .console-brand {
+      padding: 4px 10px 16px;
+      border-bottom: 1px solid #d8dee8;
+      margin-bottom: 14px;
+    }
+
+    .console-brand-title {
+      font-weight: 900;
+      font-size: 19px;
+      color: #0f172a;
+      line-height: 1.2;
+    }
+
+    .console-brand-subtitle {
+      color: #7b8798;
+      font-size: 12px;
+      margin-top: 5px;
+    }
+
+    .console-nav {
+      display: grid;
+      gap: 7px;
+    }
+
+    .console-nav button {
+      position: relative;
+      width: 100%;
+      text-align: left;
+      border-radius: 11px;
+      background: #ffffff;
+      color: #334155;
+      padding: 10px 12px 10px 14px;
+      margin: 0;
+      font-size: 14px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 1px rgba(15, 23, 42, 0.03);
+    }
+
+    .console-nav button:hover {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+      opacity: 1;
+    }
+
+    .console-nav button.active {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #2563eb;
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+    }
+
+    .console-nav button.active::before {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: 9px;
+      bottom: 9px;
+      width: 3px;
+      border-radius: 999px;
+      background: #ffffff;
+    }
+
+    .console-main {
+      min-width: 0;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .console-panel {
+      display: none;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .console-panel.active {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .panel-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1.2;
+    }
+
+    .panel-subtitle {
+      color: #64748b;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .console-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .console-grid.two {
+      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+      align-items: start;
+    }
+
+    .console-panel .card {
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .chat.console-chat {
+      border-right: none;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .console-chat .messages {
+      min-height: 360px;
+      max-height: 58vh;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .status-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 9px;
+      background: #f8fafc;
+      min-width: 0;
+    }
+
+    .status-label {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+
+    .status-value {
+      font-size: 14px;
+      font-weight: 800;
+      color: #111827;
+      word-break: break-word;
+    }
+
+    .tag.pending {
+      color: #92400e;
+      background: #fef3c7;
+    }
+
+    .tag.sent {
+      color: #166534;
+      background: #dcfce7;
+    }
+
+    .tag.dismissed {
+      color: #475569;
+      background: #e2e8f0;
+    }
+
+    .tag.failed {
+      color: #991b1b;
+      background: #fee2e2;
+    }
+
+    .candidate-item {
+      border-top: 1px solid #e5e7eb;
+      padding: 10px 0;
+      line-height: 1.35;
+    }
+
+    .candidate-item:first-child {
+      border-top: none;
+    }
+
+    .candidate-content {
+      font-size: 14px;
+      line-height: 1.4;
+      margin: 5px 0;
+      word-break: break-word;
+    }
+
+    .candidate-meta {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.35;
+    }
+
+    .proactive-check-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+      white-space: normal;
+    }
+
+    .proactive-history-list {
+      margin-top: 10px;
+      white-space: normal;
+    }
+
+    .check-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 9px;
+      background: #f8fafc;
+      line-height: 1.35;
+    }
+
+    .check-item:first-child {
+      border-top: 1px solid #e5e7eb;
+    }
+
+    .check-name {
+      color: #334155;
+      font-size: 13px;
+      font-weight: 800;
+      margin-top: 3px;
+    }
+
+    .check-detail {
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .history-note {
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .panel-status {
+      min-height: 20px;
+      margin-bottom: 10px;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .proactive-config-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 10px;
+      margin-top: 8px;
+    }
+
+    .proactive-config-grid .config-field {
+      gap: 5px;
+    }
+
+    .proactive-config-grid .config-help {
+      margin-top: 0;
+    }
+
+    .overview-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    @media (max-width: 980px) {
+      .app.app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .console-sidebar {
+        position: sticky;
+        z-index: 10;
+        top: 0;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 10px;
+      }
+
+      .console-brand {
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+      }
+
+      .console-nav {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      .console-nav button {
+        width: auto;
+        white-space: nowrap;
+      }
+
+      .console-main {
+        padding: 14px;
+      }
+
+      .console-grid.two,
+      .proactive-config-grid,
+      .overview-actions {
+        grid-template-columns: 1fr;
+      }
+
+      .status-grid,
+      .stats-grid,
+      .relationship-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .panel-header {
+        display: block;
+      }
+
+      .status-grid,
+      .stats-grid,
+      .relationship-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -550,47 +918,57 @@
           <div class="config-help">保存后需要重启 emotion-bot；网页不会执行 systemctl。</div>
           <div class="config-form">
             <div class="config-field">
-              <label for="proactiveEnabledInput">enabled</label>
+              <label for="proactiveEnabledInput">enabled｜自动主动消息开关</label>
               <select id="proactiveEnabledInput">
                 <option value="false">false</option>
                 <option value="true">true</option>
               </select>
+              <div class="config-help">true 表示后台会按规则自动给 QQ 发主动消息；false 表示关闭自动主动消息。保存后需要 nereboot 生效。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveCheckIntervalInput">check interval</label>
+              <label for="proactiveCheckIntervalInput">check interval｜检查间隔（秒）</label>
               <input id="proactiveCheckIntervalInput" type="number" min="30" max="86400" />
+              <div class="config-help">后台每隔多少秒检查一次是否应该主动发消息。它不是发送间隔，只是判断频率。正式使用建议 600。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveDailyLimitInput">daily limit</label>
+              <label for="proactiveDailyLimitInput">daily limit｜每日最多发送数</label>
               <input id="proactiveDailyLimitInput" type="number" min="0" max="10" />
+              <div class="config-help">每天最多自动主动发送几条。自用建议 1-2 条，避免打扰。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveMinIntervalInput">min interval</label>
+              <label for="proactiveMinIntervalInput">min interval｜最小发送间隔（分钟）</label>
               <input id="proactiveMinIntervalInput" type="number" min="1" max="1440" />
+              <div class="config-help">两次自动主动消息之间至少间隔多久。比如 240 表示至少 4 小时。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveRecentSkipInput">recent chat skip</label>
+              <label for="proactiveRecentSkipInput">recent chat skip｜最近聊天跳过（分钟）</label>
               <input id="proactiveRecentSkipInput" type="number" min="0" max="1440" />
+              <div class="config-help">如果最近这段时间内我刚和 Neno 聊过，就不会主动发消息。比如 45 表示最近 45 分钟聊过则跳过。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveActiveStartInput">active start</label>
+              <label for="proactiveActiveStartInput">active start｜允许开始时间</label>
               <input id="proactiveActiveStartInput" type="time" />
+              <div class="config-help">每天从这个时间以后才可能主动发消息。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveActiveEndInput">active end</label>
+              <label for="proactiveActiveEndInput">active end｜允许结束时间</label>
               <input id="proactiveActiveEndInput" type="time" />
+              <div class="config-help">每天超过这个时间后不再主动发消息，避免夜间打扰。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveRandomProbabilityInput">random probability</label>
+              <label for="proactiveRandomProbabilityInput">random probability｜随机触发概率</label>
               <input id="proactiveRandomProbabilityInput" type="number" min="0" max="1" step="0.01" />
+              <div class="config-help">每次检查时命中的概率。0.25 表示每次检查有 25% 概率进入后续判断；还要同时满足时间、间隔、最近没聊过、每日上限等规则。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveAllowedHashesInput">allowed target hashes</label>
+              <label for="proactiveAllowedHashesInput">allowed target hashes｜允许自动发送的 QQ 目标 hash</label>
               <input id="proactiveAllowedHashesInput" type="text" autocomplete="off" />
+              <div class="config-help">安全白名单。为空时不会自动发送；填写允许的 target_hash 后，自动主动消息才允许发给对应 QQ 目标。多个用英文逗号分隔。</div>
             </div>
             <div class="config-field">
-              <label for="proactiveBridgeUrlInput">bridge URL</label>
+              <label for="proactiveBridgeUrlInput">bridge URL｜Neno Bridge QQ 发送接口</label>
               <input id="proactiveBridgeUrlInput" type="text" autocomplete="off" />
+              <div class="config-help">emotion-bot 调用 neno-bridge 本地发送桥的地址。一般不要改，默认 http://127.0.0.1:18793/proactive/send-qq。</div>
             </div>
           </div>
           <div class="small" id="proactiveAllowedHashesPreview">白名单未加载</div>

@@ -8,7 +8,7 @@ from app.schemas import (
 )
 from app.security import require_admin_token
 from app.services.proactive_config_service import get_proactive_config, update_proactive_config
-from app.services.proactive_scheduler import get_proactive_scheduler_status
+from app.services.proactive_scheduler import check_proactive_now, get_proactive_scheduler_status
 from app.services.proactive_service import (
     generate_proactive_candidate,
     get_recent_proactive_candidates,
@@ -30,6 +30,11 @@ def proactive_candidates():
 @router.get("/status", dependencies=[Depends(require_admin_token)])
 def proactive_status():
     return get_proactive_scheduler_status()
+
+
+@router.post("/check-now", dependencies=[Depends(require_admin_token)])
+def proactive_check_now():
+    return check_proactive_now()
 
 
 @router.get("/config", dependencies=[Depends(require_admin_token)])

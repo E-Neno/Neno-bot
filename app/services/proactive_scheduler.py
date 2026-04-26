@@ -128,6 +128,155 @@ def _skip(reason: str) -> dict[str, Any]:
     }
 
 
+def explain_proactive_reason(reason: str | None) -> str:
+    text = str(reason or "").strip()
+    lower = text.lower()
+    if not text:
+        return ""
+    if "random probability missed" in lower:
+        return "随机概率未命中，本轮不发送"
+    if "outside active window" in lower:
+        return "不在允许主动消息的时间段"
+    if "recent chat exists" in lower or "user message seen within" in lower:
+        return "最近刚聊过，跳过主动消息"
+    if "daily sent limit reached" in lower or "daily limit reached" in lower:
+        return "今天主动消息已达到上限"
+    if "last sent is within" in lower or "min interval not reached" in lower:
+        return "距离上次主动消息还不够久"
+    if "pending qq candidate exists" in lower or "pending candidate exists" in lower:
+        return "已有待处理候选，暂不生成新的"
+    if "not whitelisted" in lower:
+        return "最新 QQ 目标不在白名单，暂不发送"
+    if "no qq target" in lower:
+        return "找不到可发送的 QQ 目标"
+    if "disabled" in lower:
+        return "自动主动消息未开启"
+    return text
+
+
+def _with_explained_reason(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    normalized = dict(result)
+    if "reason" in normalized:
+        normalized["reason"] = explain_proactive_reason(str(normalized.get("reason") or ""))
+    if "error" in normalized and "reason" not in normalized:
+        normalized["reason"] = explain_proactive_reason(str(normalized.get("error") or "发送失败"))
+    return normalized
+
+
+def _rule(name: str, ok: bool | None, detail: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "ok": ok,
+        "detail": detail,
+    }
+
+
+def _next_rules_summary() -> list[str]:
+    return [
+        "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+        "当前只支持 QQ",
+        f"每天最多 {PROACTIVE_DAILY_LIMIT} 条",
+        f"两次主动消息至少间隔 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟",
+        f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟聊过则跳过",
+        f"活跃时间段 {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
+        f"每次检查随机概率 {PROACTIVE_RANDOM_PROBABILITY}",
+    ]
+
+
+def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
+    now = datetime.now()
+    checks: list[dict[str, Any]] = []
+
+    if include_enabled:
+        checks.append(
+            _rule(
+                "enabled",
+                PROACTIVE_ENABLED,
+                "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+            )
+        )
+
+    active_ok = _within_active_window(now)
+    checks.append(
+        _rule(
+            "active_window",
+            active_ok,
+            f"当前时间 {'在' if active_ok else '不在'}允许主动消息时间段 {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
+        )
+    )
+
+    sent_count = _today_sent_count()
+    daily_ok = sent_count < PROACTIVE_DAILY_LIMIT
+    checks.append(
+        _rule(
+            "daily_limit",
+            daily_ok,
+            f"今天已自动发送 {sent_count}/{PROACTIVE_DAILY_LIMIT} 条",
+        )
+    )
+
+    last_sent_raw = _last_sent_at()
+    last_sent = _parse_sqlite_datetime(last_sent_raw)
+    min_interval_ok = last_sent is None or now - last_sent >= timedelta(minutes=PROACTIVE_MIN_INTERVAL_MINUTES)
+    if last_sent is None:
+        min_interval_detail = "还没有自动主动消息发送记录"
+    else:
+        elapsed_minutes = int((now - last_sent).total_seconds() // 60)
+        min_interval_detail = f"距离上次自动主动消息约 {elapsed_minutes} 分钟，要求至少 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟"
+    checks.append(_rule("min_interval", min_interval_ok, min_interval_detail))
+
+    recent_chat = _has_recent_user_message()
+    checks.append(
+        _rule(
+            "recent_chat",
+            not recent_chat,
+            f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} QQ 用户消息",
+        )
+    )
+
+    pending_candidate = _has_pending_qq_candidate()
+    checks.append(
+        _rule(
+            "pending_candidate",
+            not pending_candidate,
+            "已有待处理 QQ 候选" if pending_candidate else "没有待处理 QQ 候选",
+        )
+    )
+
+    target_row = _latest_qq_target()
+    target_hash = str(target_row["session_id_hash"] or "") if target_row else ""
+    checks.append(
+        _rule(
+            "qq_target",
+            target_row is not None,
+            f"最近 QQ 目标 {_mask_hash(target_hash)}" if target_row else "没有找到 QQ 目标",
+        )
+    )
+
+    whitelist_ok = bool(target_hash) and is_allowed_qq_target(target_hash)
+    checks.append(
+        _rule(
+            "qq_whitelist",
+            whitelist_ok,
+            "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内",
+        )
+    )
+
+    checks.append(_rule("random_probability", None, "check-now 不掷随机数"))
+
+    first_failed = next((check for check in checks if check["ok"] is False), None)
+    can_send = first_failed is None
+    reason = "当前规则允许发送；正式调度仍会再判断随机概率" if can_send else str(first_failed["detail"])
+
+    return {
+        "can_send": can_send,
+        "reason": reason,
+        "checks": checks,
+    }
+
+
 def _create_auto_candidate(target_row: dict[str, Any]) -> dict:
     target_hash = str(target_row["session_id_hash"] or "")
     metadata = {
@@ -261,10 +410,12 @@ async def stop_proactive_scheduler() -> None:
 
 
 def get_proactive_scheduler_status() -> dict[str, Any]:
+    rule_evaluation = evaluate_proactive_rules(include_enabled=True)
     return {
         "success": True,
         "enabled": PROACTIVE_ENABLED,
         "task_running": _scheduler_task is not None and not _scheduler_task.done(),
+        "daily_limit": PROACTIVE_DAILY_LIMIT,
         "config": {
             "check_interval_seconds": PROACTIVE_CHECK_INTERVAL_SECONDS,
             "daily_limit": PROACTIVE_DAILY_LIMIT,
@@ -278,5 +429,20 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
         "today_sent_count": _today_sent_count(),
         "last_sent_at": _last_sent_at(),
         "last_check_at": _last_check_at,
-        "last_result": _last_result,
+        "last_result": _with_explained_reason(_last_result),
+        "next_rules_summary": _next_rules_summary(),
+        "can_send_now": {
+            "can_send": rule_evaluation["can_send"],
+            "reason": rule_evaluation["reason"],
+        },
+    }
+
+
+def check_proactive_now() -> dict[str, Any]:
+    evaluation = evaluate_proactive_rules(include_enabled=True)
+    return {
+        "success": True,
+        "can_send": evaluation["can_send"],
+        "reason": evaluation["reason"],
+        "checks": evaluation["checks"],
     }
