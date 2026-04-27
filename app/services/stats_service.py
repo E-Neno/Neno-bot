@@ -30,6 +30,7 @@ def record_chat_stat(
             INSERT INTO chat_stats (
                 source,
                 platform,
+                session_id,
                 session_id_hash,
                 message_len,
                 reply_len,
@@ -38,11 +39,12 @@ def record_chat_stat(
                 error_type,
                 model
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source,
                 platform,
+                session_id,
                 short_hash(session_id),
                 len(message or ""),
                 len(reply or ""),

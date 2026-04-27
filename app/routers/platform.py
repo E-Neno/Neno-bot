@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from app.schemas import PlatformMessageRequest, PlatformMessageResponse
 from app.security import require_platform_token
 from app.services.chat_service import run_chat_turn
+from app.services.proactive_service import record_qq_proactive_target
 from app.services.stats_service import record_chat_stat
 
 router = APIRouter(prefix="/platform", tags=["platform"])
@@ -13,6 +14,17 @@ router = APIRouter(prefix="/platform", tags=["platform"])
 SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
 MAX_MESSAGE_LENGTH = 2000
+
+
+def mask_identifier(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 4:
+        return "***"
+    if len(text) <= 8:
+        return f"{text[:2]}...{text[-2:]}"
+    return f"{text[:4]}...{text[-4:]}"
 
 
 def clean_required(value: Any, field_name: str) -> str:
@@ -72,12 +84,18 @@ def openclaw_message(payload: Any = Body(...)):
     if len(message) > MAX_MESSAGE_LENGTH:
         raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
 
+    if platform == "qq" and chat_type == "private":
+        try:
+            record_qq_proactive_target(session_id=session_id, user_id=user_id)
+        except Exception as exc:
+            print("proactive target upsert failed:", type(exc).__name__)
+
     print(
         "platform message:",
         f"platform={platform}",
-        f"user_id={user_id}",
+        f"user={mask_identifier(user_id)}",
         f"chat_type={chat_type}",
-        f"session_id={session_id}",
+        f"session={mask_identifier(session_id)}",
     )
 
     started = time.perf_counter()

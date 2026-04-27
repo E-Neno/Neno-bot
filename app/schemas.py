@@ -70,6 +70,10 @@ class ProactiveGenerateRequest(BaseModel):
     platform: str | None = Field(default=None, max_length=16)
 
 
+class ProactiveGenerateTestRequest(BaseModel):
+    force: StrictBool = False
+
+
 class ProactiveDismissRequest(BaseModel):
     id: int
 
@@ -89,6 +93,10 @@ class ProactiveConfigUpdateRequest(BaseModel):
     PROACTIVE_ACTIVE_END: str | None = Field(default=None, max_length=5)
     PROACTIVE_RANDOM_PROBABILITY: float | None = None
     PROACTIVE_QQ_ALLOWED_TARGET_HASHES: str | None = Field(default=None, max_length=1000)
+    PROACTIVE_AUTO_SEND: StrictBool | None = None
+    PROACTIVE_AUTO_SEND_DRY_RUN: StrictBool | None = None
+    PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET: StrictBool | None = None
+    PROACTIVE_AUTO_SEND_MAX_PER_DAY: int | None = None
     NENO_BRIDGE_SEND_QQ_URL: str | None = Field(default=None, max_length=200)
 
     class Config:

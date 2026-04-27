@@ -908,10 +908,14 @@
           </div>
         </div>
         <div class="row">
-          <button id="generateProactiveCandidateBtn">生成候选</button>
+          <button id="generateProactiveTestCandidateBtn">生成测试候选</button>
+          <button id="forceGenerateProactiveTestCandidateBtn" class="secondary">强制生成测试候选</button>
+          <button id="generateProactiveCandidateBtn" class="secondary">按自动规则生成候选</button>
           <button id="loadProactiveCandidatesBtn" class="secondary">刷新候选</button>
+          <button id="loadProactiveTargetsBtn" class="secondary">刷新主动目标</button>
+          <button id="loadProactiveEventsBtn" class="secondary">刷新时间线</button>
         </div>
-        <div class="config-help">主动自动消息只支持 QQ；自动发送状态由 .env 控制。</div>
+        <div class="config-help">测试候选用于手动测试，不受随机概率、最近聊天、时间窗影响，不会自动发送。自动规则生成用于模拟后台保守判断。</div>
         <div id="proactiveAutoStatus" class="small">自动状态未加载</div>
         <details class="config-panel">
           <summary>自动主动消息配置</summary>
@@ -959,6 +963,35 @@
               <label for="proactiveRandomProbabilityInput">random probability｜随机触发概率</label>
               <input id="proactiveRandomProbabilityInput" type="number" min="0" max="1" step="0.01" />
               <div class="config-help">每次检查时命中的概率。0.25 表示每次检查有 25% 概率进入后续判断；还要同时满足时间、间隔、最近没聊过、每日上限等规则。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveAutoSendInput">auto send｜自动真实发送开关</label>
+              <select id="proactiveAutoSendInput">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+              <div class="config-help">false 表示自动调度命中后只生成 pending 候选，不调用发送桥；true 才允许自动发送 QQ。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveAutoSendDryRunInput">auto send dry_run｜自动 dry_run 测试开关</label>
+              <select id="proactiveAutoSendDryRunInput">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+              <div class="config-help">true 表示自动调度会调用发送链路但只 dry_run，不会真实发送，也不会写入 messages。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveAutoSendRequireAllowedInput">require allowed target｜必须允许目标</label>
+              <select id="proactiveAutoSendRequireAllowedInput">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+              <div class="config-help">true 表示自动真实发送前必须确认 proactive_targets 里的目标是 allowed。建议保持 true。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveAutoSendMaxPerDayInput">auto send max per day｜自动发送每日上限</label>
+              <input id="proactiveAutoSendMaxPerDayInput" type="number" min="0" max="10" />
+              <div class="config-help">每天最多自动真实发送几条。只统计自动真实发送，手动真实发送不计入。</div>
             </div>
             <div class="config-field">
               <label for="proactiveAllowedHashesInput">allowed target hashes｜允许自动发送的 QQ 目标 hash</label>

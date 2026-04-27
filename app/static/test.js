@@ -115,7 +115,11 @@ function buildProactivePanel(panel, header) {
   const proactiveCard = getCardByElementId("proactiveCandidateList");
   const statusNode = document.getElementById("proactiveCandidateStatus");
   const refreshButton = document.getElementById("loadProactiveCandidatesBtn");
+  const refreshTargetsButton = document.getElementById("loadProactiveTargetsBtn");
+  const refreshEventsButton = document.getElementById("loadProactiveEventsBtn");
   const generateButton = document.getElementById("generateProactiveCandidateBtn");
+  const generateTestButton = document.getElementById("generateProactiveTestCandidateBtn");
+  const forceGenerateTestButton = document.getElementById("forceGenerateProactiveTestCandidateBtn");
   const platformForm = document.getElementById("proactivePlatformSelect")?.closest(".config-form");
   const autoStatus = document.getElementById("proactiveAutoStatus");
   const pendingList = document.getElementById("proactiveCandidateList");
@@ -135,8 +139,35 @@ function buildProactivePanel(panel, header) {
   const grid = createElement("div", "console-grid");
   panel.appendChild(grid);
 
+  const testCard = createElement("div", "card");
+  testCard.appendChild(createElement("h3", "", "测试区"));
+  testCard.appendChild(createElement(
+    "div",
+    "config-help",
+    "用于手动测试：生成 pending QQ 候选，不受随机概率、最近聊天、时间窗影响，不会自动发送。仍会检查 QQ 目标存在和 QQ 白名单。"
+  ));
+  const testRow = createElement("div", "row");
+  if (generateTestButton) {
+    testRow.appendChild(generateTestButton);
+  }
+  if (forceGenerateTestButton) {
+    testRow.appendChild(forceGenerateTestButton);
+  }
+  testCard.appendChild(testRow);
+  testCard.appendChild(createElement(
+    "div",
+    "config-help",
+    "已有 pending QQ 候选时，自动调度不会继续生成；你仍可手动发送、丢弃，或强制生成测试候选。"
+  ));
+  grid.appendChild(testCard);
+
   const statusCard = createElement("div", "card");
-  statusCard.appendChild(createElement("h3", "", "自动状态"));
+  statusCard.appendChild(createElement("h3", "", "自动区"));
+  statusCard.appendChild(createElement(
+    "div",
+    "config-help",
+    "这里是后台自动调度规则，不等于手动测试；自动调度仍按 enabled、时间窗、每日上限、最小间隔、最近聊天、随机概率、QQ 白名单和 pending 候选保守运行。"
+  ));
   if (autoStatus) {
     statusCard.appendChild(autoStatus);
   }
@@ -144,6 +175,10 @@ function buildProactivePanel(panel, header) {
   appendStatusMetric(statusGrid, "开关", "proactiveStatusEnabled");
   appendStatusMetric(statusGrid, "任务", "proactiveStatusRunning");
   appendStatusMetric(statusGrid, "今日发送", "proactiveStatusToday");
+  appendStatusMetric(statusGrid, "自动真实发送", "proactiveStatusAutoSend");
+  appendStatusMetric(statusGrid, "自动 dry_run", "proactiveStatusAutoDryRun");
+  appendStatusMetric(statusGrid, "自动发送今日", "proactiveStatusAutoSentToday");
+  appendStatusMetric(statusGrid, "目标 allowed", "proactiveStatusAutoRequireAllowed");
   appendStatusMetric(statusGrid, "最近发送", "proactiveStatusLastSent");
   appendStatusMetric(statusGrid, "最近检查", "proactiveStatusLastCheck");
   statusCard.appendChild(statusGrid);
@@ -153,8 +188,33 @@ function buildProactivePanel(panel, header) {
   statusCard.lastChild.id = "proactiveRulesSummary";
   grid.appendChild(statusCard);
 
+  const eventsCard = createElement("div", "card");
+  eventsCard.appendChild(createElement("h3", "", "调度时间线"));
+  eventsCard.appendChild(createElement("div", "config-help", "最近主动消息调度和手动操作事件；不显示完整 session_id/openid。"));
+  if (refreshEventsButton) {
+    const eventRow = createElement("div", "row");
+    eventRow.appendChild(refreshEventsButton);
+    eventsCard.appendChild(eventRow);
+  }
+  eventsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
+  eventsCard.lastChild.id = "proactiveEventList";
+  grid.appendChild(eventsCard);
+
+  const targetsCard = createElement("div", "card");
+  targetsCard.appendChild(createElement("h3", "", "主动目标"));
+  targetsCard.appendChild(createElement("div", "config-help", "最近 QQ 私聊会自动记录为主动目标；页面不显示完整 session_id。allowed 由后端按 QQ 白名单保守标记。"));
+  if (refreshTargetsButton) {
+    const targetRow = createElement("div", "row");
+    targetRow.appendChild(refreshTargetsButton);
+    targetsCard.appendChild(targetRow);
+  }
+  targetsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
+  targetsCard.lastChild.id = "proactiveTargetList";
+  grid.appendChild(targetsCard);
+
   const decisionCard = createElement("div", "card");
-  decisionCard.appendChild(createElement("h3", "", "当前判断"));
+  decisionCard.appendChild(createElement("h3", "", "自动调度当前判断"));
+  decisionCard.appendChild(createElement("div", "config-help", "check-now 只刷新后台自动调度判断，不会发送消息。"));
   decisionCard.appendChild(createElement("div", "status-value", "-"));
   decisionCard.lastChild.id = "proactiveCanSendNow";
   decisionCard.appendChild(createElement("div", "small", "尚未检查"));
@@ -162,22 +222,20 @@ function buildProactivePanel(panel, header) {
   const checkRow = createElement("div", "row");
   checkRow.appendChild(createElement("button", "", "检查现在会不会发"));
   checkRow.lastChild.id = "checkProactiveNowBtn";
+  if (generateButton) {
+    checkRow.appendChild(generateButton);
+  }
   decisionCard.appendChild(checkRow);
+  if (platformForm) {
+    decisionCard.appendChild(platformForm);
+  }
   decisionCard.appendChild(createElement("div", "proactive-check-grid", "还没有检查结果"));
   decisionCard.lastChild.id = "proactiveCheckNowChecks";
   grid.appendChild(decisionCard);
 
   const pendingCard = createElement("div", "card");
   pendingCard.appendChild(createElement("h3", "", "待处理候选 pending"));
-  if (platformForm) {
-    pendingCard.appendChild(platformForm);
-  }
-  if (generateButton) {
-    const row = createElement("div", "row");
-    row.appendChild(generateButton);
-    pendingCard.appendChild(row);
-  }
-  pendingCard.appendChild(createElement("div", "config-help", "主动自动消息只支持 QQ；自动发送状态由 .env 控制。"));
+  pendingCard.appendChild(createElement("div", "config-help", "测试发送 QQ 使用 dry_run；真实发送 QQ 需要二次确认，成功后才写入 messages。"));
   if (pendingList) {
     pendingCard.appendChild(pendingList);
   }
@@ -268,6 +326,9 @@ function buildConsoleLayout() {
   overview.panel.appendChild(quickCard);
 
   const chatPanel = createPanel("chatPanel", "聊天测试", "直接测试 Web 会话，并查看本轮候选记忆和命中记忆。");
+  const currentSession = createElement("div", "panel-subtitle", "当前打开 session：-");
+  currentSession.id = "currentSessionStatus";
+  chatPanel.header.appendChild(currentSession);
   const chatGrid = createElement("div", "console-grid two");
   chat.classList.add("console-chat");
   chatGrid.appendChild(chat);
@@ -335,6 +396,10 @@ input.addEventListener("keydown", function (event) {
 function getSessionId() {
   const value = document.getElementById("sessionInput").value.trim();
   return value || "web-test";
+}
+
+function updateCurrentSessionStatus(sessionId) {
+  setOptionalText("currentSessionStatus", `当前打开 session：${sessionId || getSessionId()}`);
 }
 
 function clearChildren(element) {
@@ -646,6 +711,113 @@ function renderProactiveCandidates(candidates) {
   }
 }
 
+function renderProactiveTargets(targets) {
+  const list = document.getElementById("proactiveTargetList");
+  const items = targets || [];
+  if (!list) {
+    return;
+  }
+  if (items.length === 0) {
+    list.textContent = "暂无主动目标。请先通过 QQ 私聊给机器人发一条消息。";
+    return;
+  }
+
+  clearChildren(list);
+  const latestQq = items.find((target) => target.platform === "qq") || items[0];
+  const title = createElement("div", "candidate-meta", "最近 QQ 主动目标");
+  list.appendChild(title);
+  list.appendChild(createProactiveTargetItem(latestQq));
+}
+
+function createProactiveTargetItem(target) {
+  const item = document.createElement("div");
+  item.className = "candidate-item";
+
+  const tag = document.createElement("div");
+  tag.className = `tag ${target.is_allowed ? "sent" : "failed"}`;
+  tag.textContent = `${target.platform || "-"} · ${target.is_allowed ? "allowed" : "not allowed"}`;
+
+  const label = document.createElement("div");
+  label.className = "candidate-content";
+  label.textContent = target.target_label || "-";
+
+  const meta = document.createElement("div");
+  meta.className = "candidate-meta";
+  meta.textContent = [
+    `last_seen_at=${target.last_seen_at || "-"}`,
+    `session_id_saved=${target.session_id_saved === true ? "true" : "false"}`,
+  ].join(" · ");
+
+  item.append(tag, label, meta);
+  return item;
+}
+
+function proactiveReasonText(reason) {
+  const text = String(reason || "");
+  const lower = text.toLowerCase();
+  if (!text) return "-";
+  if (lower.includes("random probability missed")) return "随机概率未命中";
+  if (lower.includes("pending candidate exists") || lower.includes("pending qq candidate exists")) return "已有待处理候选";
+  if (lower.includes("latest qq target is not whitelisted")) return "最近 QQ 目标未允许";
+  if (lower.includes("outside active window")) return "不在允许时间段";
+  if (lower.includes("recent chat exists") || lower.includes("qq user message seen") || lower.includes("user message seen")) return "最近刚聊过";
+  if (lower.includes("daily limit reached") || lower.includes("daily sent limit reached")) return "今日已达上限";
+  if (lower.includes("min interval not reached") || lower.includes("last sent is within")) return "距离上次主动消息还不够久";
+  return text;
+}
+
+function proactiveEventStateClass(event) {
+  if (event.success === false) return "failed";
+  if (event.skipped === true) return "dismissed";
+  if (event.success === true) return "sent";
+  return "dismissed";
+}
+
+function renderProactiveEvents(events) {
+  const list = document.getElementById("proactiveEventList");
+  const items = events || [];
+  if (!list) {
+    return;
+  }
+  if (items.length === 0) {
+    list.textContent = "暂无调度事件";
+    return;
+  }
+
+  clearChildren(list);
+  for (const event of items) {
+    list.appendChild(createProactiveEventItem(event));
+  }
+}
+
+function createProactiveEventItem(event) {
+  const item = document.createElement("div");
+  item.className = "candidate-item";
+
+  const tag = document.createElement("div");
+  tag.className = `tag ${proactiveEventStateClass(event)}`;
+  tag.textContent = event.event_type || "-";
+
+  const action = document.createElement("div");
+  action.className = "candidate-content";
+  action.textContent = event.action || "-";
+
+  const meta = document.createElement("div");
+  meta.className = "candidate-meta";
+  meta.textContent = [
+    event.created_at || "-",
+    `candidate_id=${event.candidate_id ?? "-"}`,
+    `target=${event.target_label || "-"}`,
+  ].join(" · ");
+
+  const reason = document.createElement("div");
+  reason.className = "candidate-meta";
+  reason.textContent = proactiveReasonText(event.reason);
+
+  item.append(tag, action, meta, reason);
+  return item;
+}
+
 function sortProactiveHistory(candidates) {
   return candidates.slice().sort((a, b) => {
     const aTime = Date.parse(a.updated_at || a.sent_at || a.created_at || "");
@@ -798,7 +970,7 @@ function renderProactiveChecks(checks) {
 function renderProactiveDecision(data) {
   const canSend = data?.can_send ?? data?.can_send_now?.can_send ?? data?.can_send_now?.boolean;
   const reason = data?.reason ?? data?.can_send_now?.reason ?? "-";
-  setOptionalText("proactiveCanSendNow", canSend === true ? "当前规则允许发送" : "当前不会发送");
+  setOptionalText("proactiveCanSendNow", canSend === true ? "自动调度规则允许发送" : "自动调度当前不会发送");
   setOptionalText("proactiveCanSendReason", reason);
   if (Array.isArray(data?.checks)) {
     renderProactiveChecks(data.checks);
@@ -828,7 +1000,9 @@ function renderProactiveLastResult(result) {
   }
 
   const parts = [];
-  if (result.skipped === true) {
+  if (result.action) {
+    parts.push(result.action);
+  } else if (result.skipped === true) {
     parts.push("已跳过");
   } else if (result.sent === true) {
     parts.push("已发送");
@@ -855,11 +1029,22 @@ function renderProactiveAutoStatus(data) {
   const lastCheck = data.last_check_at || "-";
   const today = data.today_sent_count ?? 0;
   const limit = config.daily_limit ?? "-";
+  const autoSend = data.auto_send_enabled ? "开启" : "关闭";
+  const autoDryRun = data.auto_send_dry_run ? "开启" : "关闭";
+  const requireAllowed = data.auto_send_require_allowed_target ? "是" : "否";
+  const autoSentToday = data.auto_sent_today ?? 0;
+  const autoSendLimit = data.auto_send_max_per_day ?? "-";
+  const lastAction = data.last_result?.action || (data.last_result?.skipped ? "skipped" : "-");
 
   if (box) {
     box.textContent = [
       `自动：${enabled} · ${running}`,
       `今日 ${today}/${limit}`,
+      `自动真实发送 ${autoSend}`,
+      `自动 dry_run ${autoDryRun}`,
+      `自动发送 ${autoSentToday}/${autoSendLimit}`,
+      `目标必须 allowed ${requireAllowed}`,
+      `最近自动结果 ${lastAction}`,
       `最近发送 ${lastSent}`,
       `最近检查 ${lastCheck}`,
       `间隔 ${config.check_interval_seconds ?? "-"}s`,
@@ -870,6 +1055,10 @@ function renderProactiveAutoStatus(data) {
   setOptionalText("proactiveStatusEnabled", enabled);
   setOptionalText("proactiveStatusRunning", running);
   setOptionalText("proactiveStatusToday", `${today}/${limit}`);
+  setOptionalText("proactiveStatusAutoSend", autoSend);
+  setOptionalText("proactiveStatusAutoDryRun", autoDryRun);
+  setOptionalText("proactiveStatusAutoSentToday", `${autoSentToday}/${autoSendLimit}`);
+  setOptionalText("proactiveStatusAutoRequireAllowed", requireAllowed);
   setOptionalText("proactiveStatusLastSent", lastSent);
   setOptionalText("proactiveStatusLastCheck", lastCheck);
   renderProactiveLastResult(data.last_result);
@@ -926,7 +1115,8 @@ async function checkProactiveNow(triggerButton) {
       "检查失败："
     );
     renderProactiveDecision(data);
-    status.textContent = "当前判断已刷新";
+    status.textContent = "自动调度当前判断已刷新";
+    loadProactiveEvents();
   } catch (err) {
     status.textContent = err.message;
   } finally {
@@ -960,6 +1150,10 @@ function renderProactiveConfig(data) {
   setInputValue("proactiveActiveStartInput", config.PROACTIVE_ACTIVE_START);
   setInputValue("proactiveActiveEndInput", config.PROACTIVE_ACTIVE_END);
   setInputValue("proactiveRandomProbabilityInput", config.PROACTIVE_RANDOM_PROBABILITY);
+  setInputValue("proactiveAutoSendInput", config.PROACTIVE_AUTO_SEND || "false");
+  setInputValue("proactiveAutoSendDryRunInput", config.PROACTIVE_AUTO_SEND_DRY_RUN || "false");
+  setInputValue("proactiveAutoSendRequireAllowedInput", config.PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET || "true");
+  setInputValue("proactiveAutoSendMaxPerDayInput", config.PROACTIVE_AUTO_SEND_MAX_PER_DAY || "1");
   setInputValue("proactiveBridgeUrlInput", config.NENO_BRIDGE_SEND_QQ_URL);
 
   if (hashesInput) {
@@ -1021,6 +1215,10 @@ async function saveProactiveConfig() {
     PROACTIVE_ACTIVE_START: document.getElementById("proactiveActiveStartInput").value,
     PROACTIVE_ACTIVE_END: document.getElementById("proactiveActiveEndInput").value,
     PROACTIVE_RANDOM_PROBABILITY: Number(document.getElementById("proactiveRandomProbabilityInput").value),
+    PROACTIVE_AUTO_SEND: document.getElementById("proactiveAutoSendInput").value === "true",
+    PROACTIVE_AUTO_SEND_DRY_RUN: document.getElementById("proactiveAutoSendDryRunInput").value === "true",
+    PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET: document.getElementById("proactiveAutoSendRequireAllowedInput").value === "true",
+    PROACTIVE_AUTO_SEND_MAX_PER_DAY: readNumberInput("proactiveAutoSendMaxPerDayInput"),
     NENO_BRIDGE_SEND_QQ_URL: document.getElementById("proactiveBridgeUrlInput").value.trim(),
   };
 
@@ -1093,6 +1291,92 @@ async function loadProactiveCandidates(triggerButton) {
   }
 }
 
+async function loadProactiveTargets(triggerButton) {
+  const list = document.getElementById("proactiveTargetList");
+  const status = document.getElementById("proactiveCandidateStatus");
+  const token = getAdminToken();
+  const resetButton = setBusyButton(triggerButton);
+
+  if (!list) {
+    resetButton();
+    return;
+  }
+  if (!token) {
+    list.textContent = "需要 Admin Token";
+    if (status) {
+      status.textContent = "";
+    }
+    resetButton();
+    return;
+  }
+
+  list.textContent = "加载中...";
+  try {
+    const data = await requestJson(
+      "/proactive/targets",
+      {
+        method: "GET",
+        headers: getAdminHeaders(),
+      },
+      "加载主动目标失败："
+    );
+    renderProactiveTargets(data.targets || []);
+    if (status) {
+      status.textContent = "主动目标已刷新";
+    }
+  } catch (err) {
+    list.textContent = err.message;
+    if (status) {
+      status.textContent = err.message;
+    }
+  } finally {
+    resetButton();
+  }
+}
+
+async function loadProactiveEvents(triggerButton) {
+  const list = document.getElementById("proactiveEventList");
+  const status = document.getElementById("proactiveCandidateStatus");
+  const token = getAdminToken();
+  const resetButton = setBusyButton(triggerButton);
+
+  if (!list) {
+    resetButton();
+    return;
+  }
+  if (!token) {
+    list.textContent = "需要 Admin Token";
+    if (status) {
+      status.textContent = "";
+    }
+    resetButton();
+    return;
+  }
+
+  list.textContent = "加载中...";
+  try {
+    const data = await requestJson(
+      "/proactive/events?limit=30",
+      {
+        method: "GET",
+        headers: getAdminHeaders(),
+      },
+      "加载时间线失败："
+    );
+    renderProactiveEvents(data.events || []);
+    if (status) {
+      status.textContent = "调度时间线已刷新";
+    }
+  } catch (err) {
+    list.textContent = err.message;
+    if (status) {
+      status.textContent = err.message;
+    }
+  } finally {
+    resetButton();
+  }
+}
+
 async function generateProactiveCandidate(triggerButton) {
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
@@ -1122,12 +1406,54 @@ async function generateProactiveCandidate(triggerButton) {
     if (data.skipped) {
       status.textContent = `已跳过：${data.reason || ""}`;
     } else {
-      status.textContent = "已生成候选";
+      status.textContent = "已按自动规则生成候选";
     }
     loadProactiveCandidates();
     loadProactiveStatus();
+    loadProactiveTargets();
+    loadProactiveEvents();
   } catch (err) {
     status.textContent = err.message;
+  } finally {
+    resetButton();
+  }
+}
+
+async function generateProactiveTestCandidate(triggerButton, force) {
+  const status = document.getElementById("proactiveCandidateStatus");
+  const token = getAdminToken();
+  const resetButton = setBusyButton(triggerButton);
+
+  if (!token) {
+    status.textContent = "需要 Admin Token";
+    resetButton();
+    return;
+  }
+
+  status.textContent = force ? "强制生成测试候选中..." : "生成测试候选中...";
+
+  try {
+    const data = await requestJson(
+      "/proactive/generate-test",
+      {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({ force }),
+      },
+      "生成测试候选失败："
+    );
+    const savedText = data.session_id_saved ? "，已保存 session_id" : "";
+    status.textContent = `已生成测试候选${savedText}`;
+    loadProactiveCandidates();
+    loadProactiveStatus();
+    loadProactiveTargets();
+    loadProactiveEvents();
+  } catch (err) {
+    if (String(err.message || "").includes("409")) {
+      status.textContent = "已有待处理候选，可先发送/丢弃，或使用强制生成测试候选。";
+    } else {
+      status.textContent = err.message;
+    }
   } finally {
     resetButton();
   }
@@ -1151,6 +1477,7 @@ async function dismissProactiveCandidate(id, triggerButton) {
     status.textContent = "已丢弃";
     loadProactiveCandidates();
     loadProactiveStatus();
+    loadProactiveEvents();
   } catch (err) {
     status.textContent = err.message;
   } finally {
@@ -1184,6 +1511,7 @@ async function dryRunSendQqCandidate(id, triggerButton) {
     status.textContent = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
     loadProactiveCandidates();
     loadProactiveStatus();
+    loadProactiveEvents();
   } catch (err) {
     status.textContent = err.message;
   } finally {
@@ -1223,6 +1551,7 @@ async function sendQqCandidate(id, triggerButton) {
     status.textContent = `已真实发送到 ${data.target_label || "-"}`;
     loadProactiveCandidates();
     loadProactiveStatus();
+    loadProactiveEvents();
   } catch (err) {
     status.textContent = err.message;
     loadProactiveCandidates();
@@ -1396,12 +1725,15 @@ async function loadSessions() {
 
 function selectSession(sessionId) {
   document.getElementById("sessionInput").value = sessionId;
+  updateCurrentSessionStatus(sessionId);
   loadSessionMessages();
   loadRelationshipState();
+  setActivePanel("chatPanel");
 }
 
 async function loadSessionMessages() {
   const sessionId = getSessionId();
+  updateCurrentSessionStatus(sessionId);
   resetMessages();
 
   try {
@@ -1425,7 +1757,7 @@ async function loadSessionMessages() {
       }
     }
   } catch (err) {
-    addMessage("bot", err.message);
+    addMessage("bot", `加载会话 ${sessionId} 失败：${err.message}`);
   }
 }
 
@@ -1691,11 +2023,23 @@ function bindStaticActions() {
   document.getElementById("loadConfigBtn").addEventListener("click", loadConfig);
   document.getElementById("saveConfigBtn").addEventListener("click", saveConfig);
   document.getElementById("loadStatsSummaryBtn").addEventListener("click", loadStatsSummary);
+  document.getElementById("generateProactiveTestCandidateBtn").addEventListener("click", function () {
+    generateProactiveTestCandidate(this, false);
+  });
+  document.getElementById("forceGenerateProactiveTestCandidateBtn").addEventListener("click", function () {
+    generateProactiveTestCandidate(this, true);
+  });
   document.getElementById("generateProactiveCandidateBtn").addEventListener("click", function () {
     generateProactiveCandidate(this);
   });
   document.getElementById("loadProactiveCandidatesBtn").addEventListener("click", function () {
     loadProactiveCandidates(this);
+  });
+  document.getElementById("loadProactiveTargetsBtn").addEventListener("click", function () {
+    loadProactiveTargets(this);
+  });
+  document.getElementById("loadProactiveEventsBtn").addEventListener("click", function () {
+    loadProactiveEvents(this);
   });
   document.getElementById("checkProactiveNowBtn").addEventListener("click", function () {
     checkProactiveNow(this);
@@ -1730,3 +2074,5 @@ loadStatsSummary();
 loadProactiveStatus();
 loadProactiveConfig();
 loadProactiveCandidates();
+loadProactiveTargets();
+loadProactiveEvents();

@@ -76,6 +76,7 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 source TEXT,
                 platform TEXT,
+                session_id TEXT,
                 session_id_hash TEXT,
                 message_len INTEGER,
                 reply_len INTEGER,
@@ -86,6 +87,11 @@ def init_db():
             )
             """
         )
+        chat_stats_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(chat_stats)").fetchall()
+        }
+        if "session_id" not in chat_stats_columns:
+            conn.execute("ALTER TABLE chat_stats ADD COLUMN session_id TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS proactive_candidates (
@@ -98,6 +104,39 @@ def init_db():
                 reason TEXT,
                 status TEXT DEFAULT 'pending',
                 source TEXT DEFAULT 'manual',
+                metadata_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proactive_targets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                target_hash TEXT NOT NULL,
+                target_label TEXT NOT NULL,
+                is_allowed INTEGER DEFAULT 0,
+                last_seen_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(platform, session_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proactive_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT,
+                platform TEXT,
+                target_label TEXT,
+                candidate_id INTEGER,
+                action TEXT,
+                success INTEGER,
+                skipped INTEGER,
+                reason TEXT,
                 metadata_json TEXT
             )
             """
@@ -266,6 +305,213 @@ def get_sessions():
         """
     )
     return rows_to_dicts(rows, ["session_id", "message_count", "last_message_at"])
+
+
+def upsert_proactive_target(
+    *,
+    platform: str,
+    session_id: str,
+    target_hash: str,
+    target_label: str,
+    is_allowed: bool,
+    last_seen_at: str,
+) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO proactive_targets (
+                platform,
+                session_id,
+                target_hash,
+                target_label,
+                is_allowed,
+                last_seen_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(platform, session_id) DO UPDATE SET
+                target_hash = excluded.target_hash,
+                target_label = excluded.target_label,
+                is_allowed = excluded.is_allowed,
+                last_seen_at = excluded.last_seen_at,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                platform,
+                session_id,
+                target_hash,
+                target_label,
+                1 if is_allowed else 0,
+                last_seen_at,
+            ),
+        )
+
+    target = get_proactive_target_by_session(platform, session_id)
+    if target is None:
+        raise RuntimeError("proactive target upsert failed")
+    return target
+
+
+def _proactive_target_fields() -> list[str]:
+    return [
+        "id",
+        "platform",
+        "session_id",
+        "target_hash",
+        "target_label",
+        "is_allowed",
+        "last_seen_at",
+        "created_at",
+        "updated_at",
+    ]
+
+
+def get_proactive_target_by_session(platform: str, session_id: str) -> dict | None:
+    fields = _proactive_target_fields()
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_targets
+        WHERE platform = ?
+          AND session_id = ?
+        LIMIT 1
+        """,
+        (platform, session_id),
+    )
+    return row_to_dict(row, fields)
+
+
+def list_proactive_targets(limit: int = 20) -> list[dict]:
+    fields = _proactive_target_fields()
+    rows = fetch_all(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_targets
+        ORDER BY last_seen_at DESC, updated_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return rows_to_dicts(rows, fields)
+
+
+def get_latest_allowed_proactive_target(platform: str) -> dict | None:
+    fields = _proactive_target_fields()
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_targets
+        WHERE platform = ?
+          AND is_allowed = 1
+          AND session_id != ''
+          AND target_hash != ''
+        ORDER BY last_seen_at DESC, updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (platform,),
+    )
+    return row_to_dict(row, fields)
+
+
+def add_proactive_event(
+    *,
+    event_type: str,
+    platform: str | None = None,
+    target_label: str | None = None,
+    candidate_id: int | None = None,
+    action: str | None = None,
+    success: bool | None = None,
+    skipped: bool | None = None,
+    reason: str | None = None,
+    metadata_json: str = "{}",
+) -> dict:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO proactive_events (
+                event_type,
+                platform,
+                target_label,
+                candidate_id,
+                action,
+                success,
+                skipped,
+                reason,
+                metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                platform,
+                target_label,
+                candidate_id,
+                action,
+                None if success is None else 1 if success else 0,
+                None if skipped is None else 1 if skipped else 0,
+                reason,
+                metadata_json,
+            ),
+        )
+        event_id = cursor.lastrowid
+
+    event = get_proactive_event(event_id)
+    if event is None:
+        raise RuntimeError("proactive event insert failed")
+    return event
+
+
+def _proactive_event_fields() -> list[str]:
+    return [
+        "id",
+        "created_at",
+        "event_type",
+        "platform",
+        "target_label",
+        "candidate_id",
+        "action",
+        "success",
+        "skipped",
+        "reason",
+        "metadata_json",
+    ]
+
+
+def get_proactive_event(event_id: int) -> dict | None:
+    fields = _proactive_event_fields()
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_events
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (event_id,),
+    )
+    return row_to_dict(row, fields)
+
+
+def list_proactive_events(limit: int = 50, event_type: str | None = None) -> list[dict]:
+    fields = _proactive_event_fields()
+    bounded_limit = max(1, min(int(limit), 200))
+    where = ""
+    params: tuple[Any, ...]
+    if event_type:
+        where = "WHERE event_type = ?"
+        params = (event_type, bounded_limit)
+    else:
+        params = (bounded_limit,)
+    rows = fetch_all(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_events
+        {where}
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        params,
+    )
+    return rows_to_dicts(rows, fields)
 
 
 def add_proactive_candidate(

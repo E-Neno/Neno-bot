@@ -18,12 +18,18 @@ from app.config import (
     PROACTIVE_RECENT_CHAT_SKIP_MINUTES,
 )
 from app.storage.db import (
+    add_message,
+    add_proactive_event,
     add_proactive_candidate,
     fetch_one,
     get_proactive_candidate,
+    get_latest_allowed_proactive_target,
+    list_proactive_events,
     list_proactive_candidates,
+    list_proactive_targets,
     update_proactive_candidate_metadata,
     update_proactive_candidate_status,
+    upsert_proactive_target,
 )
 
 SUPPORTED_PLATFORMS = {"qq"}
@@ -45,6 +51,17 @@ def _mask_hash(value: str) -> str:
     text = (value or "").strip()
     if len(text) <= 8:
         return text
+    return f"{text[:4]}...{text[-4:]}"
+
+
+def _mask_identifier(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= 4:
+        return "***"
+    if len(text) <= 8:
+        return f"{text[:2]}...{text[-2:]}"
     return f"{text[:4]}...{text[-4:]}"
 
 
@@ -79,13 +96,28 @@ def _has_recent_user_message() -> bool:
     return row is not None
 
 
+def _has_pending_qq_candidate() -> bool:
+    row = fetch_one(
+        """
+        SELECT 1 AS found
+        FROM proactive_candidates
+        WHERE platform = 'qq'
+          AND status = 'pending'
+        LIMIT 1
+        """
+    )
+    return row is not None
+
+
 def _latest_platform_target(platform: str, *, require_24h: bool = False) -> dict[str, Any] | None:
     where_recent = "AND created_at >= datetime('now', '-24 hours')" if require_24h else ""
     return fetch_one(
         f"""
-        SELECT session_id_hash, created_at
+        SELECT session_id, session_id_hash, created_at
         FROM chat_stats
         WHERE platform = ?
+          AND session_id IS NOT NULL
+          AND session_id != ''
           AND session_id_hash IS NOT NULL
           AND session_id_hash != ''
           {where_recent}
@@ -101,24 +133,132 @@ def _select_platform(requested_platform: str | None) -> tuple[str | None, dict[s
     if platform is not None and platform not in SUPPORTED_PLATFORMS:
         return None, None, "platform must be qq"
 
-    if platform == "qq":
-        row = _latest_platform_target("qq")
-        return ("qq", row, None) if row else (None, None, "no qq target found in chat_stats")
+    if platform in (None, "qq"):
+        row = get_latest_allowed_proactive_target("qq")
+        if row:
+            return "qq", row, None
 
-    qq_row = _latest_platform_target("qq")
-    if qq_row:
-        return "qq", qq_row, None
+    return (
+        None,
+        None,
+        "没有可用 QQ 主动目标，请先给机器人发一条 QQ 消息，并在主动目标中允许该目标。",
+    )
 
-    return None, None, "no qq target found in chat_stats"
+
+def _stored_allowed_qq_target_exists(target_hash: str) -> bool:
+    row = fetch_one(
+        """
+        SELECT 1 AS found
+        FROM proactive_targets
+        WHERE platform = 'qq'
+          AND target_hash = ?
+          AND is_allowed = 1
+        LIMIT 1
+        """,
+        (target_hash,),
+    )
+    return row is not None
 
 def is_allowed_qq_target(target_hash: str | None) -> bool:
     if not target_hash:
         return False
-    return target_hash in PROACTIVE_QQ_ALLOWED_TARGET_HASHES
+    target = target_hash.strip()
+    return target in PROACTIVE_QQ_ALLOWED_TARGET_HASHES or _stored_allowed_qq_target_exists(target)
 
 
 def get_recent_proactive_candidates(limit: int = 20) -> list[dict]:
-    return list_proactive_candidates(limit=limit)
+    return [sanitize_proactive_candidate(candidate) for candidate in list_proactive_candidates(limit=limit)]
+
+
+def sanitize_proactive_target(target: dict | None) -> dict | None:
+    if target is None:
+        return None
+    sanitized = dict(target)
+    sanitized.pop("session_id", None)
+    sanitized["session_id_saved"] = bool(target.get("session_id"))
+    sanitized["target_hash"] = _mask_hash(str(target.get("target_hash") or ""))
+    sanitized["is_allowed"] = bool(target.get("is_allowed"))
+    return sanitized
+
+
+def get_recent_proactive_targets(limit: int = 20) -> list[dict]:
+    return [sanitize_proactive_target(target) for target in list_proactive_targets(limit=limit)]
+
+
+SENSITIVE_EVENT_KEY_PARTS = ("session", "openid", "open_id", "token", "secret")
+
+
+def _safe_event_metadata_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _safe_event_metadata_value(item)
+            for key, item in value.items()
+            if not any(part in str(key).lower() for part in SENSITIVE_EVENT_KEY_PARTS)
+        }
+    if isinstance(value, list):
+        return [_safe_event_metadata_value(item) for item in value[:20]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        text = str(value) if isinstance(value, str) else ""
+        if "qq:private:" in text or "wx:private:" in text:
+            return "[redacted]"
+        return value
+    return str(value)
+
+
+def _safe_event_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not metadata:
+        return {}
+    return _safe_event_metadata_value(metadata)
+
+
+def record_proactive_event(
+    *,
+    event_type: str,
+    platform: str | None = None,
+    target_label: str | None = None,
+    candidate_id: int | None = None,
+    action: str | None = None,
+    success: bool | None = None,
+    skipped: bool | None = None,
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        add_proactive_event(
+            event_type=event_type,
+            platform=platform,
+            target_label=target_label,
+            candidate_id=candidate_id,
+            action=action,
+            success=success,
+            skipped=skipped,
+            reason=(reason or "")[:240] or None,
+            metadata_json=_dump_candidate_metadata(_safe_event_metadata(metadata)),
+        )
+    except Exception as exc:
+        print("proactive event write failed:", type(exc).__name__)
+
+
+def sanitize_proactive_event(event: dict | None) -> dict | None:
+    if event is None:
+        return None
+    sanitized = dict(event)
+    sanitized["success"] = None if event.get("success") is None else bool(event.get("success"))
+    sanitized["skipped"] = None if event.get("skipped") is None else bool(event.get("skipped"))
+    raw_metadata = event.get("metadata_json") or "{}"
+    try:
+        metadata = json.loads(raw_metadata)
+    except Exception:
+        metadata = {}
+    sanitized["metadata_json"] = _dump_candidate_metadata(_safe_event_metadata(metadata if isinstance(metadata, dict) else {}))
+    return sanitized
+
+
+def get_recent_proactive_events(limit: int = 50, event_type: str | None = None) -> list[dict]:
+    return [
+        sanitize_proactive_event(event)
+        for event in list_proactive_events(limit=limit, event_type=event_type)
+    ]
 
 
 def _load_candidate_metadata(candidate: dict) -> dict[str, Any]:
@@ -128,6 +268,66 @@ def _load_candidate_metadata(candidate: dict) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _dump_candidate_metadata(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata, ensure_ascii=False)
+
+
+def _get_target_session_id(target_row: dict[str, Any]) -> str:
+    return str(target_row["session_id"] or "").strip()
+
+
+def _get_target_hash(target_row: dict[str, Any]) -> str:
+    return str(target_row.get("target_hash") or target_row.get("session_id_hash") or "").strip()
+
+
+def _get_target_label(target_row: dict[str, Any]) -> str:
+    return str(target_row.get("target_label") or _mask_hash(_get_target_hash(target_row))).strip()
+
+
+def _get_target_last_seen_at(target_row: dict[str, Any]) -> str | None:
+    value = target_row.get("last_seen_at") or target_row.get("created_at")
+    return str(value) if value else None
+
+
+def sanitize_proactive_candidate(candidate: dict | None) -> dict | None:
+    if candidate is None:
+        return None
+
+    sanitized = dict(candidate)
+    if sanitized.get("target_hash"):
+        sanitized["target_hash"] = _mask_hash(str(sanitized.get("target_hash") or ""))
+    if not sanitized.get("target_label"):
+        sanitized["target_label"] = sanitized.get("target_hash") or ""
+
+    metadata = _load_candidate_metadata(candidate)
+    if metadata.pop("session_id", None):
+        metadata["session_id_saved"] = True
+    sanitized["metadata_json"] = _dump_candidate_metadata(metadata)
+    return sanitized
+
+
+def record_qq_proactive_target(*, session_id: str, user_id: str, seen_at: str | None = None) -> dict:
+    target_hash = _target_hash_for_session(session_id)
+    target_label = _mask_identifier(user_id)
+    return upsert_proactive_target(
+        platform="qq",
+        session_id=session_id,
+        target_hash=target_hash,
+        target_label=target_label,
+        is_allowed=target_hash in PROACTIVE_QQ_ALLOWED_TARGET_HASHES,
+        last_seen_at=seen_at or datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def _target_hash_for_session(session_id: str) -> str:
+    import hashlib
+
+    text = (session_id or "").strip()
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _post_neno_bridge_send_qq(candidate_id: int, message: str, dry_run: bool) -> dict:
@@ -204,12 +404,28 @@ def _record_failed_send(candidate: dict, error: str) -> dict | None:
     metadata["error"] = (error or "send failed")[:120]
     update_proactive_candidate_metadata(
         candidate["id"],
-        json.dumps(metadata, ensure_ascii=False),
+        _dump_candidate_metadata(metadata),
     )
     return update_proactive_candidate_status(candidate["id"], "failed")
 
 
-def send_qq_candidate(candidate_id: int, dry_run: bool) -> dict:
+def _save_proactive_context(candidate: dict, message: str, metadata: dict[str, Any]) -> None:
+    session_id = str(metadata.get("session_id") or "").strip()
+    if not session_id:
+        metadata["context_save_warning"] = "missing session_id"
+        return
+
+    try:
+        add_message(session_id, "assistant", message)
+    except Exception as exc:
+        metadata["context_save_warning"] = f"add_message failed: {type(exc).__name__}"
+        return
+
+    metadata["proactive_context_saved"] = True
+    metadata["proactive_context_saved_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "manual") -> dict:
     if not isinstance(dry_run, bool):
         raise HTTPException(status_code=400, detail="dry_run must be a boolean")
 
@@ -217,7 +433,21 @@ def send_qq_candidate(candidate_id: int, dry_run: bool) -> dict:
     message = _get_candidate_message(candidate)
 
     if dry_run:
-        result = _post_neno_bridge_send_qq(candidate_id, message, dry_run=True)
+        try:
+            result = _post_neno_bridge_send_qq(candidate_id, message, dry_run=True)
+        except Exception as exc:
+            if event_source == "manual":
+                record_proactive_event(
+                    event_type="manual_failed",
+                    platform="qq",
+                    target_label=str(candidate.get("target_label") or ""),
+                    candidate_id=candidate_id,
+                    action="manual_send_dry_run",
+                    success=False,
+                    skipped=False,
+                    reason=getattr(exc, "detail", None) or type(exc).__name__,
+                )
+            raise
         metadata = _load_candidate_metadata(candidate)
         metadata["dry_run_at"] = datetime.now().isoformat(timespec="seconds")
         metadata["dry_run_result"] = {
@@ -229,24 +459,61 @@ def send_qq_candidate(candidate_id: int, dry_run: bool) -> dict:
         }
         updated_candidate = update_proactive_candidate_metadata(
             candidate_id,
-            json.dumps(metadata, ensure_ascii=False),
+            _dump_candidate_metadata(metadata),
         )
 
-        return {
+        response = {
             "success": True,
             "dry_run": True,
             "target_label": result.get("target_label"),
             "message_len": result.get("message_len"),
             "would_send": result.get("would_send") is True,
-            "candidate": updated_candidate or candidate,
+            "candidate": sanitize_proactive_candidate(updated_candidate or candidate),
         }
+        if event_source == "manual":
+            record_proactive_event(
+                event_type="manual_send_dry_run",
+                platform="qq",
+                target_label=result.get("target_label") or str(candidate.get("target_label") or ""),
+                candidate_id=candidate_id,
+                action="manual_send_dry_run",
+                success=True,
+                skipped=False,
+                metadata={"message_len": result.get("message_len"), "would_send": result.get("would_send") is True},
+            )
+        return response
 
-    _ensure_allowed_qq_target(candidate)
+    try:
+        _ensure_allowed_qq_target(candidate)
+    except HTTPException as exc:
+        if event_source == "manual":
+            record_proactive_event(
+                event_type="manual_failed",
+                platform="qq",
+                target_label=str(candidate.get("target_label") or ""),
+                candidate_id=candidate_id,
+                action="manual_sent",
+                success=False,
+                skipped=False,
+                reason=str(exc.detail),
+            )
+        raise
 
     try:
         result = _post_neno_bridge_send_qq(candidate_id, message, dry_run=False)
     except HTTPException as exc:
         _record_failed_send(candidate, str(exc.detail))
+        if event_source == "manual":
+            record_proactive_event(
+                event_type="manual_failed",
+                platform="qq",
+                target_label=str(candidate.get("target_label") or ""),
+                candidate_id=candidate_id,
+                action="manual_sent",
+                success=False,
+                skipped=False,
+                reason=str(exc.detail),
+            )
         raise HTTPException(status_code=502, detail="QQ send failed") from exc
 
     metadata = _load_candidate_metadata(candidate)
@@ -259,21 +526,34 @@ def send_qq_candidate(candidate_id: int, dry_run: bool) -> dict:
         "target_label": result.get("target_label"),
         "message_len": result.get("message_len"),
     }
+    _save_proactive_context(candidate, message, metadata)
     updated_candidate = update_proactive_candidate_metadata(
         candidate_id,
-        json.dumps(metadata, ensure_ascii=False),
+        _dump_candidate_metadata(metadata),
     )
 
     updated_candidate = update_proactive_candidate_status(candidate_id, "sent") or updated_candidate
 
-    return {
+    response = {
         "success": True,
         "dry_run": False,
         "sent": True,
         "target_label": result.get("target_label"),
         "message_len": result.get("message_len"),
-        "candidate": updated_candidate or candidate,
+        "candidate": sanitize_proactive_candidate(updated_candidate or candidate),
     }
+    if event_source == "manual":
+        record_proactive_event(
+            event_type="manual_sent",
+            platform="qq",
+            target_label=result.get("target_label") or str(candidate.get("target_label") or ""),
+            candidate_id=candidate_id,
+            action="manual_sent",
+            success=True,
+            skipped=False,
+            metadata={"message_len": result.get("message_len")},
+        )
+    return response
 
 
 def generate_proactive_candidate(platform: str | None = None) -> dict:
@@ -308,10 +588,12 @@ def generate_proactive_candidate(platform: str | None = None) -> dict:
             "reason": skip_reason or "no eligible target",
         }
 
-    target_hash = str(target_row["session_id_hash"] or "")
+    target_hash = _get_target_hash(target_row)
+    session_id = _get_target_session_id(target_row)
     message = random.choice(SAFE_TEMPLATES)
     reason = "manual safe template; outbound send disabled in v1"
     metadata = {
+        "session_id": session_id,
         "rules": {
             "no_send": True,
             "template_only": True,
@@ -319,20 +601,89 @@ def generate_proactive_candidate(platform: str | None = None) -> dict:
             "recent_user_message_skip_minutes": PROACTIVE_RECENT_CHAT_SKIP_MINUTES,
             "daily_limit": PROACTIVE_DAILY_LIMIT,
         },
-        "target_last_seen_at": target_row["created_at"],
+        "target_last_seen_at": _get_target_last_seen_at(target_row),
     }
     candidate = add_proactive_candidate(
         platform=selected_platform,
         target_hash=target_hash,
-        target_label=_mask_hash(target_hash),
+        target_label=_get_target_label(target_row),
         message=message,
         reason=reason,
         status="pending",
         source="manual",
-        metadata_json=json.dumps(metadata, ensure_ascii=False),
+        metadata_json=_dump_candidate_metadata(metadata),
     )
     return {
         "success": True,
         "skipped": False,
-        "candidate": candidate,
+        "candidate": sanitize_proactive_candidate(candidate),
+    }
+
+
+def generate_test_proactive_candidate(*, force: bool = False) -> dict:
+    selected_platform, target_row, skip_reason = _select_platform("qq")
+    if selected_platform != "qq" or not target_row:
+        raise HTTPException(status_code=404, detail=skip_reason or "no allowed qq proactive target")
+
+    target_hash = _get_target_hash(target_row)
+    if not target_hash:
+        raise HTTPException(status_code=404, detail="qq target hash not found")
+    if not is_allowed_qq_target(target_hash):
+        raise HTTPException(status_code=403, detail="qq target is not whitelisted")
+
+    if _has_pending_qq_candidate() and not force:
+        raise HTTPException(
+            status_code=409,
+            detail="已有待处理 QQ 候选，可先发送/丢弃，或使用 force=true 强制生成测试候选",
+        )
+
+    session_id = _get_target_session_id(target_row)
+    if not session_id:
+        raise HTTPException(status_code=404, detail="qq session_id not found")
+
+    metadata = {
+        "session_id": session_id,
+        "rules": {
+            "test_candidate": True,
+            "template_only": True,
+            "platform": "qq",
+            "ignored_for_test": [
+                "random_probability",
+                "recent_chat",
+                "active_window",
+            ],
+            "required_for_test": [
+                "qq_target",
+                "qq_whitelist",
+            ],
+        },
+        "target_last_seen_at": _get_target_last_seen_at(target_row),
+        "test_created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    candidate = add_proactive_candidate(
+        platform="qq",
+        target_hash=target_hash,
+        target_label=_get_target_label(target_row),
+        message=SAFE_TEMPLATES[0],
+        reason="test v3.1 fixed template; no send; ignores random/recent-chat/active-window",
+        status="pending",
+        source="test",
+        metadata_json=_dump_candidate_metadata(metadata),
+    )
+    record_proactive_event(
+        event_type="manual_generate_test",
+        platform="qq",
+        target_label=_get_target_label(target_row),
+        candidate_id=candidate["id"],
+        action="manual_generate_test",
+        success=True,
+        skipped=False,
+        metadata={"forced": force, "session_id_saved": True},
+    )
+    return {
+        "success": True,
+        "skipped": False,
+        "forced": force,
+        "session_id_saved": True,
+        "candidate": sanitize_proactive_candidate(candidate),
     }

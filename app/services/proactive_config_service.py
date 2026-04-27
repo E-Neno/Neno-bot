@@ -17,6 +17,10 @@ PROACTIVE_CONFIG_KEYS = [
     "PROACTIVE_ACTIVE_END",
     "PROACTIVE_RANDOM_PROBABILITY",
     "PROACTIVE_QQ_ALLOWED_TARGET_HASHES",
+    "PROACTIVE_AUTO_SEND",
+    "PROACTIVE_AUTO_SEND_DRY_RUN",
+    "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET",
+    "PROACTIVE_AUTO_SEND_MAX_PER_DAY",
     "NENO_BRIDGE_SEND_QQ_URL",
 ]
 
@@ -30,6 +34,10 @@ DEFAULT_PROACTIVE_CONFIG = {
     "PROACTIVE_ACTIVE_END": "23:30",
     "PROACTIVE_RANDOM_PROBABILITY": "0.25",
     "PROACTIVE_QQ_ALLOWED_TARGET_HASHES": "",
+    "PROACTIVE_AUTO_SEND": "false",
+    "PROACTIVE_AUTO_SEND_DRY_RUN": "false",
+    "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET": "true",
+    "PROACTIVE_AUTO_SEND_MAX_PER_DAY": "1",
     "NENO_BRIDGE_SEND_QQ_URL": "http://127.0.0.1:18793/proactive/send-qq",
 }
 
@@ -84,6 +92,10 @@ def get_proactive_config() -> dict[str, Any]:
             "PROACTIVE_RANDOM_PROBABILITY": values["PROACTIVE_RANDOM_PROBABILITY"],
             "PROACTIVE_QQ_ALLOWED_TARGET_HASHES_EMPTY": not bool(allowed_hashes.strip()),
             "PROACTIVE_QQ_ALLOWED_TARGET_HASHES_LABELS": _mask_hashes(allowed_hashes),
+            "PROACTIVE_AUTO_SEND": values["PROACTIVE_AUTO_SEND"],
+            "PROACTIVE_AUTO_SEND_DRY_RUN": values["PROACTIVE_AUTO_SEND_DRY_RUN"],
+            "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET": values["PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET"],
+            "PROACTIVE_AUTO_SEND_MAX_PER_DAY": values["PROACTIVE_AUTO_SEND_MAX_PER_DAY"],
             "NENO_BRIDGE_SEND_QQ_URL": values["NENO_BRIDGE_SEND_QQ_URL"],
         },
     }
@@ -181,6 +193,21 @@ def update_proactive_config(req: ProactiveConfigUpdateRequest) -> dict[str, Any]
     if "PROACTIVE_QQ_ALLOWED_TARGET_HASHES" in payload:
         updates["PROACTIVE_QQ_ALLOWED_TARGET_HASHES"] = _validate_hashes(
             payload["PROACTIVE_QQ_ALLOWED_TARGET_HASHES"]
+        )
+    if "PROACTIVE_AUTO_SEND" in payload:
+        updates["PROACTIVE_AUTO_SEND"] = "true" if payload["PROACTIVE_AUTO_SEND"] else "false"
+    if "PROACTIVE_AUTO_SEND_DRY_RUN" in payload:
+        updates["PROACTIVE_AUTO_SEND_DRY_RUN"] = "true" if payload["PROACTIVE_AUTO_SEND_DRY_RUN"] else "false"
+    if "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET" in payload:
+        updates["PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET"] = (
+            "true" if payload["PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET"] else "false"
+        )
+    if "PROACTIVE_AUTO_SEND_MAX_PER_DAY" in payload:
+        updates["PROACTIVE_AUTO_SEND_MAX_PER_DAY"] = _validate_int(
+            "PROACTIVE_AUTO_SEND_MAX_PER_DAY",
+            payload["PROACTIVE_AUTO_SEND_MAX_PER_DAY"],
+            0,
+            10,
         )
     if "NENO_BRIDGE_SEND_QQ_URL" in payload:
         updates["NENO_BRIDGE_SEND_QQ_URL"] = _validate_bridge_url(payload["NENO_BRIDGE_SEND_QQ_URL"])

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.schemas import (
     ProactiveConfigUpdateRequest,
     ProactiveDismissRequest,
     ProactiveGenerateRequest,
+    ProactiveGenerateTestRequest,
     ProactiveSendQqRequest,
 )
 from app.security import require_admin_token
@@ -11,7 +12,11 @@ from app.services.proactive_config_service import get_proactive_config, update_p
 from app.services.proactive_scheduler import check_proactive_now, get_proactive_scheduler_status
 from app.services.proactive_service import (
     generate_proactive_candidate,
+    generate_test_proactive_candidate,
     get_recent_proactive_candidates,
+    get_recent_proactive_events,
+    get_recent_proactive_targets,
+    sanitize_proactive_candidate,
     send_qq_candidate,
 )
 from app.storage.db import update_proactive_candidate_status
@@ -30,6 +35,25 @@ def proactive_candidates():
 @router.get("/status", dependencies=[Depends(require_admin_token)])
 def proactive_status():
     return get_proactive_scheduler_status()
+
+
+@router.get("/targets", dependencies=[Depends(require_admin_token)])
+def proactive_targets():
+    return {
+        "success": True,
+        "targets": get_recent_proactive_targets(limit=20),
+    }
+
+
+@router.get("/events", dependencies=[Depends(require_admin_token)])
+def proactive_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    event_type: str | None = Query(default=None, max_length=64),
+):
+    return {
+        "success": True,
+        "events": get_recent_proactive_events(limit=limit, event_type=event_type),
+    }
 
 
 @router.post("/check-now", dependencies=[Depends(require_admin_token)])
@@ -52,6 +76,11 @@ def proactive_generate(req: ProactiveGenerateRequest | None = Body(default=None)
     return generate_proactive_candidate(platform=req.platform if req else None)
 
 
+@router.post("/generate-test", dependencies=[Depends(require_admin_token)])
+def proactive_generate_test(req: ProactiveGenerateTestRequest | None = Body(default=None)):
+    return generate_test_proactive_candidate(force=req.force if req else False)
+
+
 @router.post("/dismiss", dependencies=[Depends(require_admin_token)])
 def proactive_dismiss(req: ProactiveDismissRequest):
     candidate = update_proactive_candidate_status(req.id, "dismissed")
@@ -59,7 +88,7 @@ def proactive_dismiss(req: ProactiveDismissRequest):
         raise HTTPException(status_code=404, detail="proactive candidate not found")
     return {
         "success": True,
-        "candidate": candidate,
+        "candidate": sanitize_proactive_candidate(candidate),
     }
 
 
