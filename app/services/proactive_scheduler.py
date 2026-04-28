@@ -138,7 +138,7 @@ def _latest_qq_target() -> dict[str, Any] | None:
     return get_latest_allowed_proactive_target("qq")
 
 
-def _skip(reason: str) -> dict[str, Any]:
+def _skip(reason: str, checks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     record_proactive_event(
         event_type="rule_skipped",
         platform="qq",
@@ -151,6 +151,7 @@ def _skip(reason: str) -> dict[str, Any]:
         "success": True,
         "skipped": True,
         "reason": reason,
+        "checks": checks or [],
     }
 
 
@@ -441,9 +442,9 @@ def _candidate_can_auto_send(candidate: dict, target_row: dict[str, Any]) -> tup
     return True, None
 
 
-def _auto_send_dry_run(candidate: dict) -> dict[str, Any]:
+def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[str, Any]:
     try:
-        send_qq_candidate(candidate_id=candidate["id"], dry_run=True, event_source="auto")
+        send_qq_candidate(candidate_id=candidate["id"], dry_run=True, event_source=event_source)
     except HTTPException as exc:
         _record_auto_send_error(candidate["id"], "auto_send_dry_run_failed", str(exc.detail))
         record_proactive_event(
@@ -592,46 +593,142 @@ def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, An
     }
 
 
-def _check_and_send_once() -> dict[str, Any]:
+def _check_and_send_once(
+    *,
+    ignore_random: bool = False,
+    ignore_recent_chat: bool = False,
+    ignore_active_window: bool = False,
+    force: bool = False,
+    dry_run_only: bool = False,
+    event_source: str = "auto",
+) -> dict[str, Any]:
     now = datetime.now()
+    checks: list[dict[str, Any]] = []
 
-    if not _within_active_window(now):
-        return _skip(f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}")
+    checks.append(
+        _rule(
+            "enabled",
+            PROACTIVE_ENABLED,
+            "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+        )
+    )
+    if not PROACTIVE_ENABLED:
+        return _skip("proactive scheduler disabled", checks)
+
+    active_ok = _within_active_window(now)
+    checks.append(
+        _rule(
+            "active_window",
+            None if ignore_active_window else active_ok,
+            "本次手动触发忽略时间窗"
+            if ignore_active_window
+            else f"当前时间 {'在' if active_ok else '不在'}允许主动消息时间段 {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
+        )
+    )
+    if not ignore_active_window and not active_ok:
+        return _skip(f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}", checks)
 
     probability = max(0.0, min(1.0, PROACTIVE_RANDOM_PROBABILITY))
-    if random.random() >= probability:
-        return _skip("random probability missed")
+    if ignore_random:
+        checks.append(_rule("random_probability", None, "本次手动触发忽略随机概率"))
+    else:
+        random_hit = random.random() < probability
+        checks.append(
+            _rule(
+                "random_probability",
+                random_hit,
+                f"随机概率 {probability}，本轮{'命中' if random_hit else '未命中'}",
+            )
+        )
+        if not random_hit:
+            return _skip("random probability missed", checks)
 
     sent_count = _today_sent_count()
-    if sent_count >= PROACTIVE_DAILY_LIMIT:
-        return _skip(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}")
+    daily_ok = sent_count < PROACTIVE_DAILY_LIMIT
+    checks.append(
+        _rule(
+            "daily_limit",
+            daily_ok,
+            f"今天已自动发送 {sent_count}/{PROACTIVE_DAILY_LIMIT} 条",
+        )
+    )
+    if not daily_ok:
+        return _skip(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks)
 
     last_sent = _parse_sqlite_datetime(_last_sent_at())
-    if last_sent is not None and now - last_sent < timedelta(minutes=PROACTIVE_MIN_INTERVAL_MINUTES):
-        return _skip(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes")
+    min_interval_ok = last_sent is None or now - last_sent >= timedelta(minutes=PROACTIVE_MIN_INTERVAL_MINUTES)
+    if last_sent is None:
+        min_interval_detail = "还没有自动主动消息发送记录"
+    else:
+        elapsed_minutes = int((now - last_sent).total_seconds() // 60)
+        min_interval_detail = f"距离上次自动主动消息约 {elapsed_minutes} 分钟，要求至少 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟"
+    checks.append(_rule("min_interval", min_interval_ok, min_interval_detail))
+    if not min_interval_ok:
+        return _skip(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks)
 
-    if _has_recent_user_message():
-        return _skip(f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes")
+    recent_chat = _has_recent_user_message()
+    checks.append(
+        _rule(
+            "recent_chat",
+            None if ignore_recent_chat else not recent_chat,
+            "本次手动触发忽略最近聊天规则"
+            if ignore_recent_chat
+            else f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} QQ 用户消息",
+        )
+    )
+    if not ignore_recent_chat and recent_chat:
+        return _skip(f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes", checks)
 
-    if _has_pending_qq_candidate():
-        return _skip("pending qq candidate exists")
+    pending_candidate = _has_pending_qq_candidate()
+    checks.append(
+        _rule(
+            "pending_candidate",
+            None if force else not pending_candidate,
+            "本次强制生成，已有 pending 不阻止新候选"
+            if force
+            else "已有待处理 QQ 候选" if pending_candidate else "没有待处理 QQ 候选",
+        )
+    )
+    if not force and pending_candidate:
+        return _skip("pending qq candidate exists", checks)
 
     target_row = _latest_qq_target()
+    checks.append(
+        _rule(
+            "qq_target",
+            target_row is not None,
+            f"最近 QQ 目标 {_mask_hash(str(target_row['target_hash'] or ''))}" if target_row else "没有找到 QQ 目标",
+        )
+    )
     if target_row is None:
-        return _skip("no allowed qq target found in proactive_targets")
+        return _skip("no allowed qq target found in proactive_targets", checks)
 
     target_hash = str(target_row["target_hash"] or "")
-    if not is_allowed_qq_target(target_hash):
-        return _skip("latest qq target is not whitelisted")
+    whitelist_ok = bool(target_hash) and is_allowed_qq_target(target_hash)
+    checks.append(
+        _rule(
+            "qq_whitelist",
+            whitelist_ok,
+            "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内",
+        )
+    )
+    if not whitelist_ok:
+        return _skip("latest qq target is not whitelisted", checks)
 
     candidate = _create_auto_candidate(target_row)
     if not PROACTIVE_AUTO_SEND:
-        return _generated_pending_result(candidate)
+        result = _generated_pending_result(candidate)
+        result["checks"] = checks
+        return result
 
-    if PROACTIVE_AUTO_SEND_DRY_RUN:
-        return _auto_send_dry_run(candidate)
+    if dry_run_only or PROACTIVE_AUTO_SEND_DRY_RUN:
+        result = _auto_send_dry_run(candidate, event_source=event_source)
+        result["checks"] = checks
+        return result
 
-    return _auto_send_real(candidate, target_row)
+    result = _auto_send_real(candidate, target_row)
+    result["checks"] = checks
+    return result
 
 
 async def run_proactive_check_once() -> dict[str, Any]:
@@ -654,6 +751,82 @@ async def run_proactive_check_once() -> dict[str, Any]:
         },
     )
     return _last_result
+
+
+def _normalize_manual_run_result(result: dict[str, Any], *, dry_run_only: bool) -> dict[str, Any]:
+    if result.get("skipped"):
+        action = "skipped"
+    elif result.get("success") is not True:
+        action = "failed"
+    elif result.get("action") in {"auto_send_dry_run_ok", "manual_send_dry_run"} or result.get("dry_run"):
+        action = "dry_run_ok"
+    elif result.get("action") == "auto_sent" and dry_run_only:
+        action = "dry_run_ok"
+    else:
+        action = "generated_pending"
+
+    return {
+        "success": result.get("success") is True,
+        "action": action,
+        "reason": explain_proactive_reason(
+            str(result.get("reason") or result.get("error") or result.get("action") or "")
+        ),
+        "candidate_id": result.get("candidate_id"),
+        "dry_run_only": dry_run_only,
+        "checks": result.get("checks") or [],
+    }
+
+
+def run_proactive_once_manual(
+    *,
+    ignore_random: bool = True,
+    ignore_recent_chat: bool = False,
+    ignore_active_window: bool = False,
+    force: bool = False,
+    dry_run_only: bool = True,
+) -> dict[str, Any]:
+    global _last_check_at, _last_result
+    _last_check_at = _now_iso()
+    try:
+        raw_result = _check_and_send_once(
+            ignore_random=ignore_random,
+            ignore_recent_chat=ignore_recent_chat,
+            ignore_active_window=ignore_active_window,
+            force=force,
+            dry_run_only=dry_run_only,
+            event_source="manual_scheduler_run",
+        )
+    except Exception as exc:
+        raw_result = {
+            "success": False,
+            "skipped": False,
+            "action": "failed",
+            "error": getattr(exc, "detail", None) or type(exc).__name__,
+            "checks": [],
+        }
+
+    response = _normalize_manual_run_result(raw_result, dry_run_only=dry_run_only)
+    _last_result = response
+    record_proactive_event(
+        event_type="manual_scheduler_run",
+        platform="qq",
+        target_label=raw_result.get("target_label"),
+        candidate_id=response.get("candidate_id"),
+        action=response.get("action"),
+        success=response.get("success"),
+        skipped=response.get("action") == "skipped",
+        reason=response.get("reason"),
+        metadata={
+            "last_check_at": _last_check_at,
+            "ignore_random": ignore_random,
+            "ignore_recent_chat": ignore_recent_chat,
+            "ignore_active_window": ignore_active_window,
+            "force": force,
+            "dry_run_only": dry_run_only,
+            "raw_action": raw_result.get("action"),
+        },
+    )
+    return response
 
 
 async def _scheduler_loop() -> None:

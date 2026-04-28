@@ -126,6 +126,37 @@ export function buildProactivePanel(panel, header) {
   statusCard.lastChild.id = "proactiveRulesSummary";
   grid.appendChild(statusCard);
 
+  const runOnceCard = createElement("div", "card");
+  runOnceCard.appendChild(createElement("h3", "", "手动执行自动调度"));
+  runOnceCard.appendChild(createElement(
+    "div",
+    "config-help",
+    "这是手动触发自动调度流程，用于测试；默认不会真实发送 QQ。"
+  ));
+  const runOnceForm = createElement("div", "config-form");
+  for (const option of [
+    ["proactiveRunIgnoreRandomInput", "忽略随机概率", true],
+    ["proactiveRunIgnoreRecentChatInput", "忽略最近聊天", false],
+    ["proactiveRunIgnoreActiveWindowInput", "忽略时间窗", false],
+    ["proactiveRunForceInput", "强制生成", false],
+    ["proactiveRunDryRunOnlyInput", "只 dry_run，不真实发送", true],
+  ]) {
+    const label = createElement("label");
+    const input = createElement("input");
+    input.type = "checkbox";
+    input.id = option[0];
+    input.checked = option[2];
+    label.append(input, ` ${option[1]}`);
+    runOnceForm.appendChild(label);
+  }
+  const runOnceRow = createElement("div", "row");
+  runOnceRow.appendChild(createElement("button", "", "执行一轮自动调度"));
+  runOnceRow.lastChild.id = "runProactiveOnceBtn";
+  runOnceCard.append(runOnceForm, runOnceRow);
+  runOnceCard.appendChild(createElement("div", "small", "尚未执行"));
+  runOnceCard.lastChild.id = "proactiveRunOnceResult";
+  grid.appendChild(runOnceCard);
+
   const eventsCard = createElement("div", "card");
   eventsCard.appendChild(createElement("h3", "", "调度时间线"));
   eventsCard.appendChild(createElement("div", "config-help", "最近主动消息调度和手动操作事件；不显示完整 session_id/openid。"));

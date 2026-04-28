@@ -434,6 +434,82 @@ export async function checkProactiveNow(triggerButton) {
   }
 }
 
+function checkboxValue(id) {
+  return document.getElementById(id)?.checked === true;
+}
+
+function proactiveRunActionLabel(action) {
+  if (action === "generated_pending") return "已生成 pending 候选";
+  if (action === "dry_run_ok") return "dry_run 通过";
+  if (action === "skipped") return "已跳过";
+  if (action === "failed") return "失败";
+  return action || "-";
+}
+
+function renderProactiveRunOnceResult(data) {
+  const result = document.getElementById("proactiveRunOnceResult");
+  if (!result) {
+    return;
+  }
+
+  const parts = [
+    proactiveRunActionLabel(data.action),
+    data.reason || "",
+    data.candidate_id ? `candidate_id=${data.candidate_id}` : "",
+    data.dry_run_only ? "dry_run_only=true" : "dry_run_only=false",
+  ].filter(Boolean);
+  result.textContent = parts.join(" · ");
+  if (Array.isArray(data.checks)) {
+    renderProactiveChecks(data.checks);
+  }
+}
+
+export async function runProactiveOnce(triggerButton) {
+  const status = document.getElementById("proactiveCandidateStatus");
+  const token = getAdminToken();
+  const resetButton = setBusyButton(triggerButton);
+
+  if (!token) {
+    status.textContent = "需要 Admin Token";
+    resetButton();
+    return;
+  }
+
+  const payload = {
+    ignore_random: checkboxValue("proactiveRunIgnoreRandomInput"),
+    ignore_recent_chat: checkboxValue("proactiveRunIgnoreRecentChatInput"),
+    ignore_active_window: checkboxValue("proactiveRunIgnoreActiveWindowInput"),
+    force: checkboxValue("proactiveRunForceInput"),
+    dry_run_only: checkboxValue("proactiveRunDryRunOnlyInput"),
+  };
+
+  status.textContent = "手动执行自动调度中...";
+  try {
+    const data = await requestJson(
+      "/proactive/run-once",
+      {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify(payload),
+      },
+      "执行失败："
+    );
+    renderProactiveRunOnceResult(data);
+    status.textContent = `手动自动调度：${proactiveRunActionLabel(data.action)}`;
+    loadProactiveCandidates();
+    loadProactiveStatus();
+    loadProactiveEvents();
+  } catch (err) {
+    status.textContent = err.message;
+    const result = document.getElementById("proactiveRunOnceResult");
+    if (result) {
+      result.textContent = err.message;
+    }
+  } finally {
+    resetButton();
+  }
+}
+
 function setInputValue(id, value) {
   const input = document.getElementById(id);
   if (input) {
@@ -892,6 +968,9 @@ export function bindProactiveEvents() {
   });
   document.getElementById("checkProactiveNowBtn").addEventListener("click", function () {
     checkProactiveNow(this);
+  });
+  document.getElementById("runProactiveOnceBtn").addEventListener("click", function () {
+    runProactiveOnce(this);
   });
   document.getElementById("loadProactiveConfigBtn").addEventListener("click", loadProactiveConfig);
   document.getElementById("saveProactiveConfigBtn").addEventListener("click", saveProactiveConfig);

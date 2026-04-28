@@ -5,11 +5,16 @@ from app.schemas import (
     ProactiveDismissRequest,
     ProactiveGenerateRequest,
     ProactiveGenerateTestRequest,
+    ProactiveRunOnceRequest,
     ProactiveSendQqRequest,
 )
 from app.security import require_admin_token
 from app.services.proactive_config_service import get_proactive_config, update_proactive_config
-from app.services.proactive_scheduler import check_proactive_now, get_proactive_scheduler_status
+from app.services.proactive_scheduler import (
+    check_proactive_now,
+    get_proactive_scheduler_status,
+    run_proactive_once_manual,
+)
 from app.services.proactive_service import (
     generate_proactive_candidate,
     generate_test_proactive_candidate,
@@ -59,6 +64,18 @@ def proactive_events(
 @router.post("/check-now", dependencies=[Depends(require_admin_token)])
 def proactive_check_now():
     return check_proactive_now()
+
+
+@router.post("/run-once", dependencies=[Depends(require_admin_token)])
+def proactive_run_once(req: ProactiveRunOnceRequest | None = Body(default=None)):
+    options = req or ProactiveRunOnceRequest()
+    return run_proactive_once_manual(
+        ignore_random=options.ignore_random,
+        ignore_recent_chat=options.ignore_recent_chat,
+        ignore_active_window=options.ignore_active_window,
+        force=options.force,
+        dry_run_only=options.dry_run_only,
+    )
 
 
 @router.get("/config", dependencies=[Depends(require_admin_token)])

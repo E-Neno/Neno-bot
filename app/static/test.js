@@ -769,8 +769,32 @@ function init() {
   loadProactiveEvents();
 }
 
+function finishInitialLoading() {
+  document.body?.classList.remove("app-loading");
+}
+
+function showInitializationError(error) {
+  const errorBox = document.createElement("div");
+  errorBox.id = "appInitError";
+  errorBox.className = "app-init-error";
+  errorBox.setAttribute("role", "alert");
+  errorBox.textContent = `页面初始化失败：${error instanceof Error ? error.message : String(error)}`;
+  document.body?.prepend(errorBox);
+}
+
+function runInit() {
+  try {
+    init();
+  } catch (err) {
+    console.error("Neno test page initialization failed", err);
+    showInitializationError(err);
+  } finally {
+    finishInitialLoading();
+  }
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener("DOMContentLoaded", runInit);
 } else {
-  init();
+  runInit();
 }

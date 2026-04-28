@@ -83,6 +83,14 @@ class ProactiveSendQqRequest(BaseModel):
     dry_run: StrictBool
 
 
+class ProactiveRunOnceRequest(BaseModel):
+    ignore_random: StrictBool = True
+    ignore_recent_chat: StrictBool = False
+    ignore_active_window: StrictBool = False
+    force: StrictBool = False
+    dry_run_only: StrictBool = True
+
+
 class ProactiveConfigUpdateRequest(BaseModel):
     PROACTIVE_ENABLED: StrictBool | None = None
     PROACTIVE_CHECK_INTERVAL_SECONDS: int | None = None

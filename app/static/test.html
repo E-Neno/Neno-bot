@@ -16,6 +16,43 @@
       color: #222;
     }
 
+    body.app-loading .app {
+      visibility: hidden;
+    }
+
+    .app-loading-state {
+      display: none;
+      position: fixed;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      background: #f6f7fb;
+      color: #64748b;
+      font-size: 14px;
+      z-index: 9999;
+    }
+
+    body.app-loading .app-loading-state {
+      display: flex;
+    }
+
+    .app-init-error {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      z-index: 10000;
+      width: min(520px, calc(100vw - 32px));
+      padding: 12px 14px;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-size: 13px;
+      line-height: 1.4;
+      transform: translateX(-50%);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+    }
+
     .app {
       display: grid;
       grid-template-columns: 1fr 320px;
@@ -777,7 +814,8 @@
     }
   </style>
 </head>
-<body>
+<body class="app-loading">
+  <div id="appLoadingState" class="app-loading-state" role="status" aria-live="polite">加载中...</div>
   <div class="app">
     <section class="chat">
       <div class="header">
