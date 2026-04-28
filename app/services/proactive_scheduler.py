@@ -38,6 +38,7 @@ from app.storage.db import (
     update_proactive_candidate_metadata,
     update_proactive_candidate_status,
 )
+from app.utils.logging_utils import log_event, new_trace_id
 
 _scheduler_task: asyncio.Task | None = None
 _last_check_at: str | None = None
@@ -138,7 +139,11 @@ def _latest_qq_target() -> dict[str, Any] | None:
     return get_latest_allowed_proactive_target("qq")
 
 
-def _skip(reason: str, checks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _skip(
+    reason: str,
+    checks: list[dict[str, Any]] | None = None,
+    trace_id: str | None = None,
+) -> dict[str, Any]:
     record_proactive_event(
         event_type="rule_skipped",
         platform="qq",
@@ -146,6 +151,15 @@ def _skip(reason: str, checks: list[dict[str, Any]] | None = None) -> dict[str, 
         success=True,
         skipped=True,
         reason=reason,
+    )
+    log_event(
+        "proactive",
+        "proactive_rule_skipped",
+        trace_id=trace_id,
+        action="skipped",
+        reason=reason,
+        success=True,
+        skipped=True,
     )
     return {
         "success": True,
@@ -361,7 +375,7 @@ def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
     }
 
 
-def _create_auto_candidate(target_row: dict[str, Any]) -> dict:
+def _create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = None) -> dict:
     target_hash = str(target_row["target_hash"] or "")
     session_id = str(target_row["session_id"] or "").strip()
     metadata = {
@@ -398,6 +412,16 @@ def _create_auto_candidate(target_row: dict[str, Any]) -> dict:
         success=True,
         skipped=False,
         metadata={"source": "auto_scheduler"},
+    )
+    log_event(
+        "proactive",
+        "proactive_candidate_generated",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        action="candidate_generated",
+        success=True,
+        skipped=False,
     )
     return candidate
 
@@ -442,9 +466,19 @@ def _candidate_can_auto_send(candidate: dict, target_row: dict[str, Any]) -> tup
     return True, None
 
 
-def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[str, Any]:
+def _auto_send_dry_run(
+    candidate: dict,
+    *,
+    event_source: str = "auto",
+    trace_id: str | None = None,
+) -> dict[str, Any]:
     try:
-        send_qq_candidate(candidate_id=candidate["id"], dry_run=True, event_source=event_source)
+        send_qq_candidate(
+            candidate_id=candidate["id"],
+            dry_run=True,
+            event_source=event_source,
+            trace_id=trace_id,
+        )
     except HTTPException as exc:
         _record_auto_send_error(candidate["id"], "auto_send_dry_run_failed", str(exc.detail))
         record_proactive_event(
@@ -455,6 +489,17 @@ def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[s
             action="auto_send_dry_run_failed",
             success=False,
             skipped=False,
+            reason=str(exc.detail),
+        )
+        log_event(
+            "proactive",
+            "proactive_dry_run_failed",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            action="auto_send_dry_run_failed",
+            dry_run=True,
+            success=False,
             reason=str(exc.detail),
         )
         return {
@@ -474,6 +519,17 @@ def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[s
             action="auto_send_dry_run_failed",
             success=False,
             skipped=False,
+            reason=type(exc).__name__,
+        )
+        log_event(
+            "proactive",
+            "proactive_dry_run_failed",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            action="auto_send_dry_run_failed",
+            dry_run=True,
+            success=False,
             reason=type(exc).__name__,
         )
         return {
@@ -501,6 +557,16 @@ def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[s
         success=True,
         skipped=False,
     )
+    log_event(
+        "proactive",
+        "proactive_dry_run_ok",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        action="auto_send_dry_run_ok",
+        dry_run=True,
+        success=True,
+    )
     return {
         "success": True,
         "skipped": False,
@@ -510,7 +576,11 @@ def _auto_send_dry_run(candidate: dict, *, event_source: str = "auto") -> dict[s
     }
 
 
-def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, Any]:
+def _auto_send_real(
+    candidate: dict,
+    target_row: dict[str, Any],
+    trace_id: str | None = None,
+) -> dict[str, Any]:
     can_send, blocked_reason = _candidate_can_auto_send(candidate, target_row)
     if not can_send:
         _update_candidate_metadata(
@@ -524,7 +594,12 @@ def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, An
         return _generated_pending_result(candidate, blocked_reason)
 
     try:
-        send_qq_candidate(candidate_id=candidate["id"], dry_run=False, event_source="auto")
+        send_qq_candidate(
+            candidate_id=candidate["id"],
+            dry_run=False,
+            event_source="auto",
+            trace_id=trace_id,
+        )
     except HTTPException as exc:
         _record_auto_send_error(candidate["id"], "auto_send_failed", str(exc.detail))
         update_proactive_candidate_status(candidate["id"], "failed")
@@ -536,6 +611,18 @@ def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, An
             action="auto_send_failed",
             success=False,
             skipped=False,
+            reason=str(exc.detail),
+        )
+        log_event(
+            "proactive",
+            "proactive_auto_failed",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            action="auto_send_failed",
+            dry_run=False,
+            auto_send=True,
+            success=False,
             reason=str(exc.detail),
         )
         return {
@@ -556,6 +643,18 @@ def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, An
             action="auto_send_failed",
             success=False,
             skipped=False,
+            reason=type(exc).__name__,
+        )
+        log_event(
+            "proactive",
+            "proactive_auto_failed",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            action="auto_send_failed",
+            dry_run=False,
+            auto_send=True,
+            success=False,
             reason=type(exc).__name__,
         )
         return {
@@ -583,6 +682,17 @@ def _auto_send_real(candidate: dict, target_row: dict[str, Any]) -> dict[str, An
         success=True,
         skipped=False,
     )
+    log_event(
+        "proactive",
+        "proactive_auto_sent",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        action="auto_sent",
+        dry_run=False,
+        auto_send=True,
+        success=True,
+    )
     return {
         "success": True,
         "skipped": False,
@@ -601,9 +711,19 @@ def _check_and_send_once(
     force: bool = False,
     dry_run_only: bool = False,
     event_source: str = "auto",
+    trace_id: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now()
     checks: list[dict[str, Any]] = []
+
+    log_event(
+        "proactive",
+        "proactive_check",
+        trace_id=trace_id,
+        action=event_source,
+        dry_run=dry_run_only or PROACTIVE_AUTO_SEND_DRY_RUN,
+        auto_send=PROACTIVE_AUTO_SEND,
+    )
 
     checks.append(
         _rule(
@@ -613,7 +733,7 @@ def _check_and_send_once(
         )
     )
     if not PROACTIVE_ENABLED:
-        return _skip("proactive scheduler disabled", checks)
+        return _skip("proactive scheduler disabled", checks, trace_id=trace_id)
 
     active_ok = _within_active_window(now)
     checks.append(
@@ -626,7 +746,7 @@ def _check_and_send_once(
         )
     )
     if not ignore_active_window and not active_ok:
-        return _skip(f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}", checks)
+        return _skip(f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}", checks, trace_id=trace_id)
 
     probability = max(0.0, min(1.0, PROACTIVE_RANDOM_PROBABILITY))
     if ignore_random:
@@ -641,7 +761,7 @@ def _check_and_send_once(
             )
         )
         if not random_hit:
-            return _skip("random probability missed", checks)
+            return _skip("random probability missed", checks, trace_id=trace_id)
 
     sent_count = _today_sent_count()
     daily_ok = sent_count < PROACTIVE_DAILY_LIMIT
@@ -653,7 +773,7 @@ def _check_and_send_once(
         )
     )
     if not daily_ok:
-        return _skip(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks)
+        return _skip(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks, trace_id=trace_id)
 
     last_sent = _parse_sqlite_datetime(_last_sent_at())
     min_interval_ok = last_sent is None or now - last_sent >= timedelta(minutes=PROACTIVE_MIN_INTERVAL_MINUTES)
@@ -664,7 +784,7 @@ def _check_and_send_once(
         min_interval_detail = f"距离上次自动主动消息约 {elapsed_minutes} 分钟，要求至少 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟"
     checks.append(_rule("min_interval", min_interval_ok, min_interval_detail))
     if not min_interval_ok:
-        return _skip(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks)
+        return _skip(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks, trace_id=trace_id)
 
     recent_chat = _has_recent_user_message()
     checks.append(
@@ -677,7 +797,7 @@ def _check_and_send_once(
         )
     )
     if not ignore_recent_chat and recent_chat:
-        return _skip(f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes", checks)
+        return _skip(f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes", checks, trace_id=trace_id)
 
     pending_candidate = _has_pending_qq_candidate()
     checks.append(
@@ -690,7 +810,7 @@ def _check_and_send_once(
         )
     )
     if not force and pending_candidate:
-        return _skip("pending qq candidate exists", checks)
+        return _skip("pending qq candidate exists", checks, trace_id=trace_id)
 
     target_row = _latest_qq_target()
     checks.append(
@@ -701,7 +821,7 @@ def _check_and_send_once(
         )
     )
     if target_row is None:
-        return _skip("no allowed qq target found in proactive_targets", checks)
+        return _skip("no allowed qq target found in proactive_targets", checks, trace_id=trace_id)
 
     target_hash = str(target_row["target_hash"] or "")
     whitelist_ok = bool(target_hash) and is_allowed_qq_target(target_hash)
@@ -713,28 +833,29 @@ def _check_and_send_once(
         )
     )
     if not whitelist_ok:
-        return _skip("latest qq target is not whitelisted", checks)
+        return _skip("latest qq target is not whitelisted", checks, trace_id=trace_id)
 
-    candidate = _create_auto_candidate(target_row)
+    candidate = _create_auto_candidate(target_row, trace_id=trace_id)
     if not PROACTIVE_AUTO_SEND:
         result = _generated_pending_result(candidate)
         result["checks"] = checks
         return result
 
     if dry_run_only or PROACTIVE_AUTO_SEND_DRY_RUN:
-        result = _auto_send_dry_run(candidate, event_source=event_source)
+        result = _auto_send_dry_run(candidate, event_source=event_source, trace_id=trace_id)
         result["checks"] = checks
         return result
 
-    result = _auto_send_real(candidate, target_row)
+    result = _auto_send_real(candidate, target_row, trace_id=trace_id)
     result["checks"] = checks
     return result
 
 
-async def run_proactive_check_once() -> dict[str, Any]:
+async def run_proactive_check_once(trace_id: str | None = None) -> dict[str, Any]:
     global _last_check_at, _last_result
+    trace_id = trace_id or new_trace_id()
     _last_check_at = _now_iso()
-    _last_result = await asyncio.to_thread(_check_and_send_once)
+    _last_result = await asyncio.to_thread(_check_and_send_once, trace_id=trace_id)
     record_proactive_event(
         event_type="scheduler_check",
         platform="qq",
@@ -749,6 +870,19 @@ async def run_proactive_check_once() -> dict[str, Any]:
             "sent": _last_result.get("sent"),
             "generated_pending": _last_result.get("generated_pending"),
         },
+    )
+    log_event(
+        "proactive",
+        "proactive_check",
+        trace_id=trace_id,
+        target_label=_last_result.get("target_label"),
+        candidate_id=_last_result.get("candidate_id"),
+        action=_last_result.get("action") or ("skipped" if _last_result.get("skipped") else "checked"),
+        success=_last_result.get("success"),
+        skipped=_last_result.get("skipped"),
+        reason=_last_result.get("reason") or _last_result.get("error"),
+        auto_send=PROACTIVE_AUTO_SEND,
+        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
     )
     return _last_result
 
@@ -784,8 +918,10 @@ def run_proactive_once_manual(
     ignore_active_window: bool = False,
     force: bool = False,
     dry_run_only: bool = True,
+    trace_id: str | None = None,
 ) -> dict[str, Any]:
     global _last_check_at, _last_result
+    trace_id = trace_id or new_trace_id()
     _last_check_at = _now_iso()
     try:
         raw_result = _check_and_send_once(
@@ -795,6 +931,7 @@ def run_proactive_once_manual(
             force=force,
             dry_run_only=dry_run_only,
             event_source="manual_scheduler_run",
+            trace_id=trace_id,
         )
     except Exception as exc:
         raw_result = {
@@ -826,30 +963,75 @@ def run_proactive_once_manual(
             "raw_action": raw_result.get("action"),
         },
     )
+    log_event(
+        "proactive",
+        "proactive_run_once",
+        trace_id=trace_id,
+        target_label=raw_result.get("target_label"),
+        candidate_id=response.get("candidate_id"),
+        action=response.get("action"),
+        success=response.get("success"),
+        skipped=response.get("action") == "skipped",
+        reason=response.get("reason"),
+        dry_run=dry_run_only,
+        auto_send=PROACTIVE_AUTO_SEND,
+    )
     return response
 
 
 async def _scheduler_loop() -> None:
     while True:
+        trace_id = new_trace_id()
         try:
-            result = await run_proactive_check_once()
-            print("proactive scheduler check:", result)
+            result = await run_proactive_check_once(trace_id=trace_id)
+            log_event(
+                "proactive",
+                "proactive_check",
+                trace_id=trace_id,
+                action=result.get("action") or ("skipped" if result.get("skipped") else "checked"),
+                success=result.get("success"),
+                skipped=result.get("skipped"),
+                reason=result.get("reason") or result.get("error"),
+                candidate_id=result.get("candidate_id"),
+                target_label=result.get("target_label"),
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print("proactive scheduler failed:", type(exc).__name__)
+            log_event(
+                "proactive",
+                "proactive_auto_failed",
+                trace_id=trace_id,
+                action="scheduler_check",
+                success=False,
+                reason=type(exc).__name__,
+            )
         await asyncio.sleep(PROACTIVE_CHECK_INTERVAL_SECONDS)
 
 
 def start_proactive_scheduler() -> asyncio.Task | None:
     global _scheduler_task
     if not PROACTIVE_ENABLED:
-        print("proactive scheduler disabled")
+        log_event(
+            "proactive",
+            "proactive_rule_skipped",
+            action="scheduler_start",
+            success=True,
+            skipped=True,
+            reason="proactive scheduler disabled",
+        )
         return None
     if _scheduler_task is not None and not _scheduler_task.done():
         return _scheduler_task
     _scheduler_task = asyncio.create_task(_scheduler_loop())
-    print("proactive scheduler started")
+    log_event(
+        "proactive",
+        "proactive_check",
+        action="scheduler_started",
+        success=True,
+        auto_send=PROACTIVE_AUTO_SEND,
+        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
+    )
     return _scheduler_task
 
 
@@ -905,7 +1087,8 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
     }
 
 
-def check_proactive_now() -> dict[str, Any]:
+def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
+    trace_id = trace_id or new_trace_id()
     evaluation = evaluate_proactive_rules(include_enabled=True)
     record_proactive_event(
         event_type="scheduler_check",
@@ -915,6 +1098,17 @@ def check_proactive_now() -> dict[str, Any]:
         skipped=not evaluation["can_send"],
         reason=evaluation["reason"],
         metadata={"manual_check": True},
+    )
+    log_event(
+        "proactive",
+        "proactive_check",
+        trace_id=trace_id,
+        action="check_now",
+        success=True,
+        skipped=not evaluation["can_send"],
+        reason=evaluation["reason"],
+        auto_send=PROACTIVE_AUTO_SEND,
+        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
     )
     return {
         "success": True,

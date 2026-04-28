@@ -3,6 +3,7 @@ from typing import Any
 
 from app.config import CHAT_MODEL_NAME, HISTORY_LIMIT, MEMORY_LIMIT, MEMORY_MODEL_NAME
 from app.storage.db import execute_write, fetch_all, fetch_one
+from app.utils.logging_utils import log_event
 
 
 def short_hash(value: str | None) -> str:
@@ -55,7 +56,12 @@ def record_chat_stat(
             ),
         )
     except Exception as exc:
-        print("stats write failed:", exc)
+        log_event(
+            "stats",
+            "stats_write_failed",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
 
 
 def get_stats_summary() -> dict[str, Any]:

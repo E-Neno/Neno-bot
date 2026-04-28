@@ -1,4 +1,5 @@
 import json
+import time
 
 from app.config import (
     CHAT_MODEL_NAME,
@@ -18,6 +19,7 @@ from app.services.relationship_service import (
 )
 from app.storage.db import add_message, get_recent_messages
 from app.storage.relationship import ensure_relationship_state
+from app.utils.logging_utils import log_event, new_trace_id
 
 MEMORY_EXTRACTION_PROMPT = """
 请判断下面这句话是否包含适合长期记忆的信息。
@@ -105,7 +107,7 @@ def build_chat_messages(
     return messages, used_memories
 
 
-def request_memory_candidate(message: str) -> dict | None:
+def request_memory_candidate(message: str, trace_id: str | None = None) -> dict | None:
     prompt = MEMORY_EXTRACTION_PROMPT.format(message=message)
     messages = [
         {"role": "system", "content": "你是一个专门负责提取长期记忆的助手。"},
@@ -119,10 +121,17 @@ def request_memory_candidate(message: str) -> dict | None:
             model_name=MEMORY_MODEL_NAME,
             messages=messages,
             timeout=60,
+            trace_id=trace_id,
         )
         data = json.loads(result)
     except Exception as exc:
-        print("AI记忆提取失败:", exc)
+        log_event(
+            "chat",
+            "memory_candidate_error",
+            trace_id=trace_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
         return None
 
     if data.get("content"):
@@ -134,51 +143,133 @@ def request_memory_candidate(message: str) -> dict | None:
     return data
 
 
-def generate_chat_reply(messages: list[dict]) -> str:
+def generate_chat_reply(messages: list[dict], trace_id: str | None = None) -> str:
     return chat_with_openrouter(
         api_key=require_api_key(),
         url=OPENROUTER_URL,
         model_name=CHAT_MODEL_NAME,
         messages=messages,
         timeout=60,
+        trace_id=trace_id,
     )
 
 
-def run_chat_turn(session_id: str, message: str) -> dict:
-    history = get_recent_messages(session_id, limit=HISTORY_LIMIT)
-    relationship_context = None
-    relationship_state = None
-    try:
-        ensure_relationship_state(session_id)
-        relationship_context = build_relationship_context(session_id)
-    except Exception as exc:
-        print("关系状态初始化失败:", exc)
-
-    messages, used_memories = build_chat_messages(
-        history=history,
-        message=message,
-        relationship_context=relationship_context,
+def run_chat_turn(session_id: str, message: str, trace_id: str | None = None) -> dict:
+    trace_id = trace_id or new_trace_id()
+    turn_started = time.perf_counter()
+    log_event(
+        "chat",
+        "chat_turn_start",
+        trace_id=trace_id,
+        session_id=session_id,
+        message_len=len(message or ""),
     )
-    candidate_memory = request_memory_candidate(message)
-
-    reply = generate_chat_reply(messages)
-
-    add_message(session_id, "user", message)
-    add_message(session_id, "assistant", reply)
 
     try:
-        relationship_state = apply_relationship_update(session_id, message)
-    except Exception as exc:
-        print("关系状态更新失败:", exc)
+        history = get_recent_messages(session_id, limit=HISTORY_LIMIT)
+        log_event(
+            "chat",
+            "recent_messages_loaded",
+            trace_id=trace_id,
+            session_id=session_id,
+            count=len(history),
+        )
+
+        relationship_context = None
+        relationship_state = None
         try:
-            relationship_state = get_relationship_state_for_api(session_id)
-        except Exception:
-            relationship_state = None
+            ensure_relationship_state(session_id)
+            relationship_context = build_relationship_context(session_id)
+        except Exception as exc:
+            log_event(
+                "chat",
+                "relationship_context_warning",
+                trace_id=trace_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
-    return {
-        "reply": reply,
-        "candidate_memory": candidate_memory,
-        "used_memories": used_memories,
-        "relationship_state": relationship_state,
-        "relationship_context": relationship_context,
-    }
+        messages, used_memories = build_chat_messages(
+            history=history,
+            message=message,
+            relationship_context=relationship_context,
+        )
+        log_event(
+            "chat",
+            "memories_loaded",
+            trace_id=trace_id,
+            session_id=session_id,
+            count=len(used_memories),
+        )
+
+        candidate_memory = request_memory_candidate(message, trace_id=trace_id)
+
+        model_started = time.perf_counter()
+        log_event(
+            "chat",
+            "model_request_start",
+            trace_id=trace_id,
+            model=CHAT_MODEL_NAME,
+        )
+        reply = generate_chat_reply(messages, trace_id=trace_id)
+        log_event(
+            "chat",
+            "model_response_ok",
+            trace_id=trace_id,
+            reply_len=len(reply or ""),
+            latency_ms=int((time.perf_counter() - model_started) * 1000),
+        )
+
+        add_message(session_id, "user", message)
+        add_message(session_id, "assistant", reply)
+
+        try:
+            relationship_state = apply_relationship_update(session_id, message)
+        except Exception as exc:
+            log_event(
+                "chat",
+                "relationship_update_warning",
+                trace_id=trace_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            try:
+                relationship_state = get_relationship_state_for_api(session_id)
+            except Exception as fallback_exc:
+                log_event(
+                    "chat",
+                    "relationship_state_fallback_warning",
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    error_type=type(fallback_exc).__name__,
+                    error_message=str(fallback_exc),
+                )
+                relationship_state = None
+
+        log_event(
+            "chat",
+            "chat_turn_finished",
+            trace_id=trace_id,
+            session_id=session_id,
+            latency_ms=int((time.perf_counter() - turn_started) * 1000),
+        )
+        return {
+            "reply": reply,
+            "candidate_memory": candidate_memory,
+            "used_memories": used_memories,
+            "relationship_state": relationship_state,
+            "relationship_context": relationship_context,
+        }
+    except Exception as exc:
+        log_event(
+            "chat",
+            "chat_turn_error",
+            trace_id=trace_id,
+            session_id=session_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            latency_ms=int((time.perf_counter() - turn_started) * 1000),
+        )
+        raise

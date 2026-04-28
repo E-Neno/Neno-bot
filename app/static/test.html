@@ -752,6 +752,66 @@
       gap: 8px;
     }
 
+    .debug-filter-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-items: end;
+    }
+
+    .debug-event-list {
+      display: grid;
+      gap: 8px;
+      white-space: normal;
+    }
+
+    .debug-event-item {
+      border: 1px solid #e5e7eb;
+      border-left: 4px solid #94a3b8;
+      border-radius: 10px;
+      padding: 10px;
+      background: #ffffff;
+      line-height: 1.35;
+    }
+
+    .debug-event-item.success {
+      border-left-color: #16a34a;
+      background: #f0fdf4;
+    }
+
+    .debug-event-item.skipped {
+      border-left-color: #94a3b8;
+      background: #f8fafc;
+    }
+
+    .debug-event-item.error {
+      border-left-color: #dc2626;
+      background: #fef2f2;
+    }
+
+    .debug-event-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .debug-event-main {
+      color: #111827;
+      font-size: 14px;
+      font-weight: 800;
+      word-break: break-word;
+    }
+
+    .debug-event-meta {
+      color: #64748b;
+      font-size: 12px;
+      margin-top: 5px;
+      word-break: break-word;
+    }
+
     @media (max-width: 980px) {
       .app.app-shell {
         grid-template-columns: 1fr;
@@ -790,7 +850,8 @@
 
       .console-grid.two,
       .proactive-config-grid,
-      .overview-actions {
+      .overview-actions,
+      .debug-filter-grid {
         grid-template-columns: 1fr;
       }
 

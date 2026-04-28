@@ -31,6 +31,7 @@ from app.storage.db import (
     update_proactive_candidate_status,
     upsert_proactive_target,
 )
+from app.utils.logging_utils import log_event
 
 SUPPORTED_PLATFORMS = {"qq"}
 SEND_QQ_TIMEOUT_SECONDS = 10
@@ -236,7 +237,12 @@ def record_proactive_event(
             metadata_json=_dump_candidate_metadata(_safe_event_metadata(metadata)),
         )
     except Exception as exc:
-        print("proactive event write failed:", type(exc).__name__)
+        log_event(
+            "proactive",
+            "proactive_event_write_warning",
+            error_type=type(exc).__name__,
+            reason="proactive event write failed",
+        )
 
 
 def sanitize_proactive_event(event: dict | None) -> dict | None:
@@ -289,6 +295,10 @@ def _get_target_label(target_row: dict[str, Any]) -> str:
 def _get_target_last_seen_at(target_row: dict[str, Any]) -> str | None:
     value = target_row.get("last_seen_at") or target_row.get("created_at")
     return str(value) if value else None
+
+
+def _log_proactive(event: str, trace_id: str | None = None, **fields: Any) -> None:
+    log_event("proactive", event, trace_id=trace_id, **fields)
 
 
 def sanitize_proactive_candidate(candidate: dict | None) -> dict | None:
@@ -409,23 +419,58 @@ def _record_failed_send(candidate: dict, error: str) -> dict | None:
     return update_proactive_candidate_status(candidate["id"], "failed")
 
 
-def _save_proactive_context(candidate: dict, message: str, metadata: dict[str, Any]) -> None:
+def _save_proactive_context(
+    candidate: dict,
+    message: str,
+    metadata: dict[str, Any],
+    trace_id: str | None = None,
+) -> None:
     session_id = str(metadata.get("session_id") or "").strip()
     if not session_id:
         metadata["context_save_warning"] = "missing session_id"
+        _log_proactive(
+            "proactive_context_save_warning",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            reason="missing session_id",
+            success=False,
+        )
         return
 
     try:
         add_message(session_id, "assistant", message)
     except Exception as exc:
         metadata["context_save_warning"] = f"add_message failed: {type(exc).__name__}"
+        _log_proactive(
+            "proactive_context_save_warning",
+            trace_id=trace_id,
+            candidate_id=candidate.get("id"),
+            target_label=candidate.get("target_label"),
+            reason=f"add_message failed: {type(exc).__name__}",
+            success=False,
+        )
         return
 
     metadata["proactive_context_saved"] = True
     metadata["proactive_context_saved_at"] = datetime.now().isoformat(timespec="seconds")
+    _log_proactive(
+        "proactive_context_saved",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        success=True,
+        message_len=len(message or ""),
+    )
 
 
-def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "manual") -> dict:
+def send_qq_candidate(
+    candidate_id: int,
+    dry_run: bool,
+    *,
+    event_source: str = "manual",
+    trace_id: str | None = None,
+) -> dict:
     if not isinstance(dry_run, bool):
         raise HTTPException(status_code=400, detail="dry_run must be a boolean")
 
@@ -436,6 +481,16 @@ def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "
         try:
             result = _post_neno_bridge_send_qq(candidate_id, message, dry_run=True)
         except Exception as exc:
+            _log_proactive(
+                "proactive_dry_run_failed",
+                trace_id=trace_id,
+                candidate_id=candidate_id,
+                target_label=candidate.get("target_label"),
+                action=f"{event_source}_dry_run",
+                dry_run=True,
+                success=False,
+                reason=getattr(exc, "detail", None) or type(exc).__name__,
+            )
             if event_source == "manual":
                 record_proactive_event(
                     event_type="manual_failed",
@@ -481,11 +536,31 @@ def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "
                 skipped=False,
                 metadata={"message_len": result.get("message_len"), "would_send": result.get("would_send") is True},
             )
+        _log_proactive(
+            "proactive_dry_run_ok",
+            trace_id=trace_id,
+            candidate_id=candidate_id,
+            target_label=result.get("target_label") or candidate.get("target_label"),
+            action=f"{event_source}_dry_run",
+            dry_run=True,
+            success=True,
+        )
         return response
 
     try:
         _ensure_allowed_qq_target(candidate)
     except HTTPException as exc:
+        if event_source == "manual":
+            _log_proactive(
+                "proactive_manual_failed",
+                trace_id=trace_id,
+                candidate_id=candidate_id,
+                target_label=candidate.get("target_label"),
+                action="manual_sent",
+                dry_run=False,
+                success=False,
+                reason=str(exc.detail),
+            )
         if event_source == "manual":
             record_proactive_event(
                 event_type="manual_failed",
@@ -503,6 +578,17 @@ def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "
         result = _post_neno_bridge_send_qq(candidate_id, message, dry_run=False)
     except HTTPException as exc:
         _record_failed_send(candidate, str(exc.detail))
+        if event_source == "manual":
+            _log_proactive(
+                "proactive_manual_failed",
+                trace_id=trace_id,
+                candidate_id=candidate_id,
+                target_label=candidate.get("target_label"),
+                action="manual_sent",
+                dry_run=False,
+                success=False,
+                reason=str(exc.detail),
+            )
         if event_source == "manual":
             record_proactive_event(
                 event_type="manual_failed",
@@ -526,7 +612,7 @@ def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "
         "target_label": result.get("target_label"),
         "message_len": result.get("message_len"),
     }
-    _save_proactive_context(candidate, message, metadata)
+    _save_proactive_context(candidate, message, metadata, trace_id=trace_id)
     updated_candidate = update_proactive_candidate_metadata(
         candidate_id,
         _dump_candidate_metadata(metadata),
@@ -553,39 +639,84 @@ def send_qq_candidate(candidate_id: int, dry_run: bool, *, event_source: str = "
             skipped=False,
             metadata={"message_len": result.get("message_len")},
         )
+        _log_proactive(
+            "proactive_manual_sent",
+            trace_id=trace_id,
+            candidate_id=candidate_id,
+            target_label=result.get("target_label") or candidate.get("target_label"),
+            action="manual_sent",
+            dry_run=False,
+            success=True,
+        )
     return response
 
 
-def generate_proactive_candidate(platform: str | None = None) -> dict:
+def generate_proactive_candidate(platform: str | None = None, trace_id: str | None = None) -> dict:
     now = datetime.now()
 
     if not _within_allowed_time(now):
+        reason = f"outside allowed generation window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}"
+        _log_proactive(
+            "proactive_rule_skipped",
+            trace_id=trace_id,
+            action="generate_candidate",
+            reason=reason,
+            skipped=True,
+            success=True,
+        )
         return {
             "success": True,
             "skipped": True,
-            "reason": f"outside allowed generation window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
+            "reason": reason,
         }
 
     if _has_recent_user_message():
+        reason = f"user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes"
+        _log_proactive(
+            "proactive_rule_skipped",
+            trace_id=trace_id,
+            action="generate_candidate",
+            reason=reason,
+            skipped=True,
+            success=True,
+        )
         return {
             "success": True,
             "skipped": True,
-            "reason": f"user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes",
+            "reason": reason,
         }
 
     if _count_today_candidates() >= PROACTIVE_DAILY_LIMIT:
+        reason = f"daily proactive candidate limit reached: {PROACTIVE_DAILY_LIMIT}"
+        _log_proactive(
+            "proactive_rule_skipped",
+            trace_id=trace_id,
+            action="generate_candidate",
+            reason=reason,
+            skipped=True,
+            success=True,
+        )
         return {
             "success": True,
             "skipped": True,
-            "reason": f"daily proactive candidate limit reached: {PROACTIVE_DAILY_LIMIT}",
+            "reason": reason,
         }
 
     selected_platform, target_row, skip_reason = _select_platform(platform)
     if not selected_platform or not target_row:
+        reason = skip_reason or "no eligible target"
+        _log_proactive(
+            "proactive_rule_skipped",
+            trace_id=trace_id,
+            action="generate_candidate",
+            reason=reason,
+            skipped=True,
+            success=True,
+        )
         return {
             "success": True,
             "skipped": True,
-            "reason": skip_reason or "no eligible target",
+            "reason": reason,
         }
 
     target_hash = _get_target_hash(target_row)
@@ -613,6 +744,15 @@ def generate_proactive_candidate(platform: str | None = None) -> dict:
         source="manual",
         metadata_json=_dump_candidate_metadata(metadata),
     )
+    _log_proactive(
+        "proactive_candidate_generated",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        action="generate_candidate",
+        success=True,
+        skipped=False,
+    )
     return {
         "success": True,
         "skipped": False,
@@ -620,7 +760,7 @@ def generate_proactive_candidate(platform: str | None = None) -> dict:
     }
 
 
-def generate_test_proactive_candidate(*, force: bool = False) -> dict:
+def generate_test_proactive_candidate(*, force: bool = False, trace_id: str | None = None) -> dict:
     selected_platform, target_row, skip_reason = _select_platform("qq")
     if selected_platform != "qq" or not target_row:
         raise HTTPException(status_code=404, detail=skip_reason or "no allowed qq proactive target")
@@ -679,6 +819,15 @@ def generate_test_proactive_candidate(*, force: bool = False) -> dict:
         success=True,
         skipped=False,
         metadata={"forced": force, "session_id_saved": True},
+    )
+    _log_proactive(
+        "proactive_candidate_generated",
+        trace_id=trace_id,
+        candidate_id=candidate.get("id"),
+        target_label=candidate.get("target_label"),
+        action="manual_generate_test",
+        success=True,
+        skipped=False,
     )
     return {
         "success": True,

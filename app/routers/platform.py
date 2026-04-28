@@ -8,6 +8,7 @@ from app.security import require_platform_token
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_qq_proactive_target
 from app.services.stats_service import record_chat_stat
+from app.utils.logging_utils import log_event, new_trace_id
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -72,6 +73,7 @@ def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, st
     dependencies=[Depends(require_platform_token)],
 )
 def openclaw_message(payload: Any = Body(...)):
+    trace_id = new_trace_id()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")
     try:
@@ -84,24 +86,36 @@ def openclaw_message(payload: Any = Body(...)):
     if len(message) > MAX_MESSAGE_LENGTH:
         raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
 
+    log_event(
+        "platform",
+        "message_received",
+        trace_id=trace_id,
+        platform=platform,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        message_len=len(message),
+    )
+
     if platform == "qq" and chat_type == "private":
         try:
             record_qq_proactive_target(session_id=session_id, user_id=user_id)
         except Exception as exc:
-            print("proactive target upsert failed:", type(exc).__name__)
-
-    print(
-        "platform message:",
-        f"platform={platform}",
-        f"user={mask_identifier(user_id)}",
-        f"chat_type={chat_type}",
-        f"session={mask_identifier(session_id)}",
-    )
+            log_event(
+                "platform",
+                "proactive_target_upsert_warning",
+                trace_id=trace_id,
+                platform=platform,
+                user_id=user_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+            )
 
     started = time.perf_counter()
     try:
-        result = run_chat_turn(session_id, message)
+        result = run_chat_turn(session_id, message, trace_id=trace_id)
     except Exception as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
         record_chat_stat(
             source="platform",
             platform=platform,
@@ -109,12 +123,24 @@ def openclaw_message(payload: Any = Body(...)):
             message=message,
             reply="",
             success=False,
-            latency_ms=int((time.perf_counter() - started) * 1000),
+            latency_ms=latency_ms,
             error_type=type(exc).__name__,
         )
-        print("platform chat failed:", exc)
+        log_event(
+            "platform",
+            "chat_turn_error",
+            trace_id=trace_id,
+            platform=platform,
+            chat_type=chat_type,
+            user_id=user_id,
+            session_id=session_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            latency_ms=latency_ms,
+        )
         raise HTTPException(status_code=500, detail="chat failed") from exc
 
+    latency_ms = int((time.perf_counter() - started) * 1000)
     record_chat_stat(
         source="platform",
         platform=platform,
@@ -122,7 +148,18 @@ def openclaw_message(payload: Any = Body(...)):
         message=message,
         reply=result["reply"],
         success=True,
-        latency_ms=int((time.perf_counter() - started) * 1000),
+        latency_ms=latency_ms,
+    )
+    log_event(
+        "platform",
+        "chat_turn_ok",
+        trace_id=trace_id,
+        platform=platform,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        latency_ms=latency_ms,
+        reply_len=len(result["reply"] or ""),
     )
 
     return PlatformMessageResponse(

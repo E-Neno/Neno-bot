@@ -141,6 +141,25 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS debug_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                trace_id TEXT,
+                module TEXT,
+                event TEXT,
+                level TEXT DEFAULT 'info',
+                success INTEGER,
+                skipped INTEGER,
+                action TEXT,
+                reason TEXT,
+                target_label TEXT,
+                candidate_id INTEGER,
+                metadata_json TEXT
+            )
+            """
+        )
 
 
 def add_message(session_id: str, role: str, content: str):
@@ -510,6 +529,123 @@ def list_proactive_events(limit: int = 50, event_type: str | None = None) -> lis
         LIMIT ?
         """,
         params,
+    )
+    return rows_to_dicts(rows, fields)
+
+
+def add_debug_event(
+    *,
+    trace_id: str | None,
+    module: str,
+    event: str,
+    level: str = "info",
+    success: bool | None = None,
+    skipped: bool | None = None,
+    action: str | None = None,
+    reason: str | None = None,
+    target_label: str | None = None,
+    candidate_id: int | None = None,
+    metadata_json: str = "{}",
+) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO debug_events (
+                trace_id,
+                module,
+                event,
+                level,
+                success,
+                skipped,
+                action,
+                reason,
+                target_label,
+                candidate_id,
+                metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trace_id,
+                module,
+                event,
+                level or "info",
+                None if success is None else 1 if success else 0,
+                None if skipped is None else 1 if skipped else 0,
+                action,
+                (reason or "")[:240] or None,
+                target_label,
+                candidate_id,
+                metadata_json,
+            ),
+        )
+        event_id = int(cursor.lastrowid)
+        conn.execute(
+            """
+            DELETE FROM debug_events
+            WHERE id NOT IN (
+                SELECT id
+                FROM debug_events
+                ORDER BY id DESC
+                LIMIT 1000
+            )
+            """
+        )
+        return event_id
+
+
+def _debug_event_fields() -> list[str]:
+    return [
+        "id",
+        "created_at",
+        "trace_id",
+        "module",
+        "event",
+        "level",
+        "success",
+        "skipped",
+        "action",
+        "reason",
+        "target_label",
+        "candidate_id",
+        "metadata_json",
+    ]
+
+
+def list_debug_events(
+    *,
+    limit: int = 100,
+    module: str | None = None,
+    event: str | None = None,
+    trace_id: str | None = None,
+    level: str | None = None,
+) -> list[dict]:
+    fields = _debug_event_fields()
+    bounded_limit = max(1, min(int(limit), 300))
+    clauses = []
+    params: list[Any] = []
+    for column, value in (
+        ("module", module),
+        ("event", event),
+        ("trace_id", trace_id),
+        ("level", level),
+    ):
+        cleaned = (value or "").strip() if isinstance(value, str) else value
+        if cleaned:
+            clauses.append(f"{column} = ?")
+            params.append(cleaned)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(bounded_limit)
+    rows = fetch_all(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM debug_events
+        {where}
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        tuple(params),
     )
     return rows_to_dicts(rows, fields)
 

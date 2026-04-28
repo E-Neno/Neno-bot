@@ -8,6 +8,7 @@ export const panelDefinitions = [
   ["relationshipPanel", "关系状态"],
   ["sessionPanel", "会话"],
   ["configPanel", "配置"],
+  ["debugPanel", "日志 / 调试"],
 ];
 
 export function getCardByElementId(id) {
@@ -284,6 +285,7 @@ export function buildConsoleLayout() {
     ["chatPanel", "打开聊天测试"],
     ["proactivePanel", "打开主动消息"],
     ["memoryPanel", "打开记忆库"],
+    ["debugPanel", "打开日志 / 调试"],
   ]) {
     const button = createElement("button", "secondary", label);
     button.type = "button";
@@ -336,6 +338,79 @@ export function buildConsoleLayout() {
     configPanel.panel.appendChild(configCard);
   }
 
+  const debugPanel = createPanel("debugPanel", "日志 / 调试", "查看最近结构化事件、错误和 trace 链路。");
+  const debugGrid = createElement("div", "console-grid");
+
+  const debugSummaryCard = createElement("div", "card");
+  debugSummaryCard.appendChild(createElement("h3", "", "事件摘要"));
+  const debugSummaryGrid = createElement("div", "status-grid");
+  appendStatusMetric(debugSummaryGrid, "最近事件", "debugTotalReturned");
+  appendStatusMetric(debugSummaryGrid, "最新时间", "debugLatestEventAt");
+  appendStatusMetric(debugSummaryGrid, "错误数", "debugErrorCount");
+  appendStatusMetric(debugSummaryGrid, "proactive", "debugProactiveCount");
+  appendStatusMetric(debugSummaryGrid, "platform", "debugPlatformCount");
+  appendStatusMetric(debugSummaryGrid, "chat", "debugChatCount");
+  appendStatusMetric(debugSummaryGrid, "openrouter", "debugOpenrouterCount");
+  debugSummaryCard.appendChild(debugSummaryGrid);
+  debugGrid.appendChild(debugSummaryCard);
+
+  const debugFilterCard = createElement("div", "card");
+  debugFilterCard.appendChild(createElement("h3", "", "筛选"));
+  const debugFilterForm = createElement("div", "config-form debug-filter-grid");
+  const moduleField = createElement("div", "config-field");
+  const moduleLabel = createElement("label", "", "module");
+  moduleLabel.setAttribute("for", "debugModuleInput");
+  const moduleSelect = createElement("select");
+  moduleSelect.id = "debugModuleInput";
+  for (const [value, label] of [
+    ["", "全部"],
+    ["platform", "platform"],
+    ["chat", "chat"],
+    ["openrouter", "openrouter"],
+    ["proactive", "proactive"],
+  ]) {
+    const option = createElement("option", "", label);
+    option.value = value;
+    moduleSelect.appendChild(option);
+  }
+  moduleField.append(moduleLabel, moduleSelect);
+
+  for (const [id, label, type, value] of [
+    ["debugEventInput", "event", "text", ""],
+    ["debugTraceInput", "trace_id", "text", ""],
+    ["debugLimitInput", "limit", "number", "100"],
+  ]) {
+    const field = createElement("div", "config-field");
+    const fieldLabel = createElement("label", "", label);
+    fieldLabel.setAttribute("for", id);
+    const input = createElement("input");
+    input.id = id;
+    input.type = type;
+    input.value = value;
+    if (id === "debugLimitInput") {
+      input.min = "1";
+      input.max = "300";
+    }
+    field.append(fieldLabel, input);
+    debugFilterForm.appendChild(field);
+  }
+  debugFilterForm.prepend(moduleField);
+  const debugActions = createElement("div", "row");
+  const refreshDebugButton = createElement("button", "", "刷新日志");
+  refreshDebugButton.id = "loadDebugEventsBtn";
+  debugActions.appendChild(refreshDebugButton);
+  debugFilterCard.append(debugFilterForm, debugActions, createElement("div", "status"));
+  debugFilterCard.lastChild.id = "debugStatus";
+  debugGrid.appendChild(debugFilterCard);
+
+  const debugEventsCard = createElement("div", "card");
+  debugEventsCard.appendChild(createElement("h3", "", "事件列表"));
+  debugEventsCard.appendChild(createElement("div", "debug-event-list", "还没加载"));
+  debugEventsCard.lastChild.id = "debugEventList";
+  debugGrid.appendChild(debugEventsCard);
+
+  debugPanel.panel.appendChild(debugGrid);
+
   main.append(
     overview.panel,
     chatPanel.panel,
@@ -343,7 +418,8 @@ export function buildConsoleLayout() {
     memoryPanel.panel,
     relationshipPanel.panel,
     sessionPanel.panel,
-    configPanel.panel
+    configPanel.panel,
+    debugPanel.panel
   );
 
   side.remove();

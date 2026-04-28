@@ -17,6 +17,10 @@ import {
   updateCurrentSessionStatus as setCurrentSessionStatus,
 } from "./js/layout.js";
 import {
+  bindDebugEvents,
+  loadDebugEvents,
+} from "./js/debug.js";
+import {
   bindProactiveEvents,
   loadProactiveCandidates,
   loadProactiveConfig,
@@ -754,6 +758,7 @@ function init() {
   buildConsoleLayout();
   bindBaseEvents();
   bindProactiveEvents();
+  bindDebugEvents();
   loadConfig();
   loadSessions();
   loadMemories();
@@ -761,6 +766,7 @@ function init() {
   loadRelationshipState();
   renderUsedMemories([]);
   updateAdminTokenStatus();
+  loadDebugEvents();
   loadStatsSummary();
   loadProactiveStatus();
   loadProactiveConfig();
