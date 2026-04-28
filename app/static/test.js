@@ -1,5 +1,34 @@
+import {
+  appendConfigLine,
+  clearChildren,
+  truncateText,
+} from "./js/dom.js";
+import {
+  clearAdminToken,
+  getAdminHeaders,
+  getAdminToken,
+  requestJson,
+  saveAdminToken,
+  updateAdminTokenStatus,
+} from "./js/api.js";
+import {
+  buildConsoleLayout,
+  setActivePanel,
+  updateCurrentSessionStatus as setCurrentSessionStatus,
+} from "./js/layout.js";
+import {
+  bindProactiveEvents,
+  loadProactiveCandidates,
+  loadProactiveConfig,
+  loadProactiveEvents,
+  loadProactiveStatus,
+  loadProactiveTargets,
+} from "./js/proactive.js";
+
 let lastCandidate = null;
 let onlyActive = false;
+let input = null;
+let sendBtn = null;
 
 const relationshipStagePresets = {
   stranger: {
@@ -44,373 +73,20 @@ const relationshipStagePresets = {
   },
 };
 
-const panelDefinitions = [
-  ["overviewPanel", "总览"],
-  ["chatPanel", "聊天测试"],
-  ["proactivePanel", "主动消息"],
-  ["memoryPanel", "记忆库"],
-  ["relationshipPanel", "关系状态"],
-  ["sessionPanel", "会话"],
-  ["configPanel", "配置"],
-];
-
-function createElement(tagName, className, text) {
-  const element = document.createElement(tagName);
-  if (className) {
-    element.className = className;
-  }
-  if (text !== undefined) {
-    element.textContent = text;
-  }
-  return element;
-}
-
-function getCardByElementId(id) {
-  return document.getElementById(id)?.closest(".card") || null;
-}
-
-function createPanel(id, title, subtitle) {
-  const panel = createElement("section", "console-panel");
-  panel.id = id;
-
-  const header = createElement("div", "panel-header");
-  const textBox = createElement("div");
-  textBox.append(
-    createElement("div", "panel-title", title),
-    createElement("div", "panel-subtitle", subtitle)
-  );
-  header.appendChild(textBox);
-  panel.appendChild(header);
-
-  return { panel, header };
-}
-
-function setActivePanel(panelId) {
-  for (const panel of document.querySelectorAll(".console-panel")) {
-    panel.classList.toggle("active", panel.id === panelId);
-  }
-  for (const button of document.querySelectorAll(".console-nav [data-panel-target]")) {
-    button.classList.toggle("active", button.dataset.panelTarget === panelId);
-  }
-}
-
-function appendStatusMetric(grid, label, id) {
-  const item = createElement("div", "status-item");
-  item.append(
-    createElement("div", "status-label", label),
-    createElement("div", "status-value", "-")
-  );
-  item.lastChild.id = id;
-  grid.appendChild(item);
-}
-
-function setOptionalText(id, value) {
-  const element = document.getElementById(id);
-  if (element) {
-    element.textContent = value ?? "-";
-  }
-}
-
-function buildProactivePanel(panel, header) {
-  const proactiveCard = getCardByElementId("proactiveCandidateList");
-  const statusNode = document.getElementById("proactiveCandidateStatus");
-  const refreshButton = document.getElementById("loadProactiveCandidatesBtn");
-  const refreshTargetsButton = document.getElementById("loadProactiveTargetsBtn");
-  const refreshEventsButton = document.getElementById("loadProactiveEventsBtn");
-  const generateButton = document.getElementById("generateProactiveCandidateBtn");
-  const generateTestButton = document.getElementById("generateProactiveTestCandidateBtn");
-  const forceGenerateTestButton = document.getElementById("forceGenerateProactiveTestCandidateBtn");
-  const platformForm = document.getElementById("proactivePlatformSelect")?.closest(".config-form");
-  const autoStatus = document.getElementById("proactiveAutoStatus");
-  const pendingList = document.getElementById("proactiveCandidateList");
-  const configDetails = document.querySelector(".config-panel");
-
-  if (refreshButton) {
-    const actions = createElement("div", "row");
-    actions.appendChild(refreshButton);
-    header.appendChild(actions);
-  }
-
-  if (statusNode) {
-    statusNode.classList.add("panel-status");
-    panel.appendChild(statusNode);
-  }
-
-  const grid = createElement("div", "console-grid");
-  panel.appendChild(grid);
-
-  const testCard = createElement("div", "card");
-  testCard.appendChild(createElement("h3", "", "测试区"));
-  testCard.appendChild(createElement(
-    "div",
-    "config-help",
-    "用于手动测试：生成 pending QQ 候选，不受随机概率、最近聊天、时间窗影响，不会自动发送。仍会检查 QQ 目标存在和 QQ 白名单。"
-  ));
-  const testRow = createElement("div", "row");
-  if (generateTestButton) {
-    testRow.appendChild(generateTestButton);
-  }
-  if (forceGenerateTestButton) {
-    testRow.appendChild(forceGenerateTestButton);
-  }
-  testCard.appendChild(testRow);
-  testCard.appendChild(createElement(
-    "div",
-    "config-help",
-    "已有 pending QQ 候选时，自动调度不会继续生成；你仍可手动发送、丢弃，或强制生成测试候选。"
-  ));
-  grid.appendChild(testCard);
-
-  const statusCard = createElement("div", "card");
-  statusCard.appendChild(createElement("h3", "", "自动区"));
-  statusCard.appendChild(createElement(
-    "div",
-    "config-help",
-    "这里是后台自动调度规则，不等于手动测试；自动调度仍按 enabled、时间窗、每日上限、最小间隔、最近聊天、随机概率、QQ 白名单和 pending 候选保守运行。"
-  ));
-  if (autoStatus) {
-    statusCard.appendChild(autoStatus);
-  }
-  const statusGrid = createElement("div", "status-grid");
-  appendStatusMetric(statusGrid, "开关", "proactiveStatusEnabled");
-  appendStatusMetric(statusGrid, "任务", "proactiveStatusRunning");
-  appendStatusMetric(statusGrid, "今日发送", "proactiveStatusToday");
-  appendStatusMetric(statusGrid, "自动真实发送", "proactiveStatusAutoSend");
-  appendStatusMetric(statusGrid, "自动 dry_run", "proactiveStatusAutoDryRun");
-  appendStatusMetric(statusGrid, "自动发送今日", "proactiveStatusAutoSentToday");
-  appendStatusMetric(statusGrid, "目标 allowed", "proactiveStatusAutoRequireAllowed");
-  appendStatusMetric(statusGrid, "最近发送", "proactiveStatusLastSent");
-  appendStatusMetric(statusGrid, "最近检查", "proactiveStatusLastCheck");
-  statusCard.appendChild(statusGrid);
-  statusCard.appendChild(createElement("div", "small", "上次检查结果：-"));
-  statusCard.lastChild.id = "proactiveLastResult";
-  statusCard.appendChild(createElement("div", "small", "规则摘要未加载"));
-  statusCard.lastChild.id = "proactiveRulesSummary";
-  grid.appendChild(statusCard);
-
-  const eventsCard = createElement("div", "card");
-  eventsCard.appendChild(createElement("h3", "", "调度时间线"));
-  eventsCard.appendChild(createElement("div", "config-help", "最近主动消息调度和手动操作事件；不显示完整 session_id/openid。"));
-  if (refreshEventsButton) {
-    const eventRow = createElement("div", "row");
-    eventRow.appendChild(refreshEventsButton);
-    eventsCard.appendChild(eventRow);
-  }
-  eventsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
-  eventsCard.lastChild.id = "proactiveEventList";
-  grid.appendChild(eventsCard);
-
-  const targetsCard = createElement("div", "card");
-  targetsCard.appendChild(createElement("h3", "", "主动目标"));
-  targetsCard.appendChild(createElement("div", "config-help", "最近 QQ 私聊会自动记录为主动目标；页面不显示完整 session_id。allowed 由后端按 QQ 白名单保守标记。"));
-  if (refreshTargetsButton) {
-    const targetRow = createElement("div", "row");
-    targetRow.appendChild(refreshTargetsButton);
-    targetsCard.appendChild(targetRow);
-  }
-  targetsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
-  targetsCard.lastChild.id = "proactiveTargetList";
-  grid.appendChild(targetsCard);
-
-  const decisionCard = createElement("div", "card");
-  decisionCard.appendChild(createElement("h3", "", "自动调度当前判断"));
-  decisionCard.appendChild(createElement("div", "config-help", "check-now 只刷新后台自动调度判断，不会发送消息。"));
-  decisionCard.appendChild(createElement("div", "status-value", "-"));
-  decisionCard.lastChild.id = "proactiveCanSendNow";
-  decisionCard.appendChild(createElement("div", "small", "尚未检查"));
-  decisionCard.lastChild.id = "proactiveCanSendReason";
-  const checkRow = createElement("div", "row");
-  checkRow.appendChild(createElement("button", "", "检查现在会不会发"));
-  checkRow.lastChild.id = "checkProactiveNowBtn";
-  if (generateButton) {
-    checkRow.appendChild(generateButton);
-  }
-  decisionCard.appendChild(checkRow);
-  if (platformForm) {
-    decisionCard.appendChild(platformForm);
-  }
-  decisionCard.appendChild(createElement("div", "proactive-check-grid", "还没有检查结果"));
-  decisionCard.lastChild.id = "proactiveCheckNowChecks";
-  grid.appendChild(decisionCard);
-
-  const pendingCard = createElement("div", "card");
-  pendingCard.appendChild(createElement("h3", "", "待处理候选 pending"));
-  pendingCard.appendChild(createElement("div", "config-help", "测试发送 QQ 使用 dry_run；真实发送 QQ 需要二次确认，成功后才写入 messages。"));
-  if (pendingList) {
-    pendingCard.appendChild(pendingList);
-  }
-  grid.appendChild(pendingCard);
-
-  const history = createElement("details", "card");
-  history.appendChild(createElement("summary", "", "显示历史"));
-  history.appendChild(createElement("div", "config-help", "历史记录 sent / dismissed / failed"));
-  history.appendChild(createElement("div", "proactive-history-list", "还没加载"));
-  history.lastChild.id = "proactiveHistoryList";
-  grid.appendChild(history);
-
-  const configCard = createElement("div", "card");
-  configCard.appendChild(createElement("h3", "", "自动配置"));
-  if (configDetails) {
-    const nodes = Array.from(configDetails.childNodes);
-    for (const node of nodes) {
-      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "SUMMARY") {
-        node.remove();
-        continue;
-      }
-      configCard.appendChild(node);
-    }
-    const form = configCard.querySelector(".config-form");
-    if (form) {
-      form.classList.add("proactive-config-grid");
-    }
-  }
-  grid.appendChild(configCard);
-
-  proactiveCard?.remove();
-}
-
-function buildConsoleLayout() {
-  const app = document.querySelector(".app");
-  const chat = document.querySelector(".chat");
-  const side = document.querySelector(".side");
-  if (!app || !chat || !side) {
-    return;
-  }
-
-  const sessionCard = getCardByElementId("sessionList");
-  const configCard = getCardByElementId("configBox");
-  const statsCard = getCardByElementId("statsToday");
-  const proactiveCard = getCardByElementId("proactiveCandidateList");
-  const relationshipCard = getCardByElementId("relationshipStatus");
-  const usedMemoryCard = getCardByElementId("usedMemories");
-  const candidateCard = getCardByElementId("candidateBox");
-  const memoryCard = getCardByElementId("memoryList");
-
-  const sidebar = createElement("aside", "console-sidebar");
-  const brand = createElement("div", "console-brand");
-  brand.append(
-    createElement("div", "console-brand-title", "Neno 控制台"),
-    createElement("div", "console-brand-subtitle", "本地测试与调试")
-  );
-  const nav = createElement("nav", "console-nav");
-  nav.setAttribute("aria-label", "Neno 测试页导航");
-  for (const [panelId, label] of panelDefinitions) {
-    const button = createElement("button", "", label);
-    button.type = "button";
-    button.dataset.panelTarget = panelId;
-    button.addEventListener("click", () => setActivePanel(panelId));
-    nav.appendChild(button);
-  }
-  sidebar.append(brand, nav);
-
-  const main = createElement("main", "console-main");
-  const overview = createPanel("overviewPanel", "总览", "运行状态、快捷入口和当前调试概况。");
-  if (statsCard) {
-    overview.panel.appendChild(statsCard);
-  }
-  const quickCard = createElement("div", "card");
-  quickCard.appendChild(createElement("h3", "", "快捷入口"));
-  const quickActions = createElement("div", "overview-actions");
-  for (const [panelId, label] of [
-    ["chatPanel", "打开聊天测试"],
-    ["proactivePanel", "打开主动消息"],
-    ["memoryPanel", "打开记忆库"],
-  ]) {
-    const button = createElement("button", "secondary", label);
-    button.type = "button";
-    button.dataset.panelTarget = panelId;
-    button.addEventListener("click", () => setActivePanel(panelId));
-    quickActions.appendChild(button);
-  }
-  quickCard.appendChild(quickActions);
-  overview.panel.appendChild(quickCard);
-
-  const chatPanel = createPanel("chatPanel", "聊天测试", "直接测试 Web 会话，并查看本轮候选记忆和命中记忆。");
-  const currentSession = createElement("div", "panel-subtitle", "当前打开 session：-");
-  currentSession.id = "currentSessionStatus";
-  chatPanel.header.appendChild(currentSession);
-  const chatGrid = createElement("div", "console-grid two");
-  chat.classList.add("console-chat");
-  chatGrid.appendChild(chat);
-  const chatSide = createElement("div", "console-grid");
-  if (usedMemoryCard) {
-    chatSide.appendChild(usedMemoryCard);
-  }
-  if (candidateCard) {
-    chatSide.appendChild(candidateCard);
-  }
-  chatGrid.appendChild(chatSide);
-  chatPanel.panel.appendChild(chatGrid);
-
-  const proactivePanel = createPanel("proactivePanel", "主动消息", "QQ 主动候选、自动状态和主动消息配置。");
-  if (proactiveCard) {
-    buildProactivePanel(proactivePanel.panel, proactivePanel.header);
-  }
-
-  const memoryPanel = createPanel("memoryPanel", "记忆库", "查看、编辑、启用和停用记忆。");
-  if (memoryCard) {
-    memoryPanel.panel.appendChild(memoryCard);
-  }
-
-  const relationshipPanel = createPanel("relationshipPanel", "关系状态", "查看和调整当前 session 的关系阶段。");
-  if (relationshipCard) {
-    relationshipPanel.panel.appendChild(relationshipCard);
-  }
-
-  const sessionPanel = createPanel("sessionPanel", "会话", "浏览历史 session 并打开到聊天测试。");
-  if (sessionCard) {
-    sessionPanel.panel.appendChild(sessionCard);
-  }
-
-  const configPanel = createPanel("configPanel", "配置", "Admin Token 和模型/上下文配置。");
-  if (configCard) {
-    configPanel.panel.appendChild(configCard);
-  }
-
-  main.append(
-    overview.panel,
-    chatPanel.panel,
-    proactivePanel.panel,
-    memoryPanel.panel,
-    relationshipPanel.panel,
-    sessionPanel.panel,
-    configPanel.panel
-  );
-
-  side.remove();
-  app.classList.add("app-shell");
-  app.replaceChildren(sidebar, main);
-  setActivePanel("proactivePanel");
-}
-
-const input = document.getElementById("messageInput");
-const sendBtn = document.getElementById("sendBtn");
-
-input.addEventListener("keydown", function (event) {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    sendMessage();
-  }
-});
-
 function getSessionId() {
   const value = document.getElementById("sessionInput").value.trim();
   return value || "web-test";
 }
 
 function updateCurrentSessionStatus(sessionId) {
-  setOptionalText("currentSessionStatus", `当前打开 session：${sessionId || getSessionId()}`);
-}
-
-function clearChildren(element) {
-  element.replaceChildren();
+  setCurrentSessionStatus(sessionId, getSessionId());
 }
 
 function addMessage(role, text) {
   const box = document.getElementById("messages");
   const div = document.createElement("div");
   div.className = "msg " + (role === "user" ? "user" : "bot");
-  div.innerText = text;
+  div.textContent = text;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
@@ -419,125 +95,13 @@ function resetMessages() {
   clearChildren(document.getElementById("messages"));
 }
 
-function formatErrorDetail(detail) {
-  if (typeof detail === "string") {
-    return detail;
-  }
-  if (detail === undefined || detail === null) {
-    return "";
-  }
-  try {
-    return JSON.stringify(detail);
-  } catch {
-    return String(detail);
-  }
-}
-
-async function requestJson(url, options, errorPrefix) {
-  const res = await fetch(url, options);
-  const raw = await res.text();
-  let data = {};
-
-  try {
-    data = raw ? JSON.parse(raw) : {};
-  } catch {
-    data = {};
-  }
-
-  if (!res.ok) {
-    const detail = formatErrorDetail(data.detail || data.error || raw || res.statusText);
-    if (res.status === 403) {
-      throw new Error(`HTTP ${res.status}: ${detail || "Admin Token 不正确或未配置"}`);
-    }
-    throw new Error(`${errorPrefix}HTTP ${res.status}: ${detail}`);
-  }
-
-  return data;
-}
-
-function setBusyButton(button, text = "处理中...") {
-  if (!button) {
-    return () => {};
-  }
-  const originalText = button.textContent;
-  button.disabled = true;
-  button.textContent = text;
-  return () => {
-    button.disabled = false;
-    button.textContent = originalText;
-  };
-}
-
-function getAdminToken() {
-  const inputToken = document.getElementById("adminTokenInput")?.value.trim() || "";
-  return inputToken || localStorage.getItem("neno_admin_token") || "";
-}
-
-function getAdminHeaders() {
-  const token = getAdminToken();
-  return {
-    "Content-Type": "application/json",
-    "X-Admin-Token": token,
-  };
-}
-
-function updateAdminTokenStatus() {
-  const status = document.getElementById("adminTokenStatus");
-  const input = document.getElementById("adminTokenInput");
-  const token = localStorage.getItem("neno_admin_token") || "";
-
-  input.value = token;
-  status.innerText = token ? "Admin Token 已保存" : "Admin Token 未设置";
-}
-
-function saveAdminToken() {
-  const token = document.getElementById("adminTokenInput").value.trim();
-  const status = document.getElementById("adminTokenStatus");
-
-  if (!token) {
-    localStorage.removeItem("neno_admin_token");
-    status.innerText = "Admin Token 未设置";
-    loadStatsSummary();
-    loadProactiveCandidates();
-    return;
-  }
-
-  localStorage.setItem("neno_admin_token", token);
-  status.innerText = "Admin Token 已保存";
-  loadStatsSummary();
-  loadProactiveCandidates();
-}
-
-function clearAdminToken() {
-  localStorage.removeItem("neno_admin_token");
-  document.getElementById("adminTokenInput").value = "";
-  document.getElementById("adminTokenStatus").innerText = "Admin Token 已清除";
-  loadProactiveCandidates();
-}
-
-function truncateText(text, maxLength = 80) {
-  const value = String(text || "");
-  return value.length > maxLength ? value.slice(0, maxLength) + "..." : value;
-}
-
-function appendConfigLine(box, label, value) {
-  const line = document.createElement("div");
-  line.className = "config-line";
-
-  const name = document.createElement("b");
-  name.textContent = `${label}:`;
-
-  line.append(name, ` ${value ?? ""}`);
-  box.appendChild(line);
-}
-
 function renderCandidate() {
   const box = document.getElementById("candidateBox");
   const status = document.getElementById("candidateStatus");
-  status.innerText = "";
+  status.textContent = "";
 
   if (!lastCandidate) {
-    box.innerText = "暂无候选记忆";
+    box.textContent = "暂无候选记忆";
     return;
   }
 
@@ -559,7 +123,7 @@ function renderUsedMemories(memories) {
   const items = (memories || []).slice(0, 5);
 
   if (items.length === 0) {
-    box.innerText = "暂无命中";
+    box.textContent = "暂无命中";
     return;
   }
 
@@ -587,24 +151,24 @@ function renderRelationshipState(state) {
     return;
   }
 
-  document.getElementById("relStageLabel").innerText = state.stage_label || "-";
-  document.getElementById("relConversationCount").innerText = state.conversation_count ?? 0;
-  document.getElementById("relFamiliarityScore").innerText = state.familiarity_score ?? 0;
-  document.getElementById("relTrustScore").innerText = state.trust_score ?? 0;
-  document.getElementById("relEmotionalDepthScore").innerText = state.emotional_depth_score ?? 0;
-  document.getElementById("relBoundaryScore").innerText = state.boundary_score ?? 0;
+  document.getElementById("relStageLabel").textContent = state.stage_label || "-";
+  document.getElementById("relConversationCount").textContent = state.conversation_count ?? 0;
+  document.getElementById("relFamiliarityScore").textContent = state.familiarity_score ?? 0;
+  document.getElementById("relTrustScore").textContent = state.trust_score ?? 0;
+  document.getElementById("relEmotionalDepthScore").textContent = state.emotional_depth_score ?? 0;
+  document.getElementById("relBoundaryScore").textContent = state.boundary_score ?? 0;
 }
 
 function renderRelationshipContext(context) {
   const box = document.getElementById("relationshipContextBox");
-  box.innerText = context || "暂无";
+  box.textContent = context || "暂无";
 }
 
 function renderSessions(sessions) {
   const list = document.getElementById("sessionList");
 
   if (sessions.length === 0) {
-    list.innerText = "暂无会话";
+    list.textContent = "暂无会话";
     return;
   }
 
@@ -639,7 +203,7 @@ function renderMemories(memories) {
   const list = document.getElementById("memoryList");
 
   if (memories.length === 0) {
-    list.innerText = "暂无记忆";
+    list.textContent = "暂无记忆";
     return;
   }
 
@@ -691,876 +255,6 @@ function renderMemories(memories) {
   }
 }
 
-function renderProactiveCandidates(candidates) {
-  const list = document.getElementById("proactiveCandidateList");
-  const historyList = document.getElementById("proactiveHistoryList");
-  const items = candidates || [];
-  const pending = items.filter((candidate) => candidate.status === "pending");
-  const history = sortProactiveHistory(
-    items.filter((candidate) => candidate.status !== "pending")
-  );
-  const visibleHistory = history.slice(0, 5);
-
-  renderProactiveCandidateList(list, pending, "暂无 pending 候选");
-  renderProactiveCandidateList(historyList, visibleHistory, "暂无历史候选");
-  if (historyList && history.length > visibleHistory.length) {
-    const note = document.createElement("div");
-    note.className = "history-note";
-    note.textContent = "仅显示最近 5 条历史";
-    historyList.appendChild(note);
-  }
-}
-
-function renderProactiveTargets(targets) {
-  const list = document.getElementById("proactiveTargetList");
-  const items = targets || [];
-  if (!list) {
-    return;
-  }
-  if (items.length === 0) {
-    list.textContent = "暂无主动目标。请先通过 QQ 私聊给机器人发一条消息。";
-    return;
-  }
-
-  clearChildren(list);
-  const latestQq = items.find((target) => target.platform === "qq") || items[0];
-  const title = createElement("div", "candidate-meta", "最近 QQ 主动目标");
-  list.appendChild(title);
-  list.appendChild(createProactiveTargetItem(latestQq));
-}
-
-function createProactiveTargetItem(target) {
-  const item = document.createElement("div");
-  item.className = "candidate-item";
-
-  const tag = document.createElement("div");
-  tag.className = `tag ${target.is_allowed ? "sent" : "failed"}`;
-  tag.textContent = `${target.platform || "-"} · ${target.is_allowed ? "allowed" : "not allowed"}`;
-
-  const label = document.createElement("div");
-  label.className = "candidate-content";
-  label.textContent = target.target_label || "-";
-
-  const meta = document.createElement("div");
-  meta.className = "candidate-meta";
-  meta.textContent = [
-    `last_seen_at=${target.last_seen_at || "-"}`,
-    `session_id_saved=${target.session_id_saved === true ? "true" : "false"}`,
-  ].join(" · ");
-
-  item.append(tag, label, meta);
-  return item;
-}
-
-function proactiveReasonText(reason) {
-  const text = String(reason || "");
-  const lower = text.toLowerCase();
-  if (!text) return "-";
-  if (lower.includes("random probability missed")) return "随机概率未命中";
-  if (lower.includes("pending candidate exists") || lower.includes("pending qq candidate exists")) return "已有待处理候选";
-  if (lower.includes("latest qq target is not whitelisted")) return "最近 QQ 目标未允许";
-  if (lower.includes("outside active window")) return "不在允许时间段";
-  if (lower.includes("recent chat exists") || lower.includes("qq user message seen") || lower.includes("user message seen")) return "最近刚聊过";
-  if (lower.includes("daily limit reached") || lower.includes("daily sent limit reached")) return "今日已达上限";
-  if (lower.includes("min interval not reached") || lower.includes("last sent is within")) return "距离上次主动消息还不够久";
-  return text;
-}
-
-function proactiveEventStateClass(event) {
-  if (event.success === false) return "failed";
-  if (event.skipped === true) return "dismissed";
-  if (event.success === true) return "sent";
-  return "dismissed";
-}
-
-function renderProactiveEvents(events) {
-  const list = document.getElementById("proactiveEventList");
-  const items = events || [];
-  if (!list) {
-    return;
-  }
-  if (items.length === 0) {
-    list.textContent = "暂无调度事件";
-    return;
-  }
-
-  clearChildren(list);
-  for (const event of items) {
-    list.appendChild(createProactiveEventItem(event));
-  }
-}
-
-function createProactiveEventItem(event) {
-  const item = document.createElement("div");
-  item.className = "candidate-item";
-
-  const tag = document.createElement("div");
-  tag.className = `tag ${proactiveEventStateClass(event)}`;
-  tag.textContent = event.event_type || "-";
-
-  const action = document.createElement("div");
-  action.className = "candidate-content";
-  action.textContent = event.action || "-";
-
-  const meta = document.createElement("div");
-  meta.className = "candidate-meta";
-  meta.textContent = [
-    event.created_at || "-",
-    `candidate_id=${event.candidate_id ?? "-"}`,
-    `target=${event.target_label || "-"}`,
-  ].join(" · ");
-
-  const reason = document.createElement("div");
-  reason.className = "candidate-meta";
-  reason.textContent = proactiveReasonText(event.reason);
-
-  item.append(tag, action, meta, reason);
-  return item;
-}
-
-function sortProactiveHistory(candidates) {
-  return candidates.slice().sort((a, b) => {
-    const aTime = Date.parse(a.updated_at || a.sent_at || a.created_at || "");
-    const bTime = Date.parse(b.updated_at || b.sent_at || b.created_at || "");
-    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
-      return bTime - aTime;
-    }
-    return (b.id || 0) - (a.id || 0);
-  });
-}
-
-function renderProactiveCandidateList(list, candidates, emptyText) {
-  if (!list) {
-    return;
-  }
-  if (!candidates || candidates.length === 0) {
-    list.textContent = emptyText;
-    return;
-  }
-  clearChildren(list);
-  for (const candidate of candidates) {
-    list.appendChild(createProactiveCandidateItem(candidate));
-  }
-}
-
-function candidateStatusLabel(status) {
-  if (status === "pending") return "pending";
-  if (status === "sent") return "sent";
-  if (status === "dismissed") return "dismissed";
-  if (status === "failed") return "failed";
-  return status || "-";
-}
-
-function createProactiveCandidateItem(candidate) {
-  const item = document.createElement("div");
-  item.className = "candidate-item";
-
-  const tag = document.createElement("div");
-  tag.className = `tag ${candidate.status || ""}`;
-  tag.textContent = `${candidate.platform || "-"} · ${candidateStatusLabel(candidate.status)} · ${candidate.target_label || "-"}`;
-
-  const content = document.createElement("div");
-  content.className = "candidate-content";
-  content.textContent = candidate.message || "";
-
-  const reason = document.createElement("div");
-  reason.className = "candidate-meta";
-  reason.textContent = candidate.reason || "";
-
-  const meta = document.createElement("div");
-  meta.className = "candidate-meta";
-  meta.textContent = `id=${candidate.id} · ${candidate.created_at || ""}`;
-
-  const row = document.createElement("div");
-  row.className = "row";
-
-  if (candidate.status === "pending") {
-    if (candidate.platform === "qq") {
-      appendQqSendButtons(row, candidate);
-    } else {
-      appendCandidateStatusText(row, "非 QQ 候选");
-    }
-    appendDismissButton(row, candidate);
-  } else if (candidate.status === "dismissed") {
-    appendCandidateStatusText(row, "已丢弃");
-  } else if (candidate.status === "sent") {
-    appendCandidateStatusText(row, "已发送");
-  } else if (candidate.status === "failed") {
-    appendCandidateStatusText(row, "发送失败");
-  } else {
-    appendCandidateStatusText(row, candidate.status || "未知状态");
-  }
-
-  item.append(tag, content, reason, meta, row);
-  return item;
-}
-
-function appendCandidateStatusText(row, text) {
-  const statusText = document.createElement("span");
-  statusText.className = "candidate-state-text";
-  statusText.textContent = text;
-  row.appendChild(statusText);
-}
-
-function appendDismissButton(row, candidate) {
-  const dismissButton = document.createElement("button");
-  dismissButton.className = candidate.status === "pending" ? "danger" : "";
-  dismissButton.textContent = "丢弃";
-  dismissButton.addEventListener("click", () => dismissProactiveCandidate(candidate.id, dismissButton));
-  row.appendChild(dismissButton);
-}
-
-function appendQqSendButtons(row, candidate) {
-  const dryRunButton = document.createElement("button");
-  dryRunButton.className = "good";
-  dryRunButton.textContent = "测试发送 QQ";
-  dryRunButton.addEventListener("click", () => dryRunSendQqCandidate(candidate.id, dryRunButton));
-  row.appendChild(dryRunButton);
-
-  const sendButton = document.createElement("button");
-  sendButton.className = "danger";
-  sendButton.textContent = "真实发送 QQ";
-  sendButton.addEventListener("click", () => sendQqCandidate(candidate.id, sendButton));
-  row.appendChild(sendButton);
-}
-
-function formatCheckState(ok) {
-  if (ok === true) {
-    return "通过";
-  }
-  if (ok === false) {
-    return "未通过";
-  }
-  return "不参与判断";
-}
-
-function renderProactiveChecks(checks) {
-  const list = document.getElementById("proactiveCheckNowChecks");
-  if (!list) {
-    return;
-  }
-  if (!checks || checks.length === 0) {
-    list.textContent = "没有检查结果";
-    return;
-  }
-
-  clearChildren(list);
-  for (const check of checks) {
-    const item = document.createElement("div");
-    item.className = "check-item";
-
-    const tag = document.createElement("div");
-    const okClass = check.ok === true ? "sent" : check.ok === false ? "failed" : "dismissed";
-    tag.className = `tag ${okClass}`;
-    tag.textContent = formatCheckState(check.ok);
-
-    const name = document.createElement("div");
-    name.className = "check-name";
-    name.textContent = check.name || "-";
-
-    const detail = document.createElement("div");
-    detail.className = "check-detail";
-    detail.textContent = check.detail || "";
-
-    item.append(tag, name, detail);
-    list.appendChild(item);
-  }
-}
-
-function renderProactiveDecision(data) {
-  const canSend = data?.can_send ?? data?.can_send_now?.can_send ?? data?.can_send_now?.boolean;
-  const reason = data?.reason ?? data?.can_send_now?.reason ?? "-";
-  setOptionalText("proactiveCanSendNow", canSend === true ? "自动调度规则允许发送" : "自动调度当前不会发送");
-  setOptionalText("proactiveCanSendReason", reason);
-  if (Array.isArray(data?.checks)) {
-    renderProactiveChecks(data.checks);
-  }
-}
-
-function renderProactiveRulesSummary(items) {
-  const box = document.getElementById("proactiveRulesSummary");
-  if (!box) {
-    return;
-  }
-  if (!items || items.length === 0) {
-    box.textContent = "规则摘要未加载";
-    return;
-  }
-  box.textContent = items.map((item) => `- ${item}`).join("\n");
-}
-
-function renderProactiveLastResult(result) {
-  const box = document.getElementById("proactiveLastResult");
-  if (!box) {
-    return;
-  }
-  if (!result) {
-    box.textContent = "上次检查结果：暂无";
-    return;
-  }
-
-  const parts = [];
-  if (result.action) {
-    parts.push(result.action);
-  } else if (result.skipped === true) {
-    parts.push("已跳过");
-  } else if (result.sent === true) {
-    parts.push("已发送");
-  } else if (result.success === false) {
-    parts.push("失败");
-  } else {
-    parts.push("已检查");
-  }
-  if (result.reason) {
-    parts.push(result.reason);
-  }
-  if (result.candidate_id) {
-    parts.push(`candidate id=${result.candidate_id}`);
-  }
-  box.textContent = `上次检查结果：${parts.join(" · ")}`;
-}
-
-function renderProactiveAutoStatus(data) {
-  const box = document.getElementById("proactiveAutoStatus");
-  const config = data.config || {};
-  const enabled = data.enabled ? "开启" : "关闭";
-  const running = data.task_running ? "运行中" : "未运行";
-  const lastSent = data.last_sent_at || "-";
-  const lastCheck = data.last_check_at || "-";
-  const today = data.today_sent_count ?? 0;
-  const limit = config.daily_limit ?? "-";
-  const autoSend = data.auto_send_enabled ? "开启" : "关闭";
-  const autoDryRun = data.auto_send_dry_run ? "开启" : "关闭";
-  const requireAllowed = data.auto_send_require_allowed_target ? "是" : "否";
-  const autoSentToday = data.auto_sent_today ?? 0;
-  const autoSendLimit = data.auto_send_max_per_day ?? "-";
-  const lastAction = data.last_result?.action || (data.last_result?.skipped ? "skipped" : "-");
-
-  if (box) {
-    box.textContent = [
-      `自动：${enabled} · ${running}`,
-      `今日 ${today}/${limit}`,
-      `自动真实发送 ${autoSend}`,
-      `自动 dry_run ${autoDryRun}`,
-      `自动发送 ${autoSentToday}/${autoSendLimit}`,
-      `目标必须 allowed ${requireAllowed}`,
-      `最近自动结果 ${lastAction}`,
-      `最近发送 ${lastSent}`,
-      `最近检查 ${lastCheck}`,
-      `间隔 ${config.check_interval_seconds ?? "-"}s`,
-      `时间窗 ${config.active_start || "-"}-${config.active_end || "-"}`,
-    ].join(" · ");
-  }
-
-  setOptionalText("proactiveStatusEnabled", enabled);
-  setOptionalText("proactiveStatusRunning", running);
-  setOptionalText("proactiveStatusToday", `${today}/${limit}`);
-  setOptionalText("proactiveStatusAutoSend", autoSend);
-  setOptionalText("proactiveStatusAutoDryRun", autoDryRun);
-  setOptionalText("proactiveStatusAutoSentToday", `${autoSentToday}/${autoSendLimit}`);
-  setOptionalText("proactiveStatusAutoRequireAllowed", requireAllowed);
-  setOptionalText("proactiveStatusLastSent", lastSent);
-  setOptionalText("proactiveStatusLastCheck", lastCheck);
-  renderProactiveLastResult(data.last_result);
-  renderProactiveRulesSummary(data.next_rules_summary || []);
-  renderProactiveDecision(data);
-}
-
-async function loadProactiveStatus() {
-  const box = document.getElementById("proactiveAutoStatus");
-  const token = getAdminToken();
-
-  if (!box) {
-    return;
-  }
-  if (!token) {
-    box.textContent = "自动状态需要 Admin Token";
-    return;
-  }
-
-  try {
-    const data = await requestJson(
-      "/proactive/status",
-      {
-        method: "GET",
-        headers: getAdminHeaders(),
-      },
-      "加载自动状态失败："
-    );
-    renderProactiveAutoStatus(data);
-  } catch (err) {
-    box.textContent = err.message;
-  }
-}
-
-async function checkProactiveNow(triggerButton) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    resetButton();
-    return;
-  }
-
-  status.textContent = "处理中...";
-  try {
-    const data = await requestJson(
-      "/proactive/check-now",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-      },
-      "检查失败："
-    );
-    renderProactiveDecision(data);
-    status.textContent = "自动调度当前判断已刷新";
-    loadProactiveEvents();
-  } catch (err) {
-    status.textContent = err.message;
-  } finally {
-    resetButton();
-  }
-}
-
-function setInputValue(id, value) {
-  const input = document.getElementById(id);
-  if (input) {
-    input.value = value ?? "";
-  }
-}
-
-function readNumberInput(id) {
-  const value = document.getElementById(id).value;
-  return Number(value);
-}
-
-function renderProactiveConfig(data) {
-  const config = data.config || {};
-  const hashesInput = document.getElementById("proactiveAllowedHashesInput");
-  const hashesPreview = document.getElementById("proactiveAllowedHashesPreview");
-  const labels = config.PROACTIVE_QQ_ALLOWED_TARGET_HASHES_LABELS || [];
-
-  setInputValue("proactiveEnabledInput", config.PROACTIVE_ENABLED || "false");
-  setInputValue("proactiveCheckIntervalInput", config.PROACTIVE_CHECK_INTERVAL_SECONDS);
-  setInputValue("proactiveDailyLimitInput", config.PROACTIVE_DAILY_LIMIT);
-  setInputValue("proactiveMinIntervalInput", config.PROACTIVE_MIN_INTERVAL_MINUTES);
-  setInputValue("proactiveRecentSkipInput", config.PROACTIVE_RECENT_CHAT_SKIP_MINUTES);
-  setInputValue("proactiveActiveStartInput", config.PROACTIVE_ACTIVE_START);
-  setInputValue("proactiveActiveEndInput", config.PROACTIVE_ACTIVE_END);
-  setInputValue("proactiveRandomProbabilityInput", config.PROACTIVE_RANDOM_PROBABILITY);
-  setInputValue("proactiveAutoSendInput", config.PROACTIVE_AUTO_SEND || "false");
-  setInputValue("proactiveAutoSendDryRunInput", config.PROACTIVE_AUTO_SEND_DRY_RUN || "false");
-  setInputValue("proactiveAutoSendRequireAllowedInput", config.PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET || "true");
-  setInputValue("proactiveAutoSendMaxPerDayInput", config.PROACTIVE_AUTO_SEND_MAX_PER_DAY || "1");
-  setInputValue("proactiveBridgeUrlInput", config.NENO_BRIDGE_SEND_QQ_URL);
-
-  if (hashesInput) {
-    hashesInput.value = "";
-    hashesInput.dataset.dirty = "false";
-    hashesInput.placeholder = labels.length ? "留空保留当前白名单；输入逗号分隔 hash 覆盖" : "为空；输入逗号分隔 hash 覆盖";
-  }
-
-  if (hashesPreview) {
-    hashesPreview.textContent = labels.length
-      ? `当前白名单：${labels.join(", ")}`
-      : "当前白名单为空";
-  }
-}
-
-async function loadProactiveConfig() {
-  const status = document.getElementById("proactiveConfigStatus");
-  const token = getAdminToken();
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    return;
-  }
-
-  status.textContent = "加载配置中...";
-  try {
-    const data = await requestJson(
-      "/proactive/config",
-      {
-        method: "GET",
-        headers: getAdminHeaders(),
-      },
-      "加载配置失败："
-    );
-    renderProactiveConfig(data);
-    status.textContent = "配置已刷新";
-    loadProactiveStatus();
-  } catch (err) {
-    status.textContent = err.message;
-  }
-}
-
-async function saveProactiveConfig() {
-  const status = document.getElementById("proactiveConfigStatus");
-  const token = getAdminToken();
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    return;
-  }
-
-  const hashesInput = document.getElementById("proactiveAllowedHashesInput");
-  const payload = {
-    PROACTIVE_ENABLED: document.getElementById("proactiveEnabledInput").value === "true",
-    PROACTIVE_CHECK_INTERVAL_SECONDS: readNumberInput("proactiveCheckIntervalInput"),
-    PROACTIVE_DAILY_LIMIT: readNumberInput("proactiveDailyLimitInput"),
-    PROACTIVE_MIN_INTERVAL_MINUTES: readNumberInput("proactiveMinIntervalInput"),
-    PROACTIVE_RECENT_CHAT_SKIP_MINUTES: readNumberInput("proactiveRecentSkipInput"),
-    PROACTIVE_ACTIVE_START: document.getElementById("proactiveActiveStartInput").value,
-    PROACTIVE_ACTIVE_END: document.getElementById("proactiveActiveEndInput").value,
-    PROACTIVE_RANDOM_PROBABILITY: Number(document.getElementById("proactiveRandomProbabilityInput").value),
-    PROACTIVE_AUTO_SEND: document.getElementById("proactiveAutoSendInput").value === "true",
-    PROACTIVE_AUTO_SEND_DRY_RUN: document.getElementById("proactiveAutoSendDryRunInput").value === "true",
-    PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET: document.getElementById("proactiveAutoSendRequireAllowedInput").value === "true",
-    PROACTIVE_AUTO_SEND_MAX_PER_DAY: readNumberInput("proactiveAutoSendMaxPerDayInput"),
-    NENO_BRIDGE_SEND_QQ_URL: document.getElementById("proactiveBridgeUrlInput").value.trim(),
-  };
-
-  if (hashesInput?.dataset.dirty === "true") {
-    payload.PROACTIVE_QQ_ALLOWED_TARGET_HASHES = hashesInput.value.trim();
-  }
-
-  status.textContent = "保存配置中...";
-  try {
-    await requestJson(
-      "/proactive/config",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify(payload),
-      },
-      "保存配置失败："
-    );
-    await loadProactiveConfig();
-    status.textContent = "已保存，需要执行 nereboot 或 sudo systemctl restart emotion-bot.service 生效。重启后刷新状态。";
-  } catch (err) {
-    status.textContent = err.message;
-  }
-}
-
-async function loadProactiveCandidates(triggerButton) {
-  const list = document.getElementById("proactiveCandidateList");
-  const historyList = document.getElementById("proactiveHistoryList");
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    list.textContent = "需要 Admin Token";
-    if (historyList) {
-      historyList.textContent = "需要 Admin Token";
-    }
-    status.textContent = "";
-    loadProactiveStatus();
-    resetButton();
-    return;
-  }
-
-  list.textContent = "加载中...";
-  if (historyList) {
-    historyList.textContent = "加载中...";
-  }
-  status.textContent = "处理中...";
-
-  try {
-    const data = await requestJson(
-      "/proactive/candidates",
-      {
-        method: "GET",
-        headers: getAdminHeaders(),
-      },
-      "加载失败："
-    );
-    renderProactiveCandidates(data.candidates || []);
-    status.textContent = "已刷新";
-    loadProactiveStatus();
-  } catch (err) {
-    list.textContent = err.message;
-    if (historyList) {
-      historyList.textContent = err.message;
-    }
-    status.textContent = err.message;
-  } finally {
-    resetButton();
-  }
-}
-
-async function loadProactiveTargets(triggerButton) {
-  const list = document.getElementById("proactiveTargetList");
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!list) {
-    resetButton();
-    return;
-  }
-  if (!token) {
-    list.textContent = "需要 Admin Token";
-    if (status) {
-      status.textContent = "";
-    }
-    resetButton();
-    return;
-  }
-
-  list.textContent = "加载中...";
-  try {
-    const data = await requestJson(
-      "/proactive/targets",
-      {
-        method: "GET",
-        headers: getAdminHeaders(),
-      },
-      "加载主动目标失败："
-    );
-    renderProactiveTargets(data.targets || []);
-    if (status) {
-      status.textContent = "主动目标已刷新";
-    }
-  } catch (err) {
-    list.textContent = err.message;
-    if (status) {
-      status.textContent = err.message;
-    }
-  } finally {
-    resetButton();
-  }
-}
-
-async function loadProactiveEvents(triggerButton) {
-  const list = document.getElementById("proactiveEventList");
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!list) {
-    resetButton();
-    return;
-  }
-  if (!token) {
-    list.textContent = "需要 Admin Token";
-    if (status) {
-      status.textContent = "";
-    }
-    resetButton();
-    return;
-  }
-
-  list.textContent = "加载中...";
-  try {
-    const data = await requestJson(
-      "/proactive/events?limit=30",
-      {
-        method: "GET",
-        headers: getAdminHeaders(),
-      },
-      "加载时间线失败："
-    );
-    renderProactiveEvents(data.events || []);
-    if (status) {
-      status.textContent = "调度时间线已刷新";
-    }
-  } catch (err) {
-    list.textContent = err.message;
-    if (status) {
-      status.textContent = err.message;
-    }
-  } finally {
-    resetButton();
-  }
-}
-
-async function generateProactiveCandidate(triggerButton) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    resetButton();
-    return;
-  }
-
-  const platform = document.getElementById("proactivePlatformSelect").value;
-  const payload = platform ? { platform } : {};
-  status.textContent = "处理中...";
-
-  try {
-    const data = await requestJson(
-      "/proactive/generate",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify(payload),
-      },
-      "生成失败："
-    );
-
-    if (data.skipped) {
-      status.textContent = `已跳过：${data.reason || ""}`;
-    } else {
-      status.textContent = "已按自动规则生成候选";
-    }
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveTargets();
-    loadProactiveEvents();
-  } catch (err) {
-    status.textContent = err.message;
-  } finally {
-    resetButton();
-  }
-}
-
-async function generateProactiveTestCandidate(triggerButton, force) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    resetButton();
-    return;
-  }
-
-  status.textContent = force ? "强制生成测试候选中..." : "生成测试候选中...";
-
-  try {
-    const data = await requestJson(
-      "/proactive/generate-test",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify({ force }),
-      },
-      "生成测试候选失败："
-    );
-    const savedText = data.session_id_saved ? "，已保存 session_id" : "";
-    status.textContent = `已生成测试候选${savedText}`;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveTargets();
-    loadProactiveEvents();
-  } catch (err) {
-    if (String(err.message || "").includes("409")) {
-      status.textContent = "已有待处理候选，可先发送/丢弃，或使用强制生成测试候选。";
-    } else {
-      status.textContent = err.message;
-    }
-  } finally {
-    resetButton();
-  }
-}
-
-async function dismissProactiveCandidate(id, triggerButton) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const resetButton = setBusyButton(triggerButton);
-  status.textContent = "处理中...";
-
-  try {
-    await requestJson(
-      "/proactive/dismiss",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify({ id }),
-      },
-      "丢弃失败："
-    );
-    status.textContent = "已丢弃";
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
-  } catch (err) {
-    status.textContent = err.message;
-  } finally {
-    resetButton();
-  }
-}
-
-async function dryRunSendQqCandidate(id, triggerButton) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    resetButton();
-    return;
-  }
-
-  status.textContent = "处理中...";
-
-  try {
-    const data = await requestJson(
-      "/proactive/send-qq",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify({ id, dry_run: true }),
-      },
-      "测试失败："
-    );
-    status.textContent = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
-  } catch (err) {
-    status.textContent = err.message;
-  } finally {
-    resetButton();
-  }
-}
-
-async function sendQqCandidate(id, triggerButton) {
-  const status = document.getElementById("proactiveCandidateStatus");
-  const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
-
-  if (!token) {
-    status.textContent = "需要 Admin Token";
-    resetButton();
-    return;
-  }
-
-  const ok = confirm("确认发送这条主动消息到 QQ？这会真的发出去。");
-  if (!ok) {
-    resetButton();
-    return;
-  }
-
-  status.textContent = "处理中...";
-
-  try {
-    const data = await requestJson(
-      "/proactive/send-qq",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify({ id, dry_run: false }),
-      },
-      "发送失败："
-    );
-    status.textContent = `已真实发送到 ${data.target_label || "-"}`;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
-  } catch (err) {
-    status.textContent = err.message;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-  } finally {
-    resetButton();
-  }
-}
-
 async function sendMessage() {
   const text = input.value.trim();
   if (!text) {
@@ -1570,7 +264,7 @@ async function sendMessage() {
   input.value = "";
   addMessage("user", text);
   sendBtn.disabled = true;
-  sendBtn.innerText = "发送中...";
+  sendBtn.textContent = "发送中...";
 
   try {
     const data = await requestJson(
@@ -1595,15 +289,15 @@ async function sendMessage() {
     addMessage("bot", err.message);
   } finally {
     sendBtn.disabled = false;
-    sendBtn.innerText = "发送";
+    sendBtn.textContent = "发送";
   }
 }
 
 async function loadConfig() {
   const box = document.getElementById("configBox");
   const status = document.getElementById("configStatus");
-  box.innerText = "加载中...";
-  status.innerText = "";
+  box.textContent = "加载中...";
+  status.textContent = "";
 
   try {
     const data = await requestJson("/config", undefined, "加载失败：");
@@ -1617,12 +311,12 @@ async function loadConfig() {
     document.getElementById("historyLimitInput").value = data.history_limit ?? "";
     document.getElementById("memoryLimitInput").value = data.memory_limit ?? "";
   } catch (err) {
-    box.innerText = err.message;
+    box.textContent = err.message;
   }
 }
 
 function setStatsText(id, value) {
-  document.getElementById(id).innerText = value ?? "-";
+  document.getElementById(id).textContent = value ?? "-";
 }
 
 function renderStatsSummary(summary) {
@@ -1642,11 +336,11 @@ async function loadStatsSummary() {
   const token = getAdminToken();
 
   if (!token) {
-    status.innerText = "设置 Admin Token 后可刷新状态";
+    status.textContent = "设置 Admin Token 后可刷新状态";
     return;
   }
 
-  status.innerText = "加载中...";
+  status.textContent = "加载中...";
 
   try {
     const data = await requestJson(
@@ -1658,15 +352,15 @@ async function loadStatsSummary() {
       "加载失败："
     );
     renderStatsSummary(data.summary || {});
-    status.innerText = "已刷新";
+    status.textContent = "已刷新";
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
 async function saveConfig() {
   const status = document.getElementById("configStatus");
-  status.innerText = "保存中...";
+  status.textContent = "保存中...";
 
   const payload = {
     chat_model: document.getElementById("chatModelInput").value,
@@ -1698,15 +392,15 @@ async function saveConfig() {
       },
       "保存失败："
     );
-    status.innerText = "已保存，执行 nereboot 后生效。";
+    status.textContent = "已保存，执行 nereboot 后生效。";
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
 async function loadSessions() {
   const list = document.getElementById("sessionList");
-  list.innerText = "加载中...";
+  list.textContent = "加载中...";
 
   try {
     const data = await requestJson(
@@ -1719,7 +413,7 @@ async function loadSessions() {
     );
     renderSessions(data.sessions || []);
   } catch (err) {
-    list.innerText = err.message;
+    list.textContent = err.message;
   }
 }
 
@@ -1787,7 +481,7 @@ async function clearSession() {
 
 async function loadRelationshipState() {
   const status = document.getElementById("relationshipStatus");
-  status.innerText = "加载中...";
+  status.textContent = "加载中...";
 
   try {
     const data = await requestJson(
@@ -1796,9 +490,9 @@ async function loadRelationshipState() {
       "加载失败："
     );
     renderRelationshipState(data);
-    status.innerText = "已刷新";
+    status.textContent = "已刷新";
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
@@ -1810,7 +504,7 @@ async function resetRelationshipState() {
   }
 
   const status = document.getElementById("relationshipStatus");
-  status.innerText = "重置中...";
+  status.textContent = "重置中...";
 
   try {
     const data = await requestJson(
@@ -1823,9 +517,9 @@ async function resetRelationshipState() {
       "重置失败："
     );
     renderRelationshipState(data);
-    status.innerText = "已重置";
+    status.textContent = "已重置";
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
@@ -1834,11 +528,11 @@ async function setRelationshipStagePreset(presetKey) {
   const status = document.getElementById("relationshipStatus");
 
   if (!preset) {
-    status.innerText = "未知关系阶段预设";
+    status.textContent = "未知关系阶段预设";
     return;
   }
 
-  status.innerText = "设置中...";
+  status.textContent = "设置中...";
 
   try {
     const data = await requestJson(
@@ -1854,9 +548,9 @@ async function setRelationshipStagePreset(presetKey) {
       "设置失败："
     );
     renderRelationshipState(data);
-    status.innerText = "已设置";
+    status.textContent = "已设置";
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
@@ -1864,7 +558,7 @@ async function confirmCandidate() {
   const status = document.getElementById("candidateStatus");
 
   if (!lastCandidate || !lastCandidate.content) {
-    status.innerText = "没有可确认的候选记忆";
+    status.textContent = "没有可确认的候选记忆";
     return;
   }
 
@@ -1890,24 +584,24 @@ async function confirmCandidate() {
           )
           .join("\n")
       : "";
-    status.innerText = `${data.message || "确认完成"}${duplicateText}`;
+    status.textContent = `${data.message || "确认完成"}${duplicateText}`;
     lastCandidate = null;
     renderCandidate();
     loadMemories();
   } catch (err) {
-    status.innerText = err.message;
+    status.textContent = err.message;
   }
 }
 
 function clearCandidate() {
   lastCandidate = null;
   renderCandidate();
-  document.getElementById("candidateStatus").innerText = "已忽略";
+  document.getElementById("candidateStatus").textContent = "已忽略";
 }
 
 async function loadMemories() {
   const list = document.getElementById("memoryList");
-  list.innerText = "加载中...";
+  list.textContent = "加载中...";
 
   const url = onlyActive ? "/memory/list?active=1" : "/memory/list";
 
@@ -1922,7 +616,7 @@ async function loadMemories() {
     );
     renderMemories(data.memories || []);
   } catch (err) {
-    list.innerText = err.message;
+    list.textContent = err.message;
   }
 }
 
@@ -2013,42 +707,37 @@ function toggleOnlyActive() {
   loadMemories();
 }
 
-function bindStaticActions() {
+function handleSaveAdminToken() {
+  saveAdminToken();
+  loadStatsSummary();
+  loadProactiveCandidates();
+}
+
+function handleClearAdminToken() {
+  clearAdminToken();
+  loadProactiveCandidates();
+}
+
+function bindBaseEvents() {
+  input = document.getElementById("messageInput");
+  sendBtn = document.getElementById("sendBtn");
+
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+
   document.getElementById("sendBtn").addEventListener("click", sendMessage);
   document.getElementById("loadSessionMessagesBtn").addEventListener("click", loadSessionMessages);
   document.getElementById("clearSessionBtn").addEventListener("click", clearSession);
   document.getElementById("loadSessionsBtn").addEventListener("click", loadSessions);
-  document.getElementById("saveAdminTokenBtn").addEventListener("click", saveAdminToken);
-  document.getElementById("clearAdminTokenBtn").addEventListener("click", clearAdminToken);
+  document.getElementById("saveAdminTokenBtn").addEventListener("click", handleSaveAdminToken);
+  document.getElementById("clearAdminTokenBtn").addEventListener("click", handleClearAdminToken);
   document.getElementById("loadConfigBtn").addEventListener("click", loadConfig);
   document.getElementById("saveConfigBtn").addEventListener("click", saveConfig);
   document.getElementById("loadStatsSummaryBtn").addEventListener("click", loadStatsSummary);
-  document.getElementById("generateProactiveTestCandidateBtn").addEventListener("click", function () {
-    generateProactiveTestCandidate(this, false);
-  });
-  document.getElementById("forceGenerateProactiveTestCandidateBtn").addEventListener("click", function () {
-    generateProactiveTestCandidate(this, true);
-  });
-  document.getElementById("generateProactiveCandidateBtn").addEventListener("click", function () {
-    generateProactiveCandidate(this);
-  });
-  document.getElementById("loadProactiveCandidatesBtn").addEventListener("click", function () {
-    loadProactiveCandidates(this);
-  });
-  document.getElementById("loadProactiveTargetsBtn").addEventListener("click", function () {
-    loadProactiveTargets(this);
-  });
-  document.getElementById("loadProactiveEventsBtn").addEventListener("click", function () {
-    loadProactiveEvents(this);
-  });
-  document.getElementById("checkProactiveNowBtn").addEventListener("click", function () {
-    checkProactiveNow(this);
-  });
-  document.getElementById("loadProactiveConfigBtn").addEventListener("click", loadProactiveConfig);
-  document.getElementById("saveProactiveConfigBtn").addEventListener("click", saveProactiveConfig);
-  document.getElementById("proactiveAllowedHashesInput").addEventListener("input", function () {
-    this.dataset.dirty = "true";
-  });
   document.getElementById("loadRelationshipStateBtn").addEventListener("click", loadRelationshipState);
   document.getElementById("resetRelationshipStateBtn").addEventListener("click", resetRelationshipState);
   document.getElementById("confirmCandidateBtn").addEventListener("click", confirmCandidate);
@@ -2061,18 +750,27 @@ function bindStaticActions() {
   }
 }
 
-buildConsoleLayout();
-bindStaticActions();
-loadConfig();
-loadSessions();
-loadMemories();
-loadSessionMessages();
-loadRelationshipState();
-renderUsedMemories([]);
-updateAdminTokenStatus();
-loadStatsSummary();
-loadProactiveStatus();
-loadProactiveConfig();
-loadProactiveCandidates();
-loadProactiveTargets();
-loadProactiveEvents();
+function init() {
+  buildConsoleLayout();
+  bindBaseEvents();
+  bindProactiveEvents();
+  loadConfig();
+  loadSessions();
+  loadMemories();
+  loadSessionMessages();
+  loadRelationshipState();
+  renderUsedMemories([]);
+  updateAdminTokenStatus();
+  loadStatsSummary();
+  loadProactiveStatus();
+  loadProactiveConfig();
+  loadProactiveCandidates();
+  loadProactiveTargets();
+  loadProactiveEvents();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
