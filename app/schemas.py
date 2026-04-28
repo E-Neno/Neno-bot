@@ -93,10 +93,13 @@ class ProactiveRunOnceRequest(BaseModel):
 
 class ProactiveConfigUpdateRequest(BaseModel):
     PROACTIVE_ENABLED: StrictBool | None = None
+    PROACTIVE_MODE: str | None = Field(default=None, max_length=16)
     PROACTIVE_CHECK_INTERVAL_SECONDS: int | None = None
     PROACTIVE_DAILY_LIMIT: int | None = None
     PROACTIVE_MIN_INTERVAL_MINUTES: int | None = None
     PROACTIVE_RECENT_CHAT_SKIP_MINUTES: int | None = None
+    PROACTIVE_HARD_COOLDOWN_MINUTES: int | None = None
+    PROACTIVE_FAILURE_PAUSE_THRESHOLD: int | None = None
     PROACTIVE_ACTIVE_START: str | None = Field(default=None, max_length=5)
     PROACTIVE_ACTIVE_END: str | None = Field(default=None, max_length=5)
     PROACTIVE_RANDOM_PROBABILITY: float | None = None

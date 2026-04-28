@@ -1124,6 +1124,17 @@
               <div class="config-help">true 表示后台会按规则自动给 QQ 发主动消息；false 表示关闭自动主动消息。保存后需要 nereboot 生效。</div>
             </div>
             <div class="config-field">
+              <label for="proactiveModeInput">mode｜自动主动消息运行模式</label>
+              <select id="proactiveModeInput">
+                <option value="off">off｜关闭</option>
+                <option value="observe">observe｜观察</option>
+                <option value="candidate">candidate｜只生成候选</option>
+                <option value="dry_run">dry_run｜演习发送</option>
+                <option value="auto">auto｜自动真实发送</option>
+              </select>
+              <div class="config-help">优先于旧 enabled/auto send 配置。off 完全关闭；observe 只记录判断；candidate 只生成 pending；dry_run 不真实发送；auto 才允许自动真实发送 QQ。</div>
+            </div>
+            <div class="config-field">
               <label for="proactiveCheckIntervalInput">check interval｜检查间隔（秒）</label>
               <input id="proactiveCheckIntervalInput" type="number" min="30" max="86400" />
               <div class="config-help">后台每隔多少秒检查一次是否应该主动发消息。它不是发送间隔，只是判断频率。正式使用建议 600。</div>
@@ -1142,6 +1153,16 @@
               <label for="proactiveRecentSkipInput">recent chat skip｜最近聊天跳过（分钟）</label>
               <input id="proactiveRecentSkipInput" type="number" min="0" max="1440" />
               <div class="config-help">如果最近这段时间内我刚和 Neno 聊过，就不会主动发消息。比如 45 表示最近 45 分钟聊过则跳过。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveHardCooldownInput">hard cooldown｜硬冷却（分钟）</label>
+              <input id="proactiveHardCooldownInput" type="number" min="0" max="1440" />
+              <div class="config-help">最近生成候选、自动发送、手动真实发送或自动 dry_run 后，N 分钟内自动调度会跳过，防止连发。</div>
+            </div>
+            <div class="config-field">
+              <label for="proactiveFailurePauseThresholdInput">failure pause｜连续失败暂停阈值</label>
+              <input id="proactiveFailurePauseThresholdInput" type="number" min="1" max="20" />
+              <div class="config-help">连续自动发送或自动 dry_run 失败达到该次数后，自动调度会暂停并在诊断中提示，不会自动改配置。</div>
             </div>
             <div class="config-field">
               <label for="proactiveActiveStartInput">active start｜允许开始时间</label>

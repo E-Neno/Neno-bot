@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from app.security import require_admin_token
+from app.services.proactive_scheduler import get_proactive_scheduler_status
 from app.storage.db import fetch_all, fetch_one, list_debug_events, list_proactive_events
 
 router = APIRouter(prefix="/debug", tags=["debug"])
@@ -71,6 +72,12 @@ def _explain_reason(text: str | None) -> str:
         return "随机概率未命中，本轮正常跳过"
     if "pending candidate exists" in lower or "pending qq candidate exists" in lower:
         return "已有待处理候选，自动调度不会继续生成"
+    if "proactive mode off" in lower:
+        return "主动消息模式为关闭，不会自动生成或发送"
+    if "hard cooldown active" in lower:
+        return "硬冷却中，本轮主动调度跳过"
+    if "auto send failure pause" in lower:
+        return "连续自动发送失败达到阈值，自动调度暂停"
     if "latest qq target is not whitelisted" in lower or "not whitelisted" in lower:
         return "最近 QQ 目标未允许，需要在主动目标里允许"
     if "outside active window" in lower:
@@ -221,10 +228,23 @@ def _latest_proactive_event() -> dict | None:
 
 
 def _diagnose_proactive() -> dict:
+    status = get_proactive_scheduler_status()
     debug_event = _latest_debug_event(None, "proactive")
     proactive_event = _latest_proactive_event()
     details: list[str] = []
     suggestions: list[str] = []
+    mode = status.get("proactive_mode") or "off"
+    mode_label = status.get("mode_label") or mode
+
+    details.append(f"当前模式：{mode_label} ({mode})")
+    details.append(f"模式说明：{status.get('mode_description') or '-'}")
+    details.append(
+        f"硬冷却：{'冷却中' if status.get('hard_cooldown_active') else '未触发'} / {status.get('hard_cooldown_minutes')} 分钟"
+    )
+    details.append(
+        f"连续自动发送失败：{status.get('consecutive_auto_failures')}/{status.get('failure_pause_threshold')}"
+    )
+    details.append(f"今日自动真实发送：{status.get('auto_sent_today')}/{status.get('auto_send_max_per_day')}")
 
     action = debug_event.get("action") if debug_event else proactive_event.get("action") if proactive_event else None
     reason = debug_event.get("reason") if debug_event else proactive_event.get("reason") if proactive_event else None
@@ -241,6 +261,16 @@ def _diagnose_proactive() -> dict:
 
     action_text = str(action or "").lower()
     event_text = str(debug_event.get("event") if debug_event else proactive_event.get("event_type") if proactive_event else "").lower()
+    if mode == "off":
+        return _card("proactive", "主动消息", "info", "自动主动消息已关闭", details, suggestions)
+    if status.get("hard_cooldown_active"):
+        suggestions.append("等待硬冷却窗口结束后，自动调度才会继续生成或发送。")
+        return _card("proactive", "主动消息", "warn", "主动消息处于硬冷却中", details, suggestions)
+    if status.get("failure_pause_active"):
+        suggestions.append("连续自动发送失败已达到阈值；先检查发送桥、白名单和最近失败事件。")
+        return _card("proactive", "主动消息", "error", "连续失败暂停自动调度", details, suggestions)
+    if mode == "auto":
+        suggestions.append("当前模式允许自动真实发送；请确认 QQ 白名单、每日上限和硬冷却设置。")
     if "failed" in action_text or "failed" in event_text:
         suggestions.append("查看同 trace_id 的 debug_events，以及 neno-bridge / 候选状态。")
         return _card("proactive", "主动消息", "error", "最近主动消息链路存在失败", details, suggestions)

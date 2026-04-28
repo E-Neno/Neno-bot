@@ -1,5 +1,108 @@
 import { getAdminHeaders, getAdminToken, requestJson } from "./api.js";
+import { loadDebugDiagnose } from "./debug.js";
 import { clearChildren, createElement, setBusyButton, setOptionalText } from "./dom.js";
+
+const candidateActionStates = new Map();
+
+function normalizeCandidateInput(candidateOrId) {
+  if (candidateOrId && typeof candidateOrId === "object") {
+    return candidateOrId;
+  }
+  return { id: candidateOrId };
+}
+
+function candidateActionId(candidateOrId) {
+  const candidate = normalizeCandidateInput(candidateOrId);
+  return candidate.id === undefined || candidate.id === null ? "" : String(candidate.id);
+}
+
+function isCandidateAlreadyHandled(candidateOrId) {
+  const candidate = normalizeCandidateInput(candidateOrId);
+  return candidate.status !== undefined && candidate.status !== "pending";
+}
+
+function candidateActionButtonText(action) {
+  if (action === "dry-run") return "测试发送 QQ";
+  if (action === "send-qq") return "真实发送 QQ";
+  if (action === "dismiss") return "丢弃";
+  return "";
+}
+
+function setCandidateActionState(candidateOrId, state) {
+  const id = candidateActionId(candidateOrId);
+  if (!id) {
+    return;
+  }
+  if (state) {
+    candidateActionStates.set(id, state);
+  } else {
+    candidateActionStates.delete(id);
+  }
+  updateRenderedCandidateActionRows(id);
+}
+
+function updateRenderedCandidateActionRows(id) {
+  for (const row of document.querySelectorAll("[data-proactive-candidate-id]")) {
+    if (row.dataset.proactiveCandidateId === id) {
+      applyCandidateActionState(row, id);
+    }
+  }
+}
+
+function applyCandidateActionState(row, id) {
+  const state = candidateActionStates.get(String(id));
+  for (const button of row.querySelectorAll("button")) {
+    button.disabled = state?.busy === true;
+    const label = candidateActionButtonText(button.dataset.candidateAction);
+    if (label) {
+      button.textContent = label;
+    }
+    if (state?.busy === true && state.activeAction === button.dataset.candidateAction) {
+      button.textContent = state.buttonText || state.message || "处理中...";
+    }
+  }
+
+  let statusText = row.querySelector(".candidate-action-status");
+  if (!state?.message) {
+    statusText?.remove();
+    return;
+  }
+  if (!statusText) {
+    statusText = document.createElement("span");
+    statusText.className = "candidate-state-text candidate-action-status";
+    row.appendChild(statusText);
+  }
+  statusText.textContent = state.message;
+}
+
+function candidateAlreadyHandledMessage() {
+  return "该候选已处理，不能重复发送";
+}
+
+function isAlreadyHandledError(err) {
+  const text = String(err?.message || "").toLowerCase();
+  return text.includes("only pending candidates can be sent") || text.includes("candidate is not pending");
+}
+
+function sendFailureMessage(err) {
+  if (isAlreadyHandledError(err)) {
+    return candidateAlreadyHandledMessage();
+  }
+  const reason = err?.message || "未知错误";
+  if (String(reason).startsWith("发送失败：")) {
+    return reason;
+  }
+  return `发送失败：${reason}`;
+}
+
+async function refreshAfterCandidateAction() {
+  await Promise.allSettled([
+    loadProactiveCandidates(),
+    loadProactiveStatus(),
+    loadProactiveEvents(),
+    loadDebugDiagnose(),
+  ]);
+}
 
 export function renderProactiveCandidates(candidates) {
   const list = document.getElementById("proactiveCandidateList");
@@ -183,6 +286,7 @@ function createProactiveCandidateItem(candidate) {
 
   const row = document.createElement("div");
   row.className = "row";
+  row.dataset.proactiveCandidateId = candidateActionId(candidate);
 
   if (candidate.status === "pending") {
     if (candidate.platform === "qq") {
@@ -201,6 +305,7 @@ function createProactiveCandidateItem(candidate) {
     appendCandidateStatusText(row, candidate.status || "未知状态");
   }
 
+  applyCandidateActionState(row, candidateActionId(candidate));
   item.append(tag, content, reason, meta, row);
   return item;
 }
@@ -215,22 +320,25 @@ function appendCandidateStatusText(row, text) {
 function appendDismissButton(row, candidate) {
   const dismissButton = document.createElement("button");
   dismissButton.className = candidate.status === "pending" ? "danger" : "";
+  dismissButton.dataset.candidateAction = "dismiss";
   dismissButton.textContent = "丢弃";
-  dismissButton.addEventListener("click", () => dismissProactiveCandidate(candidate.id, dismissButton));
+  dismissButton.addEventListener("click", () => dismissProactiveCandidate(candidate, dismissButton));
   row.appendChild(dismissButton);
 }
 
 function appendQqSendButtons(row, candidate) {
   const dryRunButton = document.createElement("button");
   dryRunButton.className = "good";
+  dryRunButton.dataset.candidateAction = "dry-run";
   dryRunButton.textContent = "测试发送 QQ";
-  dryRunButton.addEventListener("click", () => dryRunSendQqCandidate(candidate.id, dryRunButton));
+  dryRunButton.addEventListener("click", () => dryRunSendQqCandidate(candidate, dryRunButton));
   row.appendChild(dryRunButton);
 
   const sendButton = document.createElement("button");
   sendButton.className = "danger";
+  sendButton.dataset.candidateAction = "send-qq";
   sendButton.textContent = "真实发送 QQ";
-  sendButton.addEventListener("click", () => sendQqCandidate(candidate.id, sendButton));
+  sendButton.addEventListener("click", () => sendQqCandidate(candidate, sendButton));
   row.appendChild(sendButton);
 }
 
@@ -333,6 +441,9 @@ function renderProactiveLastResult(result) {
 export function renderProactiveAutoStatus(data) {
   const box = document.getElementById("proactiveAutoStatus");
   const config = data.config || {};
+  const mode = data.proactive_mode || config.proactive_mode || "off";
+  const modeLabel = data.mode_label || mode;
+  const modeDescription = data.mode_description || "-";
   const enabled = data.enabled ? "开启" : "关闭";
   const running = data.task_running ? "运行中" : "未运行";
   const lastSent = data.last_sent_at || "-";
@@ -344,15 +455,23 @@ export function renderProactiveAutoStatus(data) {
   const requireAllowed = data.auto_send_require_allowed_target ? "是" : "否";
   const autoSentToday = data.auto_sent_today ?? 0;
   const autoSendLimit = data.auto_send_max_per_day ?? "-";
+  const hardCooldown = data.hard_cooldown_active
+    ? `冷却中 / ${data.hard_cooldown_minutes ?? "-"} 分钟`
+    : `未触发 / ${data.hard_cooldown_minutes ?? "-"} 分钟`;
+  const failurePause = `${data.consecutive_auto_failures ?? 0}/${data.failure_pause_threshold ?? "-"}`;
   const lastAction = data.last_result?.action || (data.last_result?.skipped ? "skipped" : "-");
 
   if (box) {
     box.textContent = [
+      `当前模式 ${modeLabel}`,
+      modeDescription,
       `自动：${enabled} · ${running}`,
       `今日 ${today}/${limit}`,
       `自动真实发送 ${autoSend}`,
       `自动 dry_run ${autoDryRun}`,
       `自动发送 ${autoSentToday}/${autoSendLimit}`,
+      `硬冷却 ${hardCooldown}`,
+      `连续失败 ${failurePause}`,
       `目标必须 allowed ${requireAllowed}`,
       `最近自动结果 ${lastAction}`,
       `最近发送 ${lastSent}`,
@@ -362,12 +481,15 @@ export function renderProactiveAutoStatus(data) {
     ].join(" · ");
   }
 
+  setOptionalText("proactiveStatusMode", modeLabel);
   setOptionalText("proactiveStatusEnabled", enabled);
   setOptionalText("proactiveStatusRunning", running);
   setOptionalText("proactiveStatusToday", `${today}/${limit}`);
   setOptionalText("proactiveStatusAutoSend", autoSend);
   setOptionalText("proactiveStatusAutoDryRun", autoDryRun);
   setOptionalText("proactiveStatusAutoSentToday", `${autoSentToday}/${autoSendLimit}`);
+  setOptionalText("proactiveStatusHardCooldown", hardCooldown);
+  setOptionalText("proactiveStatusFailurePause", failurePause);
   setOptionalText("proactiveStatusAutoRequireAllowed", requireAllowed);
   setOptionalText("proactiveStatusLastSent", lastSent);
   setOptionalText("proactiveStatusLastCheck", lastCheck);
@@ -441,6 +563,7 @@ function checkboxValue(id) {
 function proactiveRunActionLabel(action) {
   if (action === "generated_pending") return "已生成 pending 候选";
   if (action === "dry_run_ok") return "dry_run 通过";
+  if (action === "observed") return "已观察";
   if (action === "skipped") return "已跳过";
   if (action === "failed") return "失败";
   return action || "-";
@@ -529,10 +652,13 @@ function renderProactiveConfig(data) {
   const labels = config.PROACTIVE_QQ_ALLOWED_TARGET_HASHES_LABELS || [];
 
   setInputValue("proactiveEnabledInput", config.PROACTIVE_ENABLED || "false");
+  setInputValue("proactiveModeInput", config.PROACTIVE_MODE || "off");
   setInputValue("proactiveCheckIntervalInput", config.PROACTIVE_CHECK_INTERVAL_SECONDS);
   setInputValue("proactiveDailyLimitInput", config.PROACTIVE_DAILY_LIMIT);
   setInputValue("proactiveMinIntervalInput", config.PROACTIVE_MIN_INTERVAL_MINUTES);
   setInputValue("proactiveRecentSkipInput", config.PROACTIVE_RECENT_CHAT_SKIP_MINUTES);
+  setInputValue("proactiveHardCooldownInput", config.PROACTIVE_HARD_COOLDOWN_MINUTES || "10");
+  setInputValue("proactiveFailurePauseThresholdInput", config.PROACTIVE_FAILURE_PAUSE_THRESHOLD || "3");
   setInputValue("proactiveActiveStartInput", config.PROACTIVE_ACTIVE_START);
   setInputValue("proactiveActiveEndInput", config.PROACTIVE_ACTIVE_END);
   setInputValue("proactiveRandomProbabilityInput", config.PROACTIVE_RANDOM_PROBABILITY);
@@ -594,10 +720,13 @@ export async function saveProactiveConfig() {
   const hashesInput = document.getElementById("proactiveAllowedHashesInput");
   const payload = {
     PROACTIVE_ENABLED: document.getElementById("proactiveEnabledInput").value === "true",
+    PROACTIVE_MODE: document.getElementById("proactiveModeInput").value,
     PROACTIVE_CHECK_INTERVAL_SECONDS: readNumberInput("proactiveCheckIntervalInput"),
     PROACTIVE_DAILY_LIMIT: readNumberInput("proactiveDailyLimitInput"),
     PROACTIVE_MIN_INTERVAL_MINUTES: readNumberInput("proactiveMinIntervalInput"),
     PROACTIVE_RECENT_CHAT_SKIP_MINUTES: readNumberInput("proactiveRecentSkipInput"),
+    PROACTIVE_HARD_COOLDOWN_MINUTES: readNumberInput("proactiveHardCooldownInput"),
+    PROACTIVE_FAILURE_PAUSE_THRESHOLD: readNumberInput("proactiveFailurePauseThresholdInput"),
     PROACTIVE_ACTIVE_START: document.getElementById("proactiveActiveStartInput").value,
     PROACTIVE_ACTIVE_END: document.getElementById("proactiveActiveEndInput").value,
     PROACTIVE_RANDOM_PROBABILITY: Number(document.getElementById("proactiveRandomProbabilityInput").value),
@@ -845,10 +974,18 @@ export async function generateProactiveTestCandidate(triggerButton, force) {
   }
 }
 
-export async function dismissProactiveCandidate(id, triggerButton) {
+export async function dismissProactiveCandidate(candidateOrId, triggerButton) {
+  const candidate = normalizeCandidateInput(candidateOrId);
+  const id = candidate.id;
   const status = document.getElementById("proactiveCandidateStatus");
-  const resetButton = setBusyButton(triggerButton);
-  status.textContent = "处理中...";
+  const message = "正在丢弃...";
+  setCandidateActionState(candidate, {
+    activeAction: "dismiss",
+    buttonText: message,
+    busy: true,
+    message,
+  });
+  status.textContent = message;
 
   try {
     await requestJson(
@@ -860,29 +997,47 @@ export async function dismissProactiveCandidate(id, triggerButton) {
       },
       "丢弃失败："
     );
+    setCandidateActionState(candidate, {
+      activeAction: "dismiss",
+      busy: true,
+      message: "已丢弃",
+    });
+    await Promise.allSettled([
+      loadProactiveCandidates(),
+      loadProactiveStatus(),
+      loadProactiveEvents(),
+    ]);
+    setCandidateActionState(candidate, null);
     status.textContent = "已丢弃";
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
   } catch (err) {
+    setCandidateActionState(candidate, {
+      activeAction: "dismiss",
+      busy: false,
+      message: err.message,
+    });
     status.textContent = err.message;
-  } finally {
-    resetButton();
   }
 }
 
-export async function dryRunSendQqCandidate(id, triggerButton) {
+export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
+  const candidate = normalizeCandidateInput(candidateOrId);
+  const id = candidate.id;
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
-    resetButton();
     return;
   }
 
-  status.textContent = "处理中...";
+  const message = "测试发送中...";
+  setCandidateActionState(candidate, {
+    activeAction: "dry-run",
+    buttonText: message,
+    busy: true,
+    message,
+  });
+  status.textContent = message;
 
   try {
     const data = await requestJson(
@@ -894,38 +1049,71 @@ export async function dryRunSendQqCandidate(id, triggerButton) {
       },
       "测试失败："
     );
-    status.textContent = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
+    const successMessage = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
+    setCandidateActionState(candidate, {
+      activeAction: "dry-run",
+      busy: true,
+      message: successMessage,
+    });
+    await Promise.allSettled([
+      loadProactiveCandidates(),
+      loadProactiveStatus(),
+      loadProactiveEvents(),
+    ]);
+    setCandidateActionState(candidate, {
+      activeAction: "dry-run",
+      busy: false,
+      message: successMessage,
+    });
+    status.textContent = successMessage;
   } catch (err) {
+    setCandidateActionState(candidate, {
+      activeAction: "dry-run",
+      busy: false,
+      message: err.message,
+    });
     status.textContent = err.message;
-  } finally {
-    resetButton();
   }
 }
 
-export async function sendQqCandidate(id, triggerButton) {
+export async function sendQqCandidate(candidateOrId, triggerButton) {
+  const candidate = normalizeCandidateInput(candidateOrId);
+  const id = candidate.id;
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
-  const resetButton = setBusyButton(triggerButton);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
-    resetButton();
+    return;
+  }
+
+  if (isCandidateAlreadyHandled(candidate)) {
+    const message = candidateAlreadyHandledMessage();
+    setCandidateActionState(candidate, {
+      activeAction: "send-qq",
+      busy: false,
+      message,
+    });
+    status.textContent = message;
     return;
   }
 
   const ok = confirm("确认发送这条主动消息到 QQ？这会真的发出去。");
   if (!ok) {
-    resetButton();
     return;
   }
 
-  status.textContent = "处理中...";
+  const sendingMessage = "正在发送...";
+  setCandidateActionState(candidate, {
+    activeAction: "send-qq",
+    buttonText: sendingMessage,
+    busy: true,
+    message: sendingMessage,
+  });
+  status.textContent = sendingMessage;
 
   try {
-    const data = await requestJson(
+    await requestJson(
       "/proactive/send-qq",
       {
         method: "POST",
@@ -934,16 +1122,23 @@ export async function sendQqCandidate(id, triggerButton) {
       },
       "发送失败："
     );
-    status.textContent = `已真实发送到 ${data.target_label || "-"}`;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-    loadProactiveEvents();
+    setCandidateActionState(candidate, {
+      activeAction: "send-qq",
+      busy: true,
+      message: "发送成功",
+    });
+    await refreshAfterCandidateAction();
+    setCandidateActionState(candidate, null);
+    status.textContent = "发送成功";
   } catch (err) {
-    status.textContent = err.message;
-    loadProactiveCandidates();
-    loadProactiveStatus();
-  } finally {
-    resetButton();
+    const message = sendFailureMessage(err);
+    setCandidateActionState(candidate, {
+      activeAction: "send-qq",
+      busy: false,
+      message,
+    });
+    await refreshAfterCandidateAction();
+    status.textContent = message;
   }
 }
 

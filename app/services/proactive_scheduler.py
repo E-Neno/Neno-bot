@@ -18,7 +18,10 @@ from app.config import (
     PROACTIVE_CHECK_INTERVAL_SECONDS,
     PROACTIVE_DAILY_LIMIT,
     PROACTIVE_ENABLED,
+    PROACTIVE_FAILURE_PAUSE_THRESHOLD,
+    PROACTIVE_HARD_COOLDOWN_MINUTES,
     PROACTIVE_MIN_INTERVAL_MINUTES,
+    PROACTIVE_MODE,
     PROACTIVE_QQ_ALLOWED_TARGET_HASHES,
     PROACTIVE_RANDOM_PROBABILITY,
     PROACTIVE_RECENT_CHAT_SKIP_MINUTES,
@@ -43,6 +46,27 @@ from app.utils.logging_utils import log_event, new_trace_id
 _scheduler_task: asyncio.Task | None = None
 _last_check_at: str | None = None
 _last_result: dict[str, Any] | None = None
+PROACTIVE_MODE_LABELS = {
+    "off": "关闭",
+    "observe": "观察",
+    "candidate": "候选",
+    "dry_run": "演习 dry_run",
+    "auto": "自动真实发送",
+}
+PROACTIVE_MODE_DESCRIPTIONS = {
+    "off": "完全关闭自动主动消息，不生成候选，不发送。",
+    "observe": "只观察并记录调度判断，不生成候选，不发送。",
+    "candidate": "规则通过后自动生成 pending 候选，不发送。",
+    "dry_run": "规则通过后生成候选并执行 dry_run，不真实发送，不写 messages。",
+    "auto": "规则通过后允许自动真实发送；当前仅支持 QQ，成功后才写 messages。",
+}
+PROACTIVE_MODE_EFFECTIVE_ACTIONS = {
+    "off": "skip",
+    "observe": "observe_only",
+    "candidate": "generate_pending",
+    "dry_run": "generate_and_dry_run",
+    "auto": "generate_and_send_qq",
+}
 
 
 def _now_iso() -> str:
@@ -109,6 +133,57 @@ def _last_sent_at() -> str | None:
     return str(row["created_at"]) if row else None
 
 
+def _hard_cooldown_last_event() -> dict[str, Any] | None:
+    if PROACTIVE_HARD_COOLDOWN_MINUTES <= 0:
+        return None
+    row = fetch_one(
+        f"""
+        SELECT id, created_at, event_type, action
+        FROM proactive_events
+        WHERE created_at >= datetime('now', '-{PROACTIVE_HARD_COOLDOWN_MINUTES} minutes')
+          AND (
+            event_type IN ('candidate_generated', 'auto_sent', 'manual_sent', 'auto_send_dry_run')
+            OR action IN ('candidate_generated', 'auto_sent', 'manual_sent', 'auto_send_dry_run_ok')
+          )
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+    return dict(row) if row else None
+
+
+def _hard_cooldown_active() -> bool:
+    return _hard_cooldown_last_event() is not None
+
+
+def _consecutive_auto_failures() -> int:
+    recent = fetch_one(
+        """
+        SELECT id
+        FROM proactive_events
+        WHERE action IN ('auto_sent', 'auto_send_dry_run_ok')
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+    last_success_id = int(recent["id"] or 0) if recent else 0
+    count_row = fetch_one(
+        """
+        SELECT COUNT(*) AS count
+        FROM proactive_events
+        WHERE action IN ('auto_send_failed', 'auto_send_dry_run_failed')
+          AND success = 0
+          AND id > ?
+        """,
+        (last_success_id,),
+    )
+    return int(count_row["count"] or 0) if count_row else 0
+
+
+def _failure_pause_active() -> bool:
+    return PROACTIVE_FAILURE_PAUSE_THRESHOLD > 0 and _consecutive_auto_failures() >= PROACTIVE_FAILURE_PAUSE_THRESHOLD
+
+
 def _has_recent_user_message() -> bool:
     row = fetch_one(
         f"""
@@ -151,6 +226,7 @@ def _skip(
         success=True,
         skipped=True,
         reason=reason,
+        metadata={"proactive_mode": PROACTIVE_MODE},
     )
     log_event(
         "proactive",
@@ -160,12 +236,49 @@ def _skip(
         reason=reason,
         success=True,
         skipped=True,
+        proactive_mode=PROACTIVE_MODE,
     )
     return {
         "success": True,
         "skipped": True,
         "reason": reason,
+        "action": "skipped",
+        "proactive_mode": PROACTIVE_MODE,
         "checks": checks or [],
+    }
+
+
+def _observed_result(checks: list[dict[str, Any]], trace_id: str | None = None) -> dict[str, Any]:
+    failed = next((check for check in checks if check["ok"] is False), None)
+    can_send = failed is None
+    reason = "observe would pass" if can_send else str(failed["detail"])
+    record_proactive_event(
+        event_type="scheduler_observed",
+        platform="qq",
+        action="observed",
+        success=True,
+        skipped=not can_send,
+        reason=reason,
+        metadata={"proactive_mode": PROACTIVE_MODE, "would_pass": can_send},
+    )
+    log_event(
+        "proactive",
+        "proactive_observed",
+        trace_id=trace_id,
+        action="observed",
+        success=True,
+        skipped=not can_send,
+        reason=reason,
+        proactive_mode=PROACTIVE_MODE,
+    )
+    return {
+        "success": True,
+        "skipped": not can_send,
+        "action": "observed",
+        "reason": reason,
+        "would_pass": can_send,
+        "proactive_mode": PROACTIVE_MODE,
+        "checks": checks,
     }
 
 
@@ -186,6 +299,12 @@ def explain_proactive_reason(reason: str | None) -> str:
         return "距离上次主动消息还不够久"
     if "pending qq candidate exists" in lower or "pending candidate exists" in lower:
         return "已有待处理候选，暂不生成新的"
+    if "proactive mode off" in lower:
+        return "主动消息模式为关闭，不会自动生成或发送"
+    if "hard cooldown active" in lower:
+        return "硬冷却中，本轮主动调度跳过"
+    if "auto send failure pause" in lower:
+        return "连续自动发送失败达到阈值，自动调度暂停"
     if "not whitelisted" in lower:
         return "最新 QQ 目标不在白名单，暂不发送"
     if "no allowed qq target" in lower or "no qq target" in lower:
@@ -235,12 +354,28 @@ def _rule(name: str, ok: bool | None, detail: str) -> dict[str, Any]:
     }
 
 
+def proactive_mode_label(mode: str | None = None) -> str:
+    return PROACTIVE_MODE_LABELS.get(mode or PROACTIVE_MODE, mode or PROACTIVE_MODE or "off")
+
+
+def proactive_mode_description(mode: str | None = None) -> str:
+    return PROACTIVE_MODE_DESCRIPTIONS.get(mode or PROACTIVE_MODE, "未知主动消息运行模式。")
+
+
+def proactive_mode_effective_action(mode: str | None = None) -> str:
+    return PROACTIVE_MODE_EFFECTIVE_ACTIONS.get(mode or PROACTIVE_MODE, "unknown")
+
+
 def _next_rules_summary() -> list[str]:
     return [
-        "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+        f"当前模式：{proactive_mode_label()}",
+        proactive_mode_description(),
+        "旧 enabled 配置为 true" if PROACTIVE_ENABLED else "旧 enabled 配置为 false",
         "当前只支持 QQ",
         f"每天最多 {PROACTIVE_DAILY_LIMIT} 条",
         f"两次主动消息至少间隔 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟",
+        f"硬冷却 {PROACTIVE_HARD_COOLDOWN_MINUTES} 分钟",
+        f"连续自动发送失败 {PROACTIVE_FAILURE_PAUSE_THRESHOLD} 次后暂停",
         f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟聊过则跳过",
         f"活跃时间段 {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
         f"每次检查随机概率 {PROACTIVE_RANDOM_PROBABILITY}",
@@ -254,14 +389,47 @@ def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
     now = datetime.now()
     checks: list[dict[str, Any]] = []
 
+    checks.append(
+        _rule(
+            "proactive_mode",
+            PROACTIVE_MODE != "off",
+            f"当前模式：{proactive_mode_label()}；{proactive_mode_description()}",
+        )
+    )
+
     if include_enabled:
         checks.append(
             _rule(
                 "enabled",
-                PROACTIVE_ENABLED,
-                "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+                None,
+                "旧 PROACTIVE_ENABLED=true" if PROACTIVE_ENABLED else "旧 PROACTIVE_ENABLED=false；实际以 PROACTIVE_MODE 为准",
             )
         )
+
+    cooldown_event = _hard_cooldown_last_event()
+    hard_cooldown_ok = cooldown_event is None
+    checks.append(
+        _rule(
+            "hard_cooldown",
+            hard_cooldown_ok,
+            f"硬冷却未触发，窗口 {PROACTIVE_HARD_COOLDOWN_MINUTES} 分钟"
+            if hard_cooldown_ok
+            else f"硬冷却中，最近动作 {cooldown_event.get('action') or cooldown_event.get('event_type')} / {cooldown_event.get('created_at')}",
+        )
+    )
+
+    consecutive_failures = _consecutive_auto_failures()
+    failure_pause_ok = (
+        PROACTIVE_FAILURE_PAUSE_THRESHOLD <= 0
+        or consecutive_failures < PROACTIVE_FAILURE_PAUSE_THRESHOLD
+    )
+    checks.append(
+        _rule(
+            "failure_pause",
+            failure_pause_ok,
+            f"连续自动发送失败 {consecutive_failures}/{PROACTIVE_FAILURE_PAUSE_THRESHOLD}",
+        )
+    )
 
     active_ok = _within_active_window(now)
     checks.append(
@@ -357,7 +525,7 @@ def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
     checks.append(
         _rule(
             "auto_send_max_per_day",
-            auto_send_limit_ok if PROACTIVE_AUTO_SEND and not PROACTIVE_AUTO_SEND_DRY_RUN else None,
+            auto_send_limit_ok if PROACTIVE_MODE == "auto" else None,
             f"今天自动真实发送 {auto_sent_today}/{PROACTIVE_AUTO_SEND_MAX_PER_DAY} 条",
         )
     )
@@ -388,6 +556,7 @@ def _create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = No
             "min_interval_minutes": PROACTIVE_MIN_INTERVAL_MINUTES,
             "recent_user_message_skip_minutes": PROACTIVE_RECENT_CHAT_SKIP_MINUTES,
             "random_probability": PROACTIVE_RANDOM_PROBABILITY,
+            "proactive_mode": PROACTIVE_MODE,
         },
         "target_last_seen_at": target_row["last_seen_at"],
         "auto_created_at": _now_iso(),
@@ -398,7 +567,7 @@ def _create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = No
         target_hash=target_hash,
         target_label=str(target_row["target_label"] or _mask_hash(target_hash)),
         message=random.choice(SAFE_TEMPLATES),
-        reason="auto v3 fixed template",
+        reason="auto v4.6 fixed template",
         status="pending",
         source="auto",
         metadata_json=json.dumps(metadata, ensure_ascii=False),
@@ -411,7 +580,7 @@ def _create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = No
         action="candidate_generated",
         success=True,
         skipped=False,
-        metadata={"source": "auto_scheduler"},
+        metadata={"source": "auto_scheduler", "proactive_mode": PROACTIVE_MODE},
     )
     log_event(
         "proactive",
@@ -721,19 +890,57 @@ def _check_and_send_once(
         "proactive_check",
         trace_id=trace_id,
         action=event_source,
-        dry_run=dry_run_only or PROACTIVE_AUTO_SEND_DRY_RUN,
-        auto_send=PROACTIVE_AUTO_SEND,
+        dry_run=dry_run_only or PROACTIVE_MODE == "dry_run",
+        auto_send=PROACTIVE_MODE == "auto",
+        proactive_mode=PROACTIVE_MODE,
     )
 
     checks.append(
         _rule(
-            "enabled",
-            PROACTIVE_ENABLED,
-            "自动主动消息已开启" if PROACTIVE_ENABLED else "自动主动消息未开启",
+            "proactive_mode",
+            PROACTIVE_MODE != "off",
+            f"当前模式：{proactive_mode_label()}；{proactive_mode_description()}",
         )
     )
-    if not PROACTIVE_ENABLED:
-        return _skip("proactive scheduler disabled", checks, trace_id=trace_id)
+    if PROACTIVE_MODE == "off":
+        return _skip("proactive mode off", checks, trace_id=trace_id)
+
+    checks.append(
+        _rule(
+            "enabled",
+            None,
+            "旧 PROACTIVE_ENABLED=true" if PROACTIVE_ENABLED else "旧 PROACTIVE_ENABLED=false；实际以 PROACTIVE_MODE 为准",
+        )
+    )
+
+    cooldown_event = _hard_cooldown_last_event()
+    hard_cooldown_ok = cooldown_event is None
+    checks.append(
+        _rule(
+            "hard_cooldown",
+            hard_cooldown_ok,
+            f"硬冷却未触发，窗口 {PROACTIVE_HARD_COOLDOWN_MINUTES} 分钟"
+            if hard_cooldown_ok
+            else f"硬冷却中，最近动作 {cooldown_event.get('action') or cooldown_event.get('event_type')} / {cooldown_event.get('created_at')}",
+        )
+    )
+    if not hard_cooldown_ok and PROACTIVE_MODE != "observe":
+        return _skip("hard cooldown active", checks, trace_id=trace_id)
+
+    consecutive_failures = _consecutive_auto_failures()
+    failure_pause_ok = (
+        PROACTIVE_FAILURE_PAUSE_THRESHOLD <= 0
+        or consecutive_failures < PROACTIVE_FAILURE_PAUSE_THRESHOLD
+    )
+    checks.append(
+        _rule(
+            "failure_pause",
+            failure_pause_ok,
+            f"连续自动发送失败 {consecutive_failures}/{PROACTIVE_FAILURE_PAUSE_THRESHOLD}",
+        )
+    )
+    if not failure_pause_ok and PROACTIVE_MODE != "observe":
+        return _skip("auto send failure pause", checks, trace_id=trace_id)
 
     active_ok = _within_active_window(now)
     checks.append(
@@ -746,6 +953,8 @@ def _check_and_send_once(
         )
     )
     if not ignore_active_window and not active_ok:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip(f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}", checks, trace_id=trace_id)
 
     probability = max(0.0, min(1.0, PROACTIVE_RANDOM_PROBABILITY))
@@ -761,6 +970,8 @@ def _check_and_send_once(
             )
         )
         if not random_hit:
+            if PROACTIVE_MODE == "observe":
+                return _observed_result(checks, trace_id=trace_id)
             return _skip("random probability missed", checks, trace_id=trace_id)
 
     sent_count = _today_sent_count()
@@ -773,6 +984,8 @@ def _check_and_send_once(
         )
     )
     if not daily_ok:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks, trace_id=trace_id)
 
     last_sent = _parse_sqlite_datetime(_last_sent_at())
@@ -784,6 +997,8 @@ def _check_and_send_once(
         min_interval_detail = f"距离上次自动主动消息约 {elapsed_minutes} 分钟，要求至少 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟"
     checks.append(_rule("min_interval", min_interval_ok, min_interval_detail))
     if not min_interval_ok:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks, trace_id=trace_id)
 
     recent_chat = _has_recent_user_message()
@@ -797,6 +1012,8 @@ def _check_and_send_once(
         )
     )
     if not ignore_recent_chat and recent_chat:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip(f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes", checks, trace_id=trace_id)
 
     pending_candidate = _has_pending_qq_candidate()
@@ -810,6 +1027,8 @@ def _check_and_send_once(
         )
     )
     if not force and pending_candidate:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip("pending qq candidate exists", checks, trace_id=trace_id)
 
     target_row = _latest_qq_target()
@@ -821,6 +1040,8 @@ def _check_and_send_once(
         )
     )
     if target_row is None:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip("no allowed qq target found in proactive_targets", checks, trace_id=trace_id)
 
     target_hash = str(target_row["target_hash"] or "")
@@ -833,15 +1054,20 @@ def _check_and_send_once(
         )
     )
     if not whitelist_ok:
+        if PROACTIVE_MODE == "observe":
+            return _observed_result(checks, trace_id=trace_id)
         return _skip("latest qq target is not whitelisted", checks, trace_id=trace_id)
 
+    if PROACTIVE_MODE == "observe":
+        return _observed_result(checks, trace_id=trace_id)
+
     candidate = _create_auto_candidate(target_row, trace_id=trace_id)
-    if not PROACTIVE_AUTO_SEND:
+    if PROACTIVE_MODE == "candidate":
         result = _generated_pending_result(candidate)
         result["checks"] = checks
         return result
 
-    if dry_run_only or PROACTIVE_AUTO_SEND_DRY_RUN:
+    if PROACTIVE_MODE == "dry_run" or dry_run_only:
         result = _auto_send_dry_run(candidate, event_source=event_source, trace_id=trace_id)
         result["checks"] = checks
         return result
@@ -869,6 +1095,7 @@ async def run_proactive_check_once(trace_id: str | None = None) -> dict[str, Any
             "last_check_at": _last_check_at,
             "sent": _last_result.get("sent"),
             "generated_pending": _last_result.get("generated_pending"),
+            "proactive_mode": PROACTIVE_MODE,
         },
     )
     log_event(
@@ -881,14 +1108,17 @@ async def run_proactive_check_once(trace_id: str | None = None) -> dict[str, Any
         success=_last_result.get("success"),
         skipped=_last_result.get("skipped"),
         reason=_last_result.get("reason") or _last_result.get("error"),
-        auto_send=PROACTIVE_AUTO_SEND,
-        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
+        auto_send=PROACTIVE_MODE == "auto",
+        dry_run=PROACTIVE_MODE == "dry_run",
+        proactive_mode=PROACTIVE_MODE,
     )
     return _last_result
 
 
 def _normalize_manual_run_result(result: dict[str, Any], *, dry_run_only: bool) -> dict[str, Any]:
-    if result.get("skipped"):
+    if result.get("action") == "observed":
+        action = "observed"
+    elif result.get("skipped"):
         action = "skipped"
     elif result.get("success") is not True:
         action = "failed"
@@ -907,6 +1137,8 @@ def _normalize_manual_run_result(result: dict[str, Any], *, dry_run_only: bool) 
         ),
         "candidate_id": result.get("candidate_id"),
         "dry_run_only": dry_run_only,
+        "proactive_mode": result.get("proactive_mode") or PROACTIVE_MODE,
+        "would_pass": result.get("would_pass"),
         "checks": result.get("checks") or [],
     }
 
@@ -951,7 +1183,7 @@ def run_proactive_once_manual(
         candidate_id=response.get("candidate_id"),
         action=response.get("action"),
         success=response.get("success"),
-        skipped=response.get("action") == "skipped",
+        skipped=response.get("action") == "skipped" or (response.get("action") == "observed" and response.get("would_pass") is False),
         reason=response.get("reason"),
         metadata={
             "last_check_at": _last_check_at,
@@ -961,6 +1193,7 @@ def run_proactive_once_manual(
             "force": force,
             "dry_run_only": dry_run_only,
             "raw_action": raw_result.get("action"),
+            "proactive_mode": PROACTIVE_MODE,
         },
     )
     log_event(
@@ -971,10 +1204,11 @@ def run_proactive_once_manual(
         candidate_id=response.get("candidate_id"),
         action=response.get("action"),
         success=response.get("success"),
-        skipped=response.get("action") == "skipped",
+        skipped=response.get("action") == "skipped" or (response.get("action") == "observed" and response.get("would_pass") is False),
         reason=response.get("reason"),
         dry_run=dry_run_only,
-        auto_send=PROACTIVE_AUTO_SEND,
+        auto_send=PROACTIVE_MODE == "auto",
+        proactive_mode=PROACTIVE_MODE,
     )
     return response
 
@@ -1011,14 +1245,15 @@ async def _scheduler_loop() -> None:
 
 def start_proactive_scheduler() -> asyncio.Task | None:
     global _scheduler_task
-    if not PROACTIVE_ENABLED:
+    if PROACTIVE_MODE == "off":
         log_event(
             "proactive",
             "proactive_rule_skipped",
             action="scheduler_start",
             success=True,
             skipped=True,
-            reason="proactive scheduler disabled",
+            reason="proactive mode off",
+            proactive_mode=PROACTIVE_MODE,
         )
         return None
     if _scheduler_task is not None and not _scheduler_task.done():
@@ -1029,8 +1264,9 @@ def start_proactive_scheduler() -> asyncio.Task | None:
         "proactive_check",
         action="scheduler_started",
         success=True,
-        auto_send=PROACTIVE_AUTO_SEND,
-        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
+        auto_send=PROACTIVE_MODE == "auto",
+        dry_run=PROACTIVE_MODE == "dry_run",
+        proactive_mode=PROACTIVE_MODE,
     )
     return _scheduler_task
 
@@ -1051,9 +1287,16 @@ async def stop_proactive_scheduler() -> None:
 def get_proactive_scheduler_status() -> dict[str, Any]:
     rule_evaluation = evaluate_proactive_rules(include_enabled=True)
     auto_sent_today = _today_auto_sent_count()
+    hard_cooldown = _hard_cooldown_active()
+    consecutive_failures = _consecutive_auto_failures()
+    failure_pause = _failure_pause_active()
     return {
         "success": True,
         "enabled": PROACTIVE_ENABLED,
+        "proactive_mode": PROACTIVE_MODE,
+        "mode_label": proactive_mode_label(),
+        "mode_description": proactive_mode_description(),
+        "mode_effective_action": proactive_mode_effective_action(),
         "task_running": _scheduler_task is not None and not _scheduler_task.done(),
         "daily_limit": PROACTIVE_DAILY_LIMIT,
         "auto_send_enabled": PROACTIVE_AUTO_SEND,
@@ -1061,11 +1304,19 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
         "auto_send_require_allowed_target": PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET,
         "auto_send_max_per_day": PROACTIVE_AUTO_SEND_MAX_PER_DAY,
         "auto_sent_today": auto_sent_today,
+        "hard_cooldown_minutes": PROACTIVE_HARD_COOLDOWN_MINUTES,
+        "failure_pause_threshold": PROACTIVE_FAILURE_PAUSE_THRESHOLD,
+        "hard_cooldown_active": hard_cooldown,
+        "consecutive_auto_failures": consecutive_failures,
+        "failure_pause_active": failure_pause,
         "config": {
+            "proactive_mode": PROACTIVE_MODE,
             "check_interval_seconds": PROACTIVE_CHECK_INTERVAL_SECONDS,
             "daily_limit": PROACTIVE_DAILY_LIMIT,
             "min_interval_minutes": PROACTIVE_MIN_INTERVAL_MINUTES,
             "recent_chat_skip_minutes": PROACTIVE_RECENT_CHAT_SKIP_MINUTES,
+            "hard_cooldown_minutes": PROACTIVE_HARD_COOLDOWN_MINUTES,
+            "failure_pause_threshold": PROACTIVE_FAILURE_PAUSE_THRESHOLD,
             "active_start": PROACTIVE_ACTIVE_START,
             "active_end": PROACTIVE_ACTIVE_END,
             "random_probability": PROACTIVE_RANDOM_PROBABILITY,
@@ -1097,7 +1348,7 @@ def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
         success=True,
         skipped=not evaluation["can_send"],
         reason=evaluation["reason"],
-        metadata={"manual_check": True},
+        metadata={"manual_check": True, "proactive_mode": PROACTIVE_MODE},
     )
     log_event(
         "proactive",
@@ -1107,11 +1358,13 @@ def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
         success=True,
         skipped=not evaluation["can_send"],
         reason=evaluation["reason"],
-        auto_send=PROACTIVE_AUTO_SEND,
-        dry_run=PROACTIVE_AUTO_SEND_DRY_RUN,
+        auto_send=PROACTIVE_MODE == "auto",
+        dry_run=PROACTIVE_MODE == "dry_run",
+        proactive_mode=PROACTIVE_MODE,
     )
     return {
         "success": True,
+        "proactive_mode": PROACTIVE_MODE,
         "can_send": evaluation["can_send"],
         "reason": evaluation["reason"],
         "checks": evaluation["checks"],

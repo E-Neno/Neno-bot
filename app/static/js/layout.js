@@ -105,18 +105,21 @@ export function buildProactivePanel(panel, header) {
   statusCard.appendChild(createElement(
     "div",
     "config-help",
-    "这里是后台自动调度规则，不等于手动测试；自动调度仍按 enabled、时间窗、每日上限、最小间隔、最近聊天、随机概率、QQ 白名单和 pending 候选保守运行。"
+    "这里是后台自动调度规则，不等于手动测试；自动调度优先按 PROACTIVE_MODE 运行，并受硬冷却、连续失败暂停、时间窗、每日上限、最小间隔、最近聊天、随机概率、QQ 白名单和 pending 候选保护。"
   ));
   if (autoStatus) {
     statusCard.appendChild(autoStatus);
   }
   const statusGrid = createElement("div", "status-grid");
+  appendStatusMetric(statusGrid, "当前模式", "proactiveStatusMode");
   appendStatusMetric(statusGrid, "开关", "proactiveStatusEnabled");
   appendStatusMetric(statusGrid, "任务", "proactiveStatusRunning");
   appendStatusMetric(statusGrid, "今日发送", "proactiveStatusToday");
   appendStatusMetric(statusGrid, "自动真实发送", "proactiveStatusAutoSend");
   appendStatusMetric(statusGrid, "自动 dry_run", "proactiveStatusAutoDryRun");
   appendStatusMetric(statusGrid, "自动发送今日", "proactiveStatusAutoSentToday");
+  appendStatusMetric(statusGrid, "硬冷却", "proactiveStatusHardCooldown");
+  appendStatusMetric(statusGrid, "连续失败", "proactiveStatusFailurePause");
   appendStatusMetric(statusGrid, "目标 allowed", "proactiveStatusAutoRequireAllowed");
   appendStatusMetric(statusGrid, "最近发送", "proactiveStatusLastSent");
   appendStatusMetric(statusGrid, "最近检查", "proactiveStatusLastCheck");

@@ -26,6 +26,11 @@ def _env_csv(key: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _env_choice(key: str, default: str, choices: set[str]) -> str:
+    raw = os.getenv(key, default).strip().lower()
+    return raw if raw in choices else default
+
+
 def _env_time(key: str, default: str) -> time:
     raw = os.getenv(key, default).strip()
     hour_text, minute_text = raw.split(":", 1)
@@ -43,10 +48,13 @@ PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "").strip()
 SYSTEM_PROMPT = load_text("prompts/system.txt")
 
 PROACTIVE_ENABLED = _env_bool("PROACTIVE_ENABLED", False)
+PROACTIVE_MODE = _env_choice("PROACTIVE_MODE", "off", {"off", "observe", "candidate", "dry_run", "auto"})
 PROACTIVE_CHECK_INTERVAL_SECONDS = _env_int("PROACTIVE_CHECK_INTERVAL_SECONDS", 600)
 PROACTIVE_DAILY_LIMIT = _env_int("PROACTIVE_DAILY_LIMIT", 2)
 PROACTIVE_MIN_INTERVAL_MINUTES = _env_int("PROACTIVE_MIN_INTERVAL_MINUTES", 240)
 PROACTIVE_RECENT_CHAT_SKIP_MINUTES = _env_int("PROACTIVE_RECENT_CHAT_SKIP_MINUTES", 45)
+PROACTIVE_HARD_COOLDOWN_MINUTES = _env_int("PROACTIVE_HARD_COOLDOWN_MINUTES", 10)
+PROACTIVE_FAILURE_PAUSE_THRESHOLD = _env_int("PROACTIVE_FAILURE_PAUSE_THRESHOLD", 3)
 PROACTIVE_ACTIVE_START = os.getenv("PROACTIVE_ACTIVE_START", "10:30").strip()
 PROACTIVE_ACTIVE_END = os.getenv("PROACTIVE_ACTIVE_END", "23:30").strip()
 PROACTIVE_ACTIVE_START_TIME = _env_time("PROACTIVE_ACTIVE_START", "10:30")

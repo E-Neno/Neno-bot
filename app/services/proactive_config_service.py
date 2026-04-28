@@ -9,10 +9,13 @@ from app.utils.env_writer import update_env_file
 
 PROACTIVE_CONFIG_KEYS = [
     "PROACTIVE_ENABLED",
+    "PROACTIVE_MODE",
     "PROACTIVE_CHECK_INTERVAL_SECONDS",
     "PROACTIVE_DAILY_LIMIT",
     "PROACTIVE_MIN_INTERVAL_MINUTES",
     "PROACTIVE_RECENT_CHAT_SKIP_MINUTES",
+    "PROACTIVE_HARD_COOLDOWN_MINUTES",
+    "PROACTIVE_FAILURE_PAUSE_THRESHOLD",
     "PROACTIVE_ACTIVE_START",
     "PROACTIVE_ACTIVE_END",
     "PROACTIVE_RANDOM_PROBABILITY",
@@ -26,10 +29,13 @@ PROACTIVE_CONFIG_KEYS = [
 
 DEFAULT_PROACTIVE_CONFIG = {
     "PROACTIVE_ENABLED": "false",
+    "PROACTIVE_MODE": "off",
     "PROACTIVE_CHECK_INTERVAL_SECONDS": "600",
     "PROACTIVE_DAILY_LIMIT": "2",
     "PROACTIVE_MIN_INTERVAL_MINUTES": "240",
     "PROACTIVE_RECENT_CHAT_SKIP_MINUTES": "45",
+    "PROACTIVE_HARD_COOLDOWN_MINUTES": "10",
+    "PROACTIVE_FAILURE_PAUSE_THRESHOLD": "3",
     "PROACTIVE_ACTIVE_START": "10:30",
     "PROACTIVE_ACTIVE_END": "23:30",
     "PROACTIVE_RANDOM_PROBABILITY": "0.25",
@@ -43,6 +49,7 @@ DEFAULT_PROACTIVE_CONFIG = {
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 HASH_LIST_RE = re.compile(r"^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$")
+PROACTIVE_MODES = {"off", "observe", "candidate", "dry_run", "auto"}
 
 
 def _env_path() -> Path:
@@ -83,10 +90,13 @@ def get_proactive_config() -> dict[str, Any]:
         "success": True,
         "config": {
             "PROACTIVE_ENABLED": values["PROACTIVE_ENABLED"],
+            "PROACTIVE_MODE": values["PROACTIVE_MODE"],
             "PROACTIVE_CHECK_INTERVAL_SECONDS": values["PROACTIVE_CHECK_INTERVAL_SECONDS"],
             "PROACTIVE_DAILY_LIMIT": values["PROACTIVE_DAILY_LIMIT"],
             "PROACTIVE_MIN_INTERVAL_MINUTES": values["PROACTIVE_MIN_INTERVAL_MINUTES"],
             "PROACTIVE_RECENT_CHAT_SKIP_MINUTES": values["PROACTIVE_RECENT_CHAT_SKIP_MINUTES"],
+            "PROACTIVE_HARD_COOLDOWN_MINUTES": values["PROACTIVE_HARD_COOLDOWN_MINUTES"],
+            "PROACTIVE_FAILURE_PAUSE_THRESHOLD": values["PROACTIVE_FAILURE_PAUSE_THRESHOLD"],
             "PROACTIVE_ACTIVE_START": values["PROACTIVE_ACTIVE_START"],
             "PROACTIVE_ACTIVE_END": values["PROACTIVE_ACTIVE_END"],
             "PROACTIVE_RANDOM_PROBABILITY": values["PROACTIVE_RANDOM_PROBABILITY"],
@@ -120,6 +130,13 @@ def _validate_probability(value: float) -> str:
     return str(value)
 
 
+def _validate_mode(value: str) -> str:
+    text = value.strip().lower()
+    if text not in PROACTIVE_MODES:
+        raise HTTPException(status_code=400, detail="PROACTIVE_MODE must be one of off, observe, candidate, dry_run, auto")
+    return text
+
+
 def _validate_hashes(value: str) -> str:
     text = ",".join(item.strip() for item in value.split(",") if item.strip())
     if not text:
@@ -148,6 +165,8 @@ def update_proactive_config(req: ProactiveConfigUpdateRequest) -> dict[str, Any]
 
     if "PROACTIVE_ENABLED" in payload:
         updates["PROACTIVE_ENABLED"] = "true" if payload["PROACTIVE_ENABLED"] else "false"
+    if "PROACTIVE_MODE" in payload:
+        updates["PROACTIVE_MODE"] = _validate_mode(payload["PROACTIVE_MODE"])
     if "PROACTIVE_CHECK_INTERVAL_SECONDS" in payload:
         updates["PROACTIVE_CHECK_INTERVAL_SECONDS"] = _validate_int(
             "PROACTIVE_CHECK_INTERVAL_SECONDS",
@@ -175,6 +194,20 @@ def update_proactive_config(req: ProactiveConfigUpdateRequest) -> dict[str, Any]
             payload["PROACTIVE_RECENT_CHAT_SKIP_MINUTES"],
             0,
             1440,
+        )
+    if "PROACTIVE_HARD_COOLDOWN_MINUTES" in payload:
+        updates["PROACTIVE_HARD_COOLDOWN_MINUTES"] = _validate_int(
+            "PROACTIVE_HARD_COOLDOWN_MINUTES",
+            payload["PROACTIVE_HARD_COOLDOWN_MINUTES"],
+            0,
+            1440,
+        )
+    if "PROACTIVE_FAILURE_PAUSE_THRESHOLD" in payload:
+        updates["PROACTIVE_FAILURE_PAUSE_THRESHOLD"] = _validate_int(
+            "PROACTIVE_FAILURE_PAUSE_THRESHOLD",
+            payload["PROACTIVE_FAILURE_PAUSE_THRESHOLD"],
+            1,
+            20,
         )
     if "PROACTIVE_ACTIVE_START" in payload:
         updates["PROACTIVE_ACTIVE_START"] = _validate_time(
