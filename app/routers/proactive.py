@@ -25,6 +25,7 @@ from app.services.proactive_service import (
     send_qq_candidate,
 )
 from app.storage.db import update_proactive_candidate_status
+from app.utils.logging_utils import new_trace_id
 
 router = APIRouter(prefix="/proactive", tags=["proactive"])
 
@@ -63,7 +64,7 @@ def proactive_events(
 
 @router.post("/check-now", dependencies=[Depends(require_admin_token)])
 def proactive_check_now():
-    return check_proactive_now()
+    return check_proactive_now(trace_id=new_trace_id())
 
 
 @router.post("/run-once", dependencies=[Depends(require_admin_token)])
@@ -75,6 +76,7 @@ def proactive_run_once(req: ProactiveRunOnceRequest | None = Body(default=None))
         ignore_active_window=options.ignore_active_window,
         force=options.force,
         dry_run_only=options.dry_run_only,
+        trace_id=new_trace_id(),
     )
 
 
@@ -90,12 +92,12 @@ def proactive_config_update(req: ProactiveConfigUpdateRequest):
 
 @router.post("/generate", dependencies=[Depends(require_admin_token)])
 def proactive_generate(req: ProactiveGenerateRequest | None = Body(default=None)):
-    return generate_proactive_candidate(platform=req.platform if req else None)
+    return generate_proactive_candidate(platform=req.platform if req else None, trace_id=new_trace_id())
 
 
 @router.post("/generate-test", dependencies=[Depends(require_admin_token)])
 def proactive_generate_test(req: ProactiveGenerateTestRequest | None = Body(default=None)):
-    return generate_test_proactive_candidate(force=req.force if req else False)
+    return generate_test_proactive_candidate(force=req.force if req else False, trace_id=new_trace_id())
 
 
 @router.post("/dismiss", dependencies=[Depends(require_admin_token)])
@@ -111,4 +113,4 @@ def proactive_dismiss(req: ProactiveDismissRequest):
 
 @router.post("/send-qq", dependencies=[Depends(require_admin_token)])
 def proactive_send_qq(req: ProactiveSendQqRequest):
-    return send_qq_candidate(candidate_id=req.id, dry_run=req.dry_run)
+    return send_qq_candidate(candidate_id=req.id, dry_run=req.dry_run, trace_id=new_trace_id())

@@ -341,6 +341,21 @@ export function buildConsoleLayout() {
   const debugPanel = createPanel("debugPanel", "日志 / 调试", "查看最近结构化事件、错误和 trace 链路。");
   const debugGrid = createElement("div", "console-grid");
 
+  const diagnosisCard = createElement("div", "card");
+  diagnosisCard.appendChild(createElement("h3", "", "当前诊断"));
+  const diagnosisActions = createElement("div", "row");
+  const refreshDiagnosisButton = createElement("button", "secondary", "刷新诊断");
+  refreshDiagnosisButton.id = "loadDebugDiagnoseBtn";
+  diagnosisActions.appendChild(refreshDiagnosisButton);
+  diagnosisCard.appendChild(diagnosisActions);
+  diagnosisCard.appendChild(createElement("div", "diagnosis-overall info", "诊断未加载"));
+  diagnosisCard.lastChild.id = "debugDiagnosisOverall";
+  diagnosisCard.appendChild(createElement("div", "diagnosis-card-grid"));
+  diagnosisCard.lastChild.id = "debugDiagnosisCards";
+  diagnosisCard.appendChild(createElement("div", "status"));
+  diagnosisCard.lastChild.id = "debugDiagnosisStatus";
+  debugGrid.appendChild(diagnosisCard);
+
   const debugSummaryCard = createElement("div", "card");
   debugSummaryCard.appendChild(createElement("h3", "", "事件摘要"));
   const debugSummaryGrid = createElement("div", "status-grid");

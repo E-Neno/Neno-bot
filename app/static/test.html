@@ -763,6 +763,101 @@
       white-space: normal;
     }
 
+    .diagnosis-overall {
+      border: 1px solid #dbe4f0;
+      border-left: 4px solid #2563eb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      line-height: 1.4;
+      margin: 8px 0 10px;
+    }
+
+    .diagnosis-overall.ok {
+      border-left-color: #16a34a;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .diagnosis-overall.warn {
+      border-left-color: #d97706;
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    .diagnosis-overall.error {
+      border-left-color: #dc2626;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .diagnosis-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .diagnosis-card {
+      border: 1px solid #e5e7eb;
+      border-left: 4px solid #2563eb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #ffffff;
+      min-width: 0;
+    }
+
+    .diagnosis-card.ok {
+      border-left-color: #16a34a;
+    }
+
+    .diagnosis-card.warn {
+      border-left-color: #d97706;
+      background: #fffbeb;
+    }
+
+    .diagnosis-card.error {
+      border-left-color: #dc2626;
+      background: #fef2f2;
+    }
+
+    .diagnosis-card.info {
+      border-left-color: #2563eb;
+      background: #f8fafc;
+    }
+
+    .diagnosis-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .diagnosis-card-title {
+      color: #111827;
+      font-weight: 800;
+      font-size: 14px;
+    }
+
+    .diagnosis-summary {
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+      margin-bottom: 6px;
+    }
+
+    .diagnosis-list {
+      display: grid;
+      gap: 3px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
     .debug-event-item {
       border: 1px solid #e5e7eb;
       border-left: 4px solid #94a3b8;

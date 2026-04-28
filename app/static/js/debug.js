@@ -49,6 +49,87 @@ function compactMetadata(metadata) {
     .join(" · ");
 }
 
+function levelLabel(level) {
+  const labels = {
+    ok: "正常",
+    warn: "注意",
+    error: "异常",
+    info: "信息",
+  };
+  return labels[level] || level || "信息";
+}
+
+function createTextList(items) {
+  const list = createElement("div", "diagnosis-list");
+  const values = (items || []).filter(Boolean);
+  if (values.length === 0) {
+    list.appendChild(createElement("div", "", "-"));
+    return list;
+  }
+  for (const item of values) {
+    list.appendChild(createElement("div", "", `- ${item}`));
+  }
+  return list;
+}
+
+export function renderDebugDiagnosis(diagnosis) {
+  const overallBox = document.getElementById("debugDiagnosisOverall");
+  const cardsBox = document.getElementById("debugDiagnosisCards");
+  if (!overallBox || !cardsBox) {
+    return;
+  }
+
+  const overall = diagnosis?.overall || {};
+  const overallLevel = overall.level || "info";
+  overallBox.className = `diagnosis-overall ${overallLevel}`;
+  overallBox.textContent = `${overall.title || "诊断未加载"}：${overall.summary || "-"}`;
+
+  clearChildren(cardsBox);
+  for (const card of diagnosis?.cards || []) {
+    const level = card.level || "info";
+    const item = createElement("div", `diagnosis-card ${level}`);
+    const head = createElement("div", "diagnosis-card-head");
+    head.append(
+      createElement("div", "diagnosis-card-title", card.title || card.id || "-"),
+      createElement("span", "tag", levelLabel(level))
+    );
+
+    const summary = createElement("div", "diagnosis-summary", card.summary || "-");
+    const detailsTitle = createElement("div", "debug-event-meta", "详情");
+    const details = createTextList(card.details || []);
+    const suggestionsTitle = createElement("div", "debug-event-meta", "建议");
+    const suggestions = createTextList(card.suggestions || []);
+    item.append(head, summary, detailsTitle, details, suggestionsTitle, suggestions);
+    cardsBox.appendChild(item);
+  }
+}
+
+export async function loadDebugDiagnose() {
+  const status = document.getElementById("debugDiagnosisStatus");
+  if (status) {
+    status.textContent = "诊断加载中...";
+  }
+
+  try {
+    const data = await requestJson(
+      "/debug/diagnose",
+      {
+        method: "GET",
+        headers: getAdminHeaders(),
+      },
+      "加载诊断失败："
+    );
+    renderDebugDiagnosis(data);
+    if (status) {
+      status.textContent = `已刷新 ${data.generated_at || ""}`.trim();
+    }
+  } catch (err) {
+    if (status) {
+      status.textContent = err.message;
+    }
+  }
+}
+
 export function renderDebugSummary(summary) {
   setOptionalText("debugTotalReturned", summary?.total_returned ?? 0);
   setOptionalText("debugLatestEventAt", summary?.latest_event_at || "-");
@@ -112,6 +193,7 @@ export async function loadDebugEvents() {
   }
 
   try {
+    await loadDebugDiagnose();
     const data = await requestJson(
       `/debug/events?${readDebugFilters().toString()}`,
       {
@@ -134,6 +216,7 @@ export async function loadDebugEvents() {
 
 export function bindDebugEvents() {
   document.getElementById("loadDebugEventsBtn")?.addEventListener("click", loadDebugEvents);
+  document.getElementById("loadDebugDiagnoseBtn")?.addEventListener("click", loadDebugDiagnose);
   for (const id of ["debugModuleInput", "debugEventInput", "debugTraceInput", "debugLimitInput"]) {
     document.getElementById(id)?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
