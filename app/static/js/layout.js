@@ -50,6 +50,20 @@ export function appendStatusMetric(grid, label, id) {
   grid.appendChild(item);
 }
 
+function addButtonClasses(button, ...classes) {
+  if (button) {
+    button.classList.add(...classes);
+  }
+}
+
+function createProactiveSectionNav() {
+  const nav = createElement("div", "proactive-section-nav");
+  for (const label of ["测试区", "自动区", "候选", "时间线", "配置", "诊断"]) {
+    nav.appendChild(createElement("span", "", label));
+  }
+  return nav;
+}
+
 export function buildProactivePanel(panel, header) {
   const proactiveCard = getCardByElementId("proactiveCandidateList");
   const statusNode = document.getElementById("proactiveCandidateStatus");
@@ -63,6 +77,14 @@ export function buildProactivePanel(panel, header) {
   const autoStatus = document.getElementById("proactiveAutoStatus");
   const pendingList = document.getElementById("proactiveCandidateList");
   const configDetails = document.querySelector(".config-panel");
+
+  addButtonClasses(refreshButton, "secondary", "auxiliary");
+  addButtonClasses(refreshTargetsButton, "secondary", "auxiliary");
+  addButtonClasses(refreshEventsButton, "secondary", "auxiliary");
+  addButtonClasses(generateButton, "secondary");
+  addButtonClasses(forceGenerateTestButton, "secondary");
+
+  header.appendChild(createProactiveSectionNav());
 
   if (refreshButton) {
     const actions = createElement("div", "row");
@@ -195,6 +217,7 @@ export function buildProactivePanel(panel, header) {
   const checkRow = createElement("div", "row");
   checkRow.appendChild(createElement("button", "", "检查现在会不会发"));
   checkRow.lastChild.id = "checkProactiveNowBtn";
+  checkRow.lastChild.classList.add("secondary", "auxiliary");
   if (generateButton) {
     checkRow.appendChild(generateButton);
   }
@@ -347,7 +370,7 @@ export function buildConsoleLayout() {
   const diagnosisCard = createElement("div", "card");
   diagnosisCard.appendChild(createElement("h3", "", "当前诊断"));
   const diagnosisActions = createElement("div", "row");
-  const refreshDiagnosisButton = createElement("button", "secondary", "刷新诊断");
+  const refreshDiagnosisButton = createElement("button", "secondary auxiliary", "刷新诊断");
   refreshDiagnosisButton.id = "loadDebugDiagnoseBtn";
   diagnosisActions.appendChild(refreshDiagnosisButton);
   diagnosisCard.appendChild(diagnosisActions);

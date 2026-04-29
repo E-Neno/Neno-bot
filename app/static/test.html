@@ -746,6 +746,273 @@
       margin-top: 0;
     }
 
+    #proactivePanel {
+      --proactive-cream: #fffaf4;
+      --proactive-cream-soft: #fffdf9;
+      --proactive-line: #efe6dc;
+      --proactive-line-soft: #f5ede5;
+      --proactive-text: #3f4855;
+      --proactive-muted: #7a8797;
+      --proactive-blue: #e9eef6;
+      --proactive-blue-text: #526274;
+      --proactive-green: #e7f4ea;
+      --proactive-green-text: #52745a;
+      --proactive-yellow: #fff3cf;
+      --proactive-yellow-text: #85672b;
+      --proactive-red: #f8e1de;
+      --proactive-red-text: #8a5754;
+    }
+
+    #proactivePanel .console-grid {
+      gap: 16px;
+    }
+
+    #proactivePanel .panel-header {
+      margin-bottom: 18px;
+    }
+
+    #proactivePanel .panel-title {
+      color: #303946;
+    }
+
+    #proactivePanel .panel-subtitle,
+    #proactivePanel .small,
+    #proactivePanel .config-help,
+    #proactivePanel .candidate-meta,
+    #proactivePanel .status,
+    #proactivePanel .status-label,
+    #proactivePanel .check-detail {
+      color: var(--proactive-muted);
+    }
+
+    #proactivePanel .card {
+      border: 1px solid var(--proactive-line-soft);
+      border-radius: 24px;
+      padding: 18px;
+      margin-bottom: 16px;
+      background: var(--proactive-cream-soft);
+      box-shadow: 0 16px 40px rgba(116, 96, 80, 0.08);
+    }
+
+    #proactivePanel .card h3 {
+      margin-bottom: 10px;
+      color: #374151;
+      font-size: 16px;
+    }
+
+    #proactivePanel .status-item,
+    #proactivePanel .check-item,
+    #proactivePanel .relationship-metric {
+      border: 1px solid var(--proactive-line-soft);
+      border-radius: 18px;
+      background: #fffbf7;
+      box-shadow: 0 8px 22px rgba(116, 96, 80, 0.05);
+    }
+
+    #proactivePanel .status-value,
+    #proactivePanel .check-name,
+    #proactivePanel .candidate-content {
+      color: var(--proactive-text);
+    }
+
+    #proactivePanel .candidate-item {
+      border: 1px solid var(--proactive-line-soft);
+      border-radius: 18px;
+      padding: 13px 14px;
+      margin-top: 10px;
+      background: #fffdf9;
+      box-shadow: 0 8px 24px rgba(116, 96, 80, 0.05);
+    }
+
+    #proactivePanel .candidate-item:first-child {
+      border-top: 1px solid var(--proactive-line-soft);
+      margin-top: 0;
+    }
+
+    #proactivePanel .tag {
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: var(--proactive-blue-text);
+      background: var(--proactive-blue);
+    }
+
+    #proactivePanel .tag.sent {
+      color: var(--proactive-green-text);
+      background: var(--proactive-green);
+    }
+
+    #proactivePanel .tag.pending {
+      color: var(--proactive-yellow-text);
+      background: var(--proactive-yellow);
+    }
+
+    #proactivePanel .tag.failed {
+      color: var(--proactive-red-text);
+      background: var(--proactive-red);
+    }
+
+    #proactivePanel .tag.dismissed {
+      color: var(--proactive-blue-text);
+      background: var(--proactive-blue);
+    }
+
+    #proactivePanel button {
+      border: 1px solid rgba(132, 144, 163, 0.16);
+      border-radius: 999px;
+      padding: 8px 13px;
+      background: #8e9fb3;
+      box-shadow: 0 8px 18px rgba(82, 98, 116, 0.12);
+      transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+
+    #proactivePanel button:hover {
+      opacity: 1;
+      background: #9aaabd;
+      box-shadow: 0 10px 22px rgba(82, 98, 116, 0.15);
+      transform: translateY(-1px);
+    }
+
+    #proactivePanel button:disabled {
+      transform: none;
+      box-shadow: none;
+    }
+
+    #proactivePanel button.secondary {
+      background: #a8b2bf;
+    }
+
+    #proactivePanel button.secondary:hover {
+      background: #b3bcc8;
+    }
+
+    #proactivePanel button.auxiliary {
+      background: #c3cad3;
+      color: #f8fafc;
+      box-shadow: none;
+    }
+
+    #proactivePanel button.auxiliary:hover {
+      background: #cbd2da;
+      box-shadow: 0 6px 14px rgba(82, 98, 116, 0.08);
+    }
+
+    #proactivePanel button.good {
+      background: #87aa8d;
+    }
+
+    #proactivePanel button.good:hover {
+      background: #94b698;
+    }
+
+    #proactivePanel button.danger {
+      background: #bf817c;
+    }
+
+    #proactivePanel button.danger:hover {
+      background: #ca8d88;
+    }
+
+    #proactivePanel .config-field {
+      gap: 6px;
+    }
+
+    #proactivePanel .proactive-section-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    #proactivePanel .proactive-section-nav span {
+      border: 1px solid var(--proactive-line-soft);
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #fffdf9;
+      color: var(--proactive-muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    #proactivePanel .config-field label {
+      color: #697687;
+      font-weight: 700;
+    }
+
+    #proactivePanel .config-field input,
+    #proactivePanel .config-field select {
+      border: 1px solid var(--proactive-line);
+      border-radius: 16px;
+      padding: 9px 11px;
+      background: #fffefb;
+      color: var(--proactive-text);
+      transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+
+    #proactivePanel .config-field input:hover,
+    #proactivePanel .config-field select:hover {
+      border-color: #e6d8ca;
+      background: #fffdfa;
+    }
+
+    #proactivePanel .config-field input:focus,
+    #proactivePanel .config-field select:focus {
+      border-color: #d8c7b7;
+      box-shadow: 0 0 0 4px rgba(216, 199, 183, 0.22);
+      background: #ffffff;
+    }
+
+    #proactivePanel .proactive-config-grid {
+      gap: 14px;
+      margin-top: 12px;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form {
+      gap: 14px;
+      margin-top: 12px;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form > .config-form {
+      gap: 14px;
+      margin-top: 0;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form > .config-form > div,
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form > .config-form > details {
+      border: 1px solid var(--proactive-line-soft);
+      border-radius: 24px;
+      padding: 16px;
+      background: #fffbf7;
+      box-shadow: 0 12px 30px rgba(116, 96, 80, 0.06);
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form > .config-form > div:first-child {
+      border-color: #ead9c8;
+      background: linear-gradient(180deg, #fff8ee 0%, #fffdf9 100%);
+      box-shadow: 0 18px 42px rgba(116, 96, 80, 0.1);
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) > .config-form > .config-form > div:first-child > .status-value {
+      color: #4f463f;
+      font-size: 16px;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) summary {
+      color: #465364;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) details:last-child {
+      background: #fbfaf7;
+      box-shadow: none;
+    }
+
+    #proactivePanel .card:has(#proactiveModeInput) details:last-child:not([open]) {
+      border-color: #f1ebe4;
+      color: #7d8794;
+    }
+
     .overview-actions {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -907,6 +1174,578 @@
       word-break: break-word;
     }
 
+    body {
+      --milk-bg: #f9f5ef;
+      --milk-surface: #fffdfa;
+      --milk-surface-soft: #fff8f1;
+      --milk-surface-muted: #f6f1eb;
+      --milk-border: #eee4da;
+      --milk-border-soft: #f5ece3;
+      --milk-text: #36404d;
+      --milk-muted: #788494;
+      --milk-blue: #e8edf4;
+      --milk-blue-text: #526174;
+      --milk-green: #e5f2e8;
+      --milk-green-text: #4f7358;
+      --milk-yellow: #fff1ca;
+      --milk-yellow-text: #816427;
+      --milk-red: #f7dfdc;
+      --milk-red-text: #895652;
+      background: linear-gradient(180deg, #fbf7f1 0%, #f6f1eb 100%);
+      color: var(--milk-text);
+    }
+
+    .app-loading-state {
+      background: var(--milk-bg);
+      color: var(--milk-muted);
+    }
+
+    .app-init-error {
+      border-color: #efd2cf;
+      border-radius: 18px;
+      background: #fff7f5;
+      color: var(--milk-red-text);
+      box-shadow: 0 14px 36px rgba(116, 96, 80, 0.12);
+    }
+
+    .app.app-shell {
+      background: transparent;
+    }
+
+    .console-sidebar {
+      border-right: 1px solid var(--milk-border);
+      background: rgba(255, 253, 250, 0.78);
+      padding: 22px 14px;
+      box-shadow: 8px 0 28px rgba(116, 96, 80, 0.05);
+      backdrop-filter: blur(12px);
+    }
+
+    .console-brand {
+      padding: 8px 12px 18px;
+      border-bottom: 1px solid var(--milk-border-soft);
+      margin-bottom: 16px;
+    }
+
+    .console-brand-title {
+      color: #3d4653;
+      letter-spacing: 0;
+    }
+
+    .console-brand-subtitle,
+    .panel-subtitle,
+    .small,
+    .status,
+    .config-help,
+    .candidate-meta,
+    .debug-event-meta,
+    .diagnosis-list,
+    .session-meta,
+    .memory-meta,
+    .relationship-label,
+    .stats-label,
+    .status-label,
+    .check-detail {
+      color: var(--milk-muted);
+    }
+
+    .console-nav {
+      gap: 9px;
+    }
+
+    .console-nav button {
+      border: 1px solid var(--milk-border-soft);
+      border-radius: 18px;
+      background: rgba(255, 253, 250, 0.82);
+      color: #586475;
+      padding: 11px 14px;
+      box-shadow: 0 8px 22px rgba(116, 96, 80, 0.05);
+      transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    .console-nav button:hover {
+      background: #fff8f0;
+      border-color: #eadccd;
+      color: #485564;
+      opacity: 1;
+      transform: translateY(-1px);
+      box-shadow: 0 10px 24px rgba(116, 96, 80, 0.07);
+    }
+
+    .console-nav button.active {
+      background: #efe2d2;
+      color: #4f463f;
+      border-color: #e2d0bc;
+      box-shadow: 0 12px 28px rgba(116, 96, 80, 0.12);
+    }
+
+    .console-nav button.active::before {
+      left: 7px;
+      background: #b99a7c;
+    }
+
+    .console-main {
+      padding: 24px;
+    }
+
+    .panel-header {
+      margin-bottom: 18px;
+    }
+
+    .panel-title {
+      color: #343d49;
+      font-weight: 850;
+    }
+
+    .console-grid {
+      gap: 16px;
+    }
+
+    .console-panel .card,
+    .card {
+      border: 1px solid var(--milk-border-soft);
+      border-radius: 24px;
+      padding: 18px;
+      margin-bottom: 16px;
+      background: rgba(255, 253, 250, 0.9);
+      box-shadow: 0 16px 40px rgba(116, 96, 80, 0.08);
+    }
+
+    .card h3,
+    .diagnosis-card-title,
+    .debug-event-main,
+    .session-title,
+    .check-name {
+      color: var(--milk-text);
+    }
+
+    .card h3 {
+      margin-bottom: 10px;
+      font-size: 16px;
+    }
+
+    .chat,
+    .chat.console-chat {
+      border: 1px solid var(--milk-border-soft);
+      border-radius: 24px;
+      background: var(--milk-surface);
+      box-shadow: 0 16px 40px rgba(116, 96, 80, 0.07);
+    }
+
+    .header,
+    .input-area {
+      border-color: var(--milk-border-soft);
+      background: #fffbf7;
+    }
+
+    .messages {
+      background: #fffdf9;
+    }
+
+    .msg {
+      border-radius: 22px;
+    }
+
+    .user {
+      background: #8799ad;
+      color: #ffffff;
+      border-radius: 22px 22px 8px 22px;
+      box-shadow: 0 10px 22px rgba(82, 98, 116, 0.12);
+    }
+
+    .bot {
+      background: #f3eee8;
+      color: var(--milk-text);
+      border-radius: 22px 22px 22px 8px;
+    }
+
+    button {
+      border: 1px solid rgba(132, 144, 163, 0.16);
+      border-radius: 999px;
+      padding: 8px 13px;
+      background: #8d9eb1;
+      color: #ffffff;
+      box-shadow: 0 8px 18px rgba(82, 98, 116, 0.12);
+      transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, opacity 140ms ease;
+    }
+
+    button:hover {
+      opacity: 1;
+      background: #99a9bb;
+      box-shadow: 0 10px 22px rgba(82, 98, 116, 0.15);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      transform: none;
+      box-shadow: none;
+    }
+
+    button.secondary {
+      background: #a7b1be;
+    }
+
+    button.secondary:hover {
+      background: #b2bbc7;
+    }
+
+    button.good {
+      background: #86aa8d;
+    }
+
+    button.good:hover {
+      background: #94b699;
+    }
+
+    button.danger {
+      background: #bf817c;
+    }
+
+    button.danger:hover {
+      background: #ca8d88;
+    }
+
+    button {
+      border-color: #a98264;
+      background: linear-gradient(180deg, #c49b79 0%, #a9795c 100%);
+      color: #fffaf4;
+      box-shadow: 0 10px 22px rgba(122, 86, 62, 0.18);
+    }
+
+    button:hover {
+      background: linear-gradient(180deg, #cea886 0%, #b18466 100%);
+      border-color: #966f54;
+      box-shadow: 0 13px 28px rgba(122, 86, 62, 0.22);
+    }
+
+    button:active {
+      transform: translateY(0);
+      box-shadow: 0 5px 12px rgba(122, 86, 62, 0.18);
+    }
+
+    button.secondary,
+    #proactivePanel button.secondary {
+      border-color: #d3bda6;
+      background: linear-gradient(180deg, #f4eadf 0%, #e3d1be 100%);
+      color: #594a3d;
+      box-shadow: 0 7px 16px rgba(116, 96, 80, 0.11);
+    }
+
+    button.secondary:hover,
+    #proactivePanel button.secondary:hover {
+      border-color: #bea387;
+      background: linear-gradient(180deg, #f8eee2 0%, #e8d7c4 100%);
+      color: #46392f;
+      box-shadow: 0 10px 22px rgba(116, 96, 80, 0.15);
+    }
+
+    button.secondary:active,
+    #proactivePanel button.secondary:active {
+      box-shadow: 0 4px 10px rgba(116, 96, 80, 0.13);
+    }
+
+    button.good,
+    #proactivePanel button.good {
+      border-color: #b3caae;
+      background: linear-gradient(180deg, #edf7ea 0%, #d8ead3 100%);
+      color: #3f6545;
+      box-shadow: 0 7px 16px rgba(76, 116, 83, 0.11);
+    }
+
+    button.good:hover,
+    #proactivePanel button.good:hover {
+      border-color: #98b993;
+      background: linear-gradient(180deg, #f1faef 0%, #deefda 100%);
+      color: #33583a;
+      box-shadow: 0 10px 22px rgba(76, 116, 83, 0.15);
+    }
+
+    button.danger,
+    #proactivePanel button.danger {
+      border-color: #d7aaa3;
+      background: linear-gradient(180deg, #f9e7e3 0%, #eccdc7 100%);
+      color: #784c46;
+      box-shadow: 0 7px 16px rgba(128, 81, 76, 0.11);
+    }
+
+    button.danger:hover,
+    #proactivePanel button.danger:hover {
+      border-color: #c89188;
+      background: linear-gradient(180deg, #fcece8 0%, #f0d4ce 100%);
+      color: #68413c;
+      box-shadow: 0 10px 22px rgba(128, 81, 76, 0.15);
+    }
+
+    #sendBtn,
+    #saveAdminTokenBtn,
+    #saveConfigBtn,
+    #saveProactiveConfigBtn,
+    #generateProactiveTestCandidateBtn,
+    #runProactiveOnceBtn,
+    #proactivePanel #saveProactiveConfigBtn,
+    #proactivePanel #generateProactiveTestCandidateBtn,
+    #proactivePanel #runProactiveOnceBtn {
+      border-color: #a98264;
+      background: linear-gradient(180deg, #c49b79 0%, #a9795c 100%);
+      color: #fffaf4;
+      box-shadow: 0 10px 22px rgba(122, 86, 62, 0.18);
+    }
+
+    #sendBtn:hover,
+    #saveAdminTokenBtn:hover,
+    #saveConfigBtn:hover,
+    #saveProactiveConfigBtn:hover,
+    #generateProactiveTestCandidateBtn:hover,
+    #runProactiveOnceBtn:hover,
+    #proactivePanel #saveProactiveConfigBtn:hover,
+    #proactivePanel #generateProactiveTestCandidateBtn:hover,
+    #proactivePanel #runProactiveOnceBtn:hover {
+      border-color: #966f54;
+      background: linear-gradient(180deg, #cea886 0%, #b18466 100%);
+      color: #fffdf9;
+      box-shadow: 0 13px 28px rgba(122, 86, 62, 0.22);
+    }
+
+    #forceGenerateProactiveTestCandidateBtn,
+    #generateProactiveCandidateBtn,
+    #checkProactiveNowBtn,
+    #proactivePanel #forceGenerateProactiveTestCandidateBtn,
+    #proactivePanel #generateProactiveCandidateBtn,
+    #proactivePanel #checkProactiveNowBtn {
+      border-color: #d3bda6;
+      background: linear-gradient(180deg, #f4eadf 0%, #e3d1be 100%);
+      color: #594a3d;
+      box-shadow: 0 7px 16px rgba(116, 96, 80, 0.11);
+    }
+
+    #forceGenerateProactiveTestCandidateBtn:hover,
+    #generateProactiveCandidateBtn:hover,
+    #checkProactiveNowBtn:hover,
+    #proactivePanel #forceGenerateProactiveTestCandidateBtn:hover,
+    #proactivePanel #generateProactiveCandidateBtn:hover,
+    #proactivePanel #checkProactiveNowBtn:hover {
+      border-color: #bea387;
+      background: linear-gradient(180deg, #f8eee2 0%, #e8d7c4 100%);
+      color: #46392f;
+      box-shadow: 0 10px 22px rgba(116, 96, 80, 0.15);
+    }
+
+    #loadProactiveCandidatesBtn,
+    #loadProactiveTargetsBtn,
+    #loadProactiveEventsBtn,
+    #loadProactiveConfigBtn,
+    #loadDebugDiagnoseBtn,
+    #loadDebugEventsBtn,
+    #loadStatsSummaryBtn,
+    #loadConfigBtn,
+    #loadSessionMessagesBtn,
+    #loadSessionsBtn,
+    #loadRelationshipStateBtn,
+    #loadMemoriesBtn,
+    #proactivePanel #loadProactiveCandidatesBtn,
+    #proactivePanel #loadProactiveTargetsBtn,
+    #proactivePanel #loadProactiveEventsBtn,
+    #proactivePanel #loadProactiveConfigBtn {
+      border-color: #e4d2bf;
+      padding: 6px 10px;
+      background: #fff9f2;
+      color: #6b5b4f;
+      font-size: 12px;
+      box-shadow: none;
+    }
+
+    #loadProactiveCandidatesBtn:hover,
+    #loadProactiveTargetsBtn:hover,
+    #loadProactiveEventsBtn:hover,
+    #loadProactiveConfigBtn:hover,
+    #loadDebugDiagnoseBtn:hover,
+    #loadDebugEventsBtn:hover,
+    #loadStatsSummaryBtn:hover,
+    #loadConfigBtn:hover,
+    #loadSessionMessagesBtn:hover,
+    #loadSessionsBtn:hover,
+    #loadRelationshipStateBtn:hover,
+    #loadMemoriesBtn:hover,
+    #proactivePanel #loadProactiveCandidatesBtn:hover,
+    #proactivePanel #loadProactiveTargetsBtn:hover,
+    #proactivePanel #loadProactiveEventsBtn:hover,
+    #proactivePanel #loadProactiveConfigBtn:hover {
+      border-color: #cdb295;
+      background: #fff2e3;
+      color: #56473b;
+      box-shadow: 0 7px 15px rgba(116, 96, 80, 0.12);
+    }
+
+    button:disabled,
+    #proactivePanel button:disabled {
+      opacity: 0.48;
+      color: rgba(86, 71, 59, 0.62);
+      transform: none;
+      box-shadow: none;
+    }
+
+    input,
+    textarea,
+    select,
+    .config-field input,
+    .config-field select,
+    .session-box input {
+      border: 1px solid var(--milk-border);
+      border-radius: 16px;
+      background: #fffefb;
+      color: var(--milk-text);
+      outline: none;
+      transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+
+    input:hover,
+    textarea:hover,
+    select:hover,
+    .config-field input:hover,
+    .config-field select:hover {
+      border-color: #e5d7ca;
+      background: #fffdfa;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus,
+    .config-field input:focus,
+    .config-field select:focus {
+      border-color: #d7c5b4;
+      box-shadow: 0 0 0 4px rgba(215, 197, 180, 0.22);
+      background: #ffffff;
+    }
+
+    textarea {
+      border-radius: 20px;
+    }
+
+    .config-form {
+      gap: 10px;
+    }
+
+    .config-field {
+      gap: 6px;
+    }
+
+    .config-field label {
+      color: #667383;
+      font-weight: 700;
+    }
+
+    .tag {
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: var(--milk-blue-text);
+      background: var(--milk-blue);
+    }
+
+    .tag.sent,
+    .tag.ok {
+      color: var(--milk-green-text);
+      background: var(--milk-green);
+    }
+
+    .tag.pending,
+    .tag.warn {
+      color: var(--milk-yellow-text);
+      background: var(--milk-yellow);
+    }
+
+    .tag.failed,
+    .tag.error {
+      color: var(--milk-red-text);
+      background: var(--milk-red);
+    }
+
+    .tag.dismissed,
+    .tag.info {
+      color: var(--milk-blue-text);
+      background: var(--milk-blue);
+    }
+
+    .stats-item,
+    .status-item,
+    .relationship-metric,
+    .relationship-context-box,
+    .check-item,
+    .diagnosis-card,
+    .debug-event-item {
+      border: 1px solid var(--milk-border-soft);
+      border-radius: 18px;
+      background: #fffbf7;
+      box-shadow: 0 8px 22px rgba(116, 96, 80, 0.05);
+    }
+
+    .status-value,
+    .stats-value,
+    .relationship-value,
+    .candidate-content,
+    .diagnosis-summary,
+    .debug-event-head,
+    .memory-content,
+    .config-line {
+      color: var(--milk-text);
+    }
+
+    .memory-item,
+    .session-item,
+    .used-memory-item,
+    .candidate-item {
+      border-top: 1px solid var(--milk-border-soft);
+      padding: 12px 10px;
+    }
+
+    .candidate-item:first-child {
+      border-top: none;
+    }
+
+    .diagnosis-overall {
+      border: 1px solid var(--milk-border-soft);
+      border-left: 4px solid #97a8ba;
+      border-radius: 20px;
+      padding: 13px 14px;
+      background: #f4f7fb;
+      color: var(--milk-blue-text);
+      box-shadow: 0 8px 22px rgba(116, 96, 80, 0.05);
+    }
+
+    .diagnosis-overall.ok,
+    .diagnosis-card.ok,
+    .debug-event-item.success {
+      border-left-color: #8cb795;
+      background: var(--milk-green);
+      color: var(--milk-green-text);
+    }
+
+    .diagnosis-overall.warn,
+    .diagnosis-card.warn {
+      border-left-color: #d7b45d;
+      background: var(--milk-yellow);
+      color: var(--milk-yellow-text);
+    }
+
+    .diagnosis-overall.error,
+    .diagnosis-card.error,
+    .debug-event-item.error {
+      border-left-color: #c68680;
+      background: var(--milk-red);
+      color: var(--milk-red-text);
+    }
+
+    .diagnosis-card.info,
+    .debug-event-item.skipped {
+      border-left-color: #97a8ba;
+      background: var(--milk-blue);
+      color: var(--milk-blue-text);
+    }
+
+    .diagnosis-card,
+    .debug-event-item {
+      border-left-width: 4px;
+    }
+
     @media (max-width: 980px) {
       .app.app-shell {
         grid-template-columns: 1fr;
@@ -918,7 +1757,7 @@
         top: 0;
         height: auto;
         border-right: none;
-        border-bottom: 1px solid #e5e7eb;
+        border-bottom: 1px solid var(--milk-border);
         padding: 10px;
       }
 
