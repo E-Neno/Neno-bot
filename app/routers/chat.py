@@ -52,6 +52,9 @@ def chat(req: ChatRequest):
     return ChatResponse(
         reply=result["reply"],
         candidate_memory=result["candidate_memory"],
+        candidate_memory_decision=result["candidate_memory_decision"],
+        auto_added=result["auto_added"],
+        auto_added_memory=result["auto_added_memory"],
         used_memories=result["used_memories"],
         relationship_state=result["relationship_state"],
         relationship_context=result["relationship_context"],

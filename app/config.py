@@ -47,6 +47,10 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "").strip()
 SYSTEM_PROMPT = load_text("prompts/system.txt")
 
+BURST_MERGE_ENABLED = _env_bool("BURST_MERGE_ENABLED", True)
+BURST_MERGE_WINDOW_SECONDS = _env_float("BURST_MERGE_WINDOW_SECONDS", 12)
+BURST_MERGE_MAX_MESSAGES = _env_int("BURST_MERGE_MAX_MESSAGES", 5)
+
 PROACTIVE_ENABLED = _env_bool("PROACTIVE_ENABLED", False)
 PROACTIVE_MODE = _env_choice("PROACTIVE_MODE", "off", {"off", "observe", "candidate", "dry_run", "auto"})
 PROACTIVE_CHECK_INTERVAL_SECONDS = _env_int("PROACTIVE_CHECK_INTERVAL_SECONDS", 600)

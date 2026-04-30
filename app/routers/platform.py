@@ -3,14 +3,20 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
+from app import config
 from app.schemas import PlatformMessageRequest, PlatformMessageResponse
 from app.security import require_platform_token
+from app.services.burst_merge_service import BurstMergeService
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_qq_proactive_target
 from app.services.stats_service import record_chat_stat
 from app.utils.logging_utils import log_event, new_trace_id
 
 router = APIRouter(prefix="/platform", tags=["platform"])
+burst_merge_service = BurstMergeService(
+    window_seconds=config.BURST_MERGE_WINDOW_SECONDS,
+    max_messages=config.BURST_MERGE_MAX_MESSAGES,
+)
 
 SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
@@ -67,50 +73,15 @@ def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, st
     return f"{platform}:group:{group_id}:{user_id}", platform, user_id, chat_type
 
 
-@router.post(
-    "/openclaw/message",
-    response_model=PlatformMessageResponse,
-    dependencies=[Depends(require_platform_token)],
-)
-def openclaw_message(payload: Any = Body(...)):
-    trace_id = new_trace_id()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="request body must be a JSON object")
-    try:
-        req = PlatformMessageRequest(**payload)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="invalid request body") from exc
-
-    session_id, platform, user_id, chat_type = build_platform_session_id(req)
-    message = clean_required(req.message, "message")
-    if len(message) > MAX_MESSAGE_LENGTH:
-        raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
-
-    log_event(
-        "platform",
-        "message_received",
-        trace_id=trace_id,
-        platform=platform,
-        chat_type=chat_type,
-        user_id=user_id,
-        session_id=session_id,
-        message_len=len(message),
-    )
-
-    if platform == "qq" and chat_type == "private":
-        try:
-            record_qq_proactive_target(session_id=session_id, user_id=user_id)
-        except Exception as exc:
-            log_event(
-                "platform",
-                "proactive_target_upsert_warning",
-                trace_id=trace_id,
-                platform=platform,
-                user_id=user_id,
-                session_id=session_id,
-                error_type=type(exc).__name__,
-            )
-
+def run_platform_chat_turn(
+    *,
+    trace_id: str,
+    session_id: str,
+    platform: str,
+    user_id: str,
+    chat_type: str,
+    message: str,
+) -> PlatformMessageResponse:
     started = time.perf_counter()
     try:
         result = run_chat_turn(session_id, message, trace_id=trace_id)
@@ -166,4 +137,78 @@ def openclaw_message(payload: Any = Body(...)):
         success=True,
         reply=result["reply"],
         session_id=session_id,
+    )
+
+
+@router.post(
+    "/openclaw/message",
+    response_model=PlatformMessageResponse,
+    dependencies=[Depends(require_platform_token)],
+)
+def openclaw_message(payload: Any = Body(...)):
+    trace_id = new_trace_id()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    try:
+        req = PlatformMessageRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid request body") from exc
+
+    session_id, platform, user_id, chat_type = build_platform_session_id(req)
+    message = clean_required(req.message, "message")
+    if len(message) > MAX_MESSAGE_LENGTH:
+        raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
+
+    log_event(
+        "platform",
+        "message_received",
+        trace_id=trace_id,
+        platform=platform,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        message_len=len(message),
+    )
+
+    if platform == "qq" and chat_type == "private":
+        try:
+            record_qq_proactive_target(session_id=session_id, user_id=user_id)
+        except Exception as exc:
+            log_event(
+                "platform",
+                "proactive_target_upsert_warning",
+                trace_id=trace_id,
+                platform=platform,
+                user_id=user_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+            )
+
+    if config.BURST_MERGE_ENABLED and chat_type == "private":
+        submit_result = burst_merge_service.submit_burst_message(
+            session_id=session_id,
+            message=message,
+            trace_id=trace_id,
+            handler=lambda merged_session_id, merged_message: run_platform_chat_turn(
+                trace_id=trace_id,
+                session_id=merged_session_id,
+                platform=platform,
+                user_id=user_id,
+                chat_type=chat_type,
+                message=merged_message,
+            ),
+        )
+        if submit_result.accepted and submit_result.future is not None:
+            response = submit_result.future.wait()
+            if isinstance(response, PlatformMessageResponse):
+                return response
+            raise HTTPException(status_code=500, detail="chat failed")
+
+    return run_platform_chat_turn(
+        trace_id=trace_id,
+        session_id=session_id,
+        platform=platform,
+        user_id=user_id,
+        chat_type=chat_type,
+        message=message,
     )

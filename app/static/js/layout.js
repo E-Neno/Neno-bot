@@ -279,6 +279,7 @@ export function buildConsoleLayout() {
   const proactiveCard = getCardByElementId("proactiveCandidateList");
   const relationshipCard = getCardByElementId("relationshipStatus");
   const usedMemoryCard = getCardByElementId("usedMemories");
+  const chatPreviewCard = getCardByElementId("chatPreviewBox");
   const candidateCard = getCardByElementId("candidateBox");
   const memoryCard = getCardByElementId("memoryList");
 
@@ -330,6 +331,9 @@ export function buildConsoleLayout() {
   chat.classList.add("console-chat");
   chatGrid.appendChild(chat);
   const chatSide = createElement("div", "console-grid");
+  if (chatPreviewCard) {
+    chatSide.appendChild(chatPreviewCard);
+  }
   if (usedMemoryCard) {
     chatSide.appendChild(usedMemoryCard);
   }

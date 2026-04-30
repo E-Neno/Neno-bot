@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.storage.relationship import (
     ensure_relationship_state,
+    get_relationship_state,
     reset_relationship_state,
     update_relationship_state,
     update_relationship_state_manual,
@@ -115,15 +116,25 @@ def apply_relationship_update(session_id: str, user_message: str) -> dict[str, A
     return with_stage_label(update_relationship_state(session_id, updated))
 
 
-def build_relationship_context(session_id: str) -> str:
-    state = ensure_relationship_state(session_id)
-    stage = int(state.get("stage") or 0)
+def _build_relationship_context_for_stage(stage: int) -> str:
     prompt_path = STAGE_PROMPT_DIR / f"stage_{stage}.txt"
     try:
         content = prompt_path.read_text(encoding="utf-8").strip()
     except OSError:
         return RELATIONSHIP_CONTEXT_FALLBACK
     return content or RELATIONSHIP_CONTEXT_FALLBACK
+
+
+def build_relationship_context(session_id: str) -> str:
+    state = ensure_relationship_state(session_id)
+    stage = int(state.get("stage") or 0)
+    return _build_relationship_context_for_stage(stage)
+
+
+def build_relationship_context_readonly(session_id: str) -> str:
+    state = get_relationship_state(session_id)
+    stage = int(state.get("stage") or 0) if state else 0
+    return _build_relationship_context_for_stage(stage)
 
 
 def get_relationship_state_for_api(session_id: str) -> dict[str, Any]:

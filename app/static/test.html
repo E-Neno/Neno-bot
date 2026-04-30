@@ -442,6 +442,57 @@
       white-space: pre-wrap;
     }
 
+    .chat-preview-box {
+      display: grid;
+      gap: 10px;
+      white-space: normal;
+    }
+
+    .chat-preview-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .chat-preview-section {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #f8fafc;
+      min-width: 0;
+    }
+
+    .chat-preview-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .chat-preview-meta {
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .chat-preview-pre {
+      max-height: 220px;
+      overflow: auto;
+      margin: 0;
+      padding: 9px;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     @media (max-width: 900px) {
       .app {
         grid-template-columns: 1fr;
@@ -1669,6 +1720,7 @@
     .status-item,
     .relationship-metric,
     .relationship-context-box,
+    .chat-preview-section,
     .check-item,
     .diagnosis-card,
     .debug-event-item {
@@ -1803,7 +1855,8 @@
 
       .status-grid,
       .stats-grid,
-      .relationship-grid {
+      .relationship-grid,
+      .chat-preview-summary {
         grid-template-columns: 1fr;
       }
     }
@@ -1830,6 +1883,7 @@
 
       <div class="input-area">
         <textarea id="messageInput" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="previewChatBtn" class="secondary">预览模型输入</button>
         <button id="sendBtn">发送</button>
       </div>
     </section>
@@ -2117,6 +2171,13 @@
       <div class="card">
         <h3>本轮命中记忆</h3>
         <div id="usedMemories" class="small panel-list">暂无命中</div>
+      </div>
+
+      <div class="card">
+        <h3>模型输入预览</h3>
+        <div class="config-help">只预览本次将发送给模型的 messages，不调用模型，不写入会话。</div>
+        <div id="chatPreviewStatus" class="status">尚未预览</div>
+        <div id="chatPreviewBox" class="chat-preview-box"></div>
       </div>
 
       <div class="card">

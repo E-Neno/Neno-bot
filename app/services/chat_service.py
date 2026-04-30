@@ -4,19 +4,24 @@ import time
 from app.config import (
     CHAT_MODEL_NAME,
     HISTORY_LIMIT,
-    MEMORY_LIMIT,
     MEMORY_MODEL_NAME,
     OPENROUTER_API_KEY,
     OPENROUTER_URL,
     SYSTEM_PROMPT,
 )
 from app.llm.openrouter_client import chat_with_openrouter
-from app.services.memory_service import get_relevant_memories
+from app.services.memory_candidate_decision_service import (
+    apply_memory_candidate_decision,
+    decide_memory_candidate,
+)
+from app.services.memory_context_service import build_memory_context, build_memory_context_message
 from app.services.relationship_service import (
     apply_relationship_update,
     build_relationship_context,
+    build_relationship_context_readonly,
     get_relationship_state_for_api,
 )
+from app.services.time_context_service import build_time_context, build_time_context_message
 from app.storage.db import add_message, get_recent_messages
 from app.storage.relationship import ensure_relationship_state
 from app.utils.logging_utils import log_event, new_trace_id
@@ -66,45 +71,108 @@ def require_api_key() -> str:
     return OPENROUTER_API_KEY
 
 
-def build_memory_prompt(memories: list[dict]) -> str:
-    if not memories:
-        return ""
-
-    lines = [f"- [{mem['memory_type']}] {mem['content']}" for mem in memories[:5]]
-    return (
-        "以下是关于用户的长期记忆，只在当前话题自然相关时参考；"
-        "不要生硬复述，不要主动说“我记得”，把它们自然融入回复：\n"
-        + "\n".join(lines)
-    )
-
-
 def build_chat_messages(
     history: list[dict],
     message: str,
     relationship_context: str | None = None,
+    time_context: dict | None = None,
+    memory_context: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    memories = get_relevant_memories(message, limit=MEMORY_LIMIT)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if relationship_context:
         messages.append({"role": "system", "content": relationship_context})
+    if time_context:
+        messages.append({"role": "system", "content": build_time_context_message(time_context)})
 
-    memory_text = build_memory_prompt(memories)
-
+    memory_text = build_memory_context_message(memory_context or {})
     if memory_text:
         messages.append({"role": "system", "content": memory_text})
 
     messages.extend({"role": item["role"], "content": item["content"]} for item in history)
     messages.append({"role": "user", "content": message})
-    used_memories = [
-        {
-            "id": memory.get("id"),
-            "content": memory["content"],
-            "memory_type": memory["memory_type"],
-            "score": memory["score"],
-        }
-        for memory in memories[:5]
-    ]
+    used_memories = list((memory_context or {}).get("selected_memories") or [])
     return messages, used_memories
+
+
+def _load_chat_contexts(
+    session_id: str,
+    message: str,
+    trace_id: str | None = None,
+    readonly: bool = False,
+) -> dict:
+    history = get_recent_messages(session_id, limit=HISTORY_LIMIT)
+    time_context = build_time_context(session_id)
+    relationship_context = None
+    try:
+        if readonly:
+            relationship_context = build_relationship_context_readonly(session_id)
+        else:
+            ensure_relationship_state(session_id)
+            relationship_context = build_relationship_context(session_id)
+    except Exception as exc:
+        log_event(
+            "chat",
+            "relationship_context_warning",
+            trace_id=trace_id,
+            session_id=session_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+
+    memory_context = build_memory_context(session_id, message)
+    messages, used_memories = build_chat_messages(
+        history=history,
+        message=message,
+        relationship_context=relationship_context,
+        time_context=time_context,
+        memory_context=memory_context,
+    )
+    return {
+        "history": history,
+        "time_context": time_context,
+        "relationship_context": relationship_context,
+        "memory_context": memory_context,
+        "messages": messages,
+        "used_memories": used_memories,
+    }
+
+
+def mask_session_id(session_id: str) -> str:
+    value = (session_id or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "***"
+    if len(value) <= 10:
+        return f"{value[:2]}...{value[-2:]}"
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def build_chat_messages_preview(session_id: str, message: str) -> dict:
+    contexts = _load_chat_contexts(session_id, message, readonly=True)
+    time_context_text = build_time_context_message(contexts["time_context"])
+    memory_context_text = build_memory_context_message(contexts["memory_context"])
+    recent_messages = [
+        {"role": item["role"], "content": item["content"]}
+        for item in contexts["history"]
+    ]
+
+    return {
+        "system_prompt": SYSTEM_PROMPT,
+        "relationship_context": contexts["relationship_context"],
+        "time_context": time_context_text,
+        "memory_context": memory_context_text,
+        "memory_contexts": contexts["memory_context"]["memory_contexts"],
+        "selected_memories": contexts["memory_context"]["selected_memories"],
+        "recent_messages": recent_messages,
+        "current_user_message": message,
+        "final_messages": contexts["messages"],
+        "counts": {
+            "memory_count": contexts["memory_context"]["memory_count"],
+            "recent_message_count": len(recent_messages),
+            "final_message_count": len(contexts["messages"]),
+        },
+    }
 
 
 def request_memory_candidate(message: str, trace_id: str | None = None) -> dict | None:
@@ -137,9 +205,6 @@ def request_memory_candidate(message: str, trace_id: str | None = None) -> dict 
     if data.get("content"):
         data["content"] = data["content"].strip().rstrip("。")
 
-    if not data.get("should_store"):
-        return None
-
     return data
 
 
@@ -166,7 +231,11 @@ def run_chat_turn(session_id: str, message: str, trace_id: str | None = None) ->
     )
 
     try:
-        history = get_recent_messages(session_id, limit=HISTORY_LIMIT)
+        contexts = _load_chat_contexts(session_id, message, trace_id=trace_id)
+        history = contexts["history"]
+        relationship_context = contexts["relationship_context"]
+        messages = contexts["messages"]
+        used_memories = contexts["used_memories"]
         log_event(
             "chat",
             "recent_messages_loaded",
@@ -175,26 +244,7 @@ def run_chat_turn(session_id: str, message: str, trace_id: str | None = None) ->
             count=len(history),
         )
 
-        relationship_context = None
         relationship_state = None
-        try:
-            ensure_relationship_state(session_id)
-            relationship_context = build_relationship_context(session_id)
-        except Exception as exc:
-            log_event(
-                "chat",
-                "relationship_context_warning",
-                trace_id=trace_id,
-                session_id=session_id,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-
-        messages, used_memories = build_chat_messages(
-            history=history,
-            message=message,
-            relationship_context=relationship_context,
-        )
         log_event(
             "chat",
             "memories_loaded",
@@ -203,7 +253,14 @@ def run_chat_turn(session_id: str, message: str, trace_id: str | None = None) ->
             count=len(used_memories),
         )
 
-        candidate_memory = request_memory_candidate(message, trace_id=trace_id)
+        candidate_memory_raw = request_memory_candidate(message, trace_id=trace_id)
+        candidate_memory_decision = decide_memory_candidate(candidate_memory_raw)
+        candidate_result = apply_memory_candidate_decision(
+            candidate_memory_raw,
+            candidate_memory_decision,
+        )
+        candidate_memory = candidate_result["candidate_memory"]
+        auto_added_memory = candidate_result["auto_added"]
 
         model_started = time.perf_counter()
         log_event(
@@ -258,6 +315,9 @@ def run_chat_turn(session_id: str, message: str, trace_id: str | None = None) ->
         return {
             "reply": reply,
             "candidate_memory": candidate_memory,
+            "candidate_memory_decision": candidate_memory_decision,
+            "auto_added": auto_added_memory,
+            "auto_added_memory": auto_added_memory,
             "used_memories": used_memories,
             "relationship_state": relationship_state,
             "relationship_context": relationship_context,

@@ -18,6 +18,9 @@ class ConfigUpdateRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     candidate_memory: dict[str, Any] | None = None
+    candidate_memory_decision: dict[str, Any] | None = None
+    auto_added: bool = False
+    auto_added_memory: bool = False
     used_memories: list[dict[str, Any]] = Field(default_factory=list)
     relationship_state: dict[str, Any] | None = None
     relationship_context: str | None = None

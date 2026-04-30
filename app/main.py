@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
-from app.routers import chat, debug, memory, platform, proactive, relationship, session, stats, system
+from app.routers import chat, context, debug, memory, platform, proactive, relationship, session, stats, system
 from app.services.proactive_scheduler import start_proactive_scheduler, stop_proactive_scheduler
 from app.storage.db import init_db
 from app.storage.relationship import init_relationship_tables
@@ -27,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(system.router)
+app.include_router(context.router)
 app.include_router(session.router)
 app.include_router(memory.router)
 app.include_router(relationship.router)

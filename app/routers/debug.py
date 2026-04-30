@@ -4,11 +4,45 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
+from app.schemas import ChatRequest
 from app.security import require_admin_token
+from app.services.chat_service import (
+    build_chat_messages_preview,
+    mask_session_id,
+    request_memory_candidate,
+)
+from app.services.memory_candidate_decision_service import decide_memory_candidate
 from app.services.proactive_scheduler import get_proactive_scheduler_status
 from app.storage.db import fetch_all, fetch_one, list_debug_events, list_proactive_events
 
 router = APIRouter(prefix="/debug", tags=["debug"])
+
+
+@router.post("/chat-preview", dependencies=[Depends(require_admin_token)])
+def chat_preview(req: ChatRequest):
+    preview = build_chat_messages_preview(req.session_id, req.message)
+    return {
+        "success": True,
+        "session_id_label": mask_session_id(req.session_id),
+        "memory_contexts": preview.get("memory_contexts", []),
+        "selected_memories": preview.get("selected_memories", []),
+        "preview": preview,
+    }
+
+
+@router.post("/memory-preview", dependencies=[Depends(require_admin_token)])
+def memory_preview(req: ChatRequest):
+    candidate = request_memory_candidate(req.message)
+    decision = decide_memory_candidate(candidate)
+    return {
+        "success": True,
+        "session_id_label": mask_session_id(req.session_id),
+        "candidate": candidate,
+        "decision": decision,
+        "similar_memories": decision.get("similar_memories", []),
+        "selected_action": decision.get("action"),
+        "will_auto_add": decision.get("action") == "auto_add",
+    }
 
 
 def _parse_metadata(raw: str | None) -> dict[str, Any]:

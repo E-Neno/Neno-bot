@@ -1,3 +1,3 @@
-from . import chat, memory, platform, relationship, session, stats, system
+from . import chat, context, memory, platform, relationship, session, stats, system
 
-__all__ = ["chat", "memory", "platform", "relationship", "session", "stats", "system"]
+__all__ = ["chat", "context", "memory", "platform", "relationship", "session", "stats", "system"]

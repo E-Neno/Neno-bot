@@ -1,10 +1,11 @@
-import { clearChildren, truncateText } from "./dom.js";
-import { requestJson } from "./api.js";
+import { clearChildren, setBusyButton, truncateText } from "./dom.js";
+import { getAdminHeaders, requestJson } from "./api.js";
 import { updateCurrentSessionStatus as setCurrentSessionStatus } from "./layout.js";
 
 let lastCandidate = null;
 let input = null;
 let sendBtn = null;
+let previewBtn = null;
 let relationshipStateRenderer = () => {};
 let relationshipContextRenderer = () => {};
 
@@ -90,6 +91,183 @@ export function renderUsedMemories(memories) {
   }
 }
 
+function textLength(value) {
+  return String(value || "").length;
+}
+
+function appendPreviewMetric(box, label, value) {
+  const item = document.createElement("div");
+  item.className = "status-item";
+
+  const labelNode = document.createElement("div");
+  labelNode.className = "status-label";
+  labelNode.textContent = label;
+
+  const valueNode = document.createElement("div");
+  valueNode.className = "status-value";
+  valueNode.textContent = String(value ?? "-");
+
+  item.append(labelNode, valueNode);
+  box.appendChild(item);
+}
+
+function formatMessages(messages) {
+  const items = Array.isArray(messages) ? messages : [];
+  if (items.length === 0) {
+    return "暂无";
+  }
+  return items
+    .map((item, index) => {
+      const role = item?.role || "-";
+      const content = item?.content || "";
+      return `#${index + 1} ${role} (${textLength(content)} 字)\n${content}`;
+    })
+    .join("\n\n");
+}
+
+function formatSelectedMemories(memories) {
+  const items = Array.isArray(memories) ? memories : [];
+  if (items.length === 0) {
+    return "暂无";
+  }
+  return items
+    .map((item, index) => {
+      const layer = item?.context_layer || "-";
+      const score = item?.score ?? 0;
+      const content = item?.context || item?.content || "";
+      return `#${index + 1} ${layer} score=${score}\n${content}`;
+    })
+    .join("\n\n");
+}
+
+function appendPreviewSection(box, title, content, meta) {
+  const section = document.createElement("div");
+  section.className = "chat-preview-section";
+
+  const head = document.createElement("div");
+  head.className = "chat-preview-head";
+
+  const titleNode = document.createElement("span");
+  titleNode.textContent = title;
+
+  const metaNode = document.createElement("span");
+  metaNode.className = "chat-preview-meta";
+  metaNode.textContent = meta;
+
+  const body = document.createElement("pre");
+  body.className = "chat-preview-pre";
+  body.textContent = content || "暂无";
+
+  head.append(titleNode, metaNode);
+  section.append(head, body);
+  box.appendChild(section);
+}
+
+function renderChatPreview(data) {
+  const box = document.getElementById("chatPreviewBox");
+  const status = document.getElementById("chatPreviewStatus");
+  if (!box || !status) {
+    return;
+  }
+
+  const preview = data?.preview || {};
+  const counts = preview.counts || {};
+  clearChildren(box);
+
+  const summary = document.createElement("div");
+  summary.className = "chat-preview-summary";
+  appendPreviewMetric(summary, "session", data?.session_id_label || "-");
+  appendPreviewMetric(summary, "记忆", counts.memory_count ?? 0);
+  appendPreviewMetric(summary, "历史", counts.recent_message_count ?? 0);
+  appendPreviewMetric(summary, "final messages", counts.final_message_count ?? 0);
+  box.appendChild(summary);
+
+  appendPreviewSection(
+    box,
+    "system prompt",
+    preview.system_prompt || "",
+    `${textLength(preview.system_prompt)} 字`
+  );
+  appendPreviewSection(
+    box,
+    "时间上下文",
+    preview.time_context || "",
+    `${textLength(preview.time_context)} 字`
+  );
+  if (preview.relationship_context) {
+    appendPreviewSection(
+      box,
+      "关系上下文",
+      preview.relationship_context,
+      `${textLength(preview.relationship_context)} 字`
+    );
+  }
+  appendPreviewSection(
+    box,
+    "记忆",
+    formatSelectedMemories(preview.selected_memories),
+    `${(preview.memory_contexts || []).length} 条上下文`
+  );
+  appendPreviewSection(
+    box,
+    "最近历史",
+    formatMessages(preview.recent_messages),
+    `${(preview.recent_messages || []).length} 条`
+  );
+  appendPreviewSection(
+    box,
+    "当前输入",
+    preview.current_user_message || "",
+    `${textLength(preview.current_user_message)} 字`
+  );
+  appendPreviewSection(
+    box,
+    "最终 messages",
+    JSON.stringify(preview.final_messages || [], null, 2),
+    `${(preview.final_messages || []).length} 条`
+  );
+
+  status.textContent = "预览已加载；未调用模型，未写入会话。";
+}
+
+export async function previewChatInput() {
+  const text = input.value.trim();
+  const status = document.getElementById("chatPreviewStatus");
+  if (!text) {
+    if (status) {
+      status.textContent = "请输入要预览的消息。";
+    }
+    return;
+  }
+
+  const restoreButton = setBusyButton(previewBtn, "预览中...");
+  if (status) {
+    status.textContent = "正在生成预览...";
+  }
+
+  try {
+    const data = await requestJson(
+      "/debug/chat-preview",
+      {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({
+          session_id: getSessionId(),
+          message: text,
+        }),
+      },
+      "预览失败："
+    );
+    renderChatPreview(data);
+  } catch (err) {
+    if (status) {
+      status.textContent = err.message;
+    }
+  } finally {
+    restoreButton();
+  }
+}
+
 export async function sendMessage() {
   const text = input.value.trim();
   if (!text) {
@@ -133,6 +311,7 @@ export function bindChatEvents(options = {}) {
   relationshipContextRenderer = options.renderRelationshipContext || relationshipContextRenderer;
   input = document.getElementById("messageInput");
   sendBtn = document.getElementById("sendBtn");
+  previewBtn = document.getElementById("previewChatBtn");
 
   input.addEventListener("keydown", function (event) {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -142,4 +321,5 @@ export function bindChatEvents(options = {}) {
   });
 
   sendBtn.addEventListener("click", sendMessage);
+  previewBtn?.addEventListener("click", previewChatInput);
 }
