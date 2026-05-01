@@ -7,6 +7,7 @@ const ENDPOINT = "http://127.0.0.1:8000/platform/openclaw/message";
 const PROACTIVE_HOST = "127.0.0.1";
 const PROACTIVE_PORT = 18793;
 const PROACTIVE_SEND_QQ_PATH = "/proactive/send-qq";
+const PROACTIVE_SEND_WX_PATH = "/proactive/send-wx";
 const PROACTIVE_MAX_BODY_BYTES = 8 * 1024;
 const PROACTIVE_MAX_MESSAGE_LENGTH = 500;
 const FAILURE_REPLY = "Neno 后端这会儿没接住。";
@@ -379,7 +380,7 @@ function sanitizeErrorMessage(err) {
   return text.replace(/[A-Za-z0-9_-]{16,}/g, "***").slice(0, 120);
 }
 
-function validateProactiveSendQqPayload(payload) {
+function validateProactiveSendPayload(payload) {
   if (!isObject(payload) || Array.isArray(payload)) {
     return { ok: false, status: 400, error: "request body must be a JSON object" };
   }
@@ -417,7 +418,7 @@ async function handleProactiveSendQq(req, res, api) {
     return;
   }
 
-  const validation = validateProactiveSendQqPayload(payload);
+  const validation = validateProactiveSendPayload(payload);
   if (!validation.ok) {
     sendJson(res, validation.status, { success: false, error: validation.error });
     return;
@@ -488,16 +489,105 @@ async function handleProactiveSendQq(req, res, api) {
   }
 }
 
+async function handleProactiveSendWx(req, res, api) {
+  let payload;
+  try {
+    payload = await readJsonBody(req);
+  } catch (err) {
+    sendJson(res, 400, { success: false, error: err?.message || "invalid request" });
+    return;
+  }
+
+  const validation = validateProactiveSendPayload(payload);
+  if (!validation.ok) {
+    sendJson(res, validation.status, { success: false, error: validation.error });
+    return;
+  }
+
+  const allowedWxUsers = loadAllowedWxUsers();
+  if (allowedWxUsers.size !== 1) {
+    sendJson(res, 400, {
+      success: false,
+      error: "wx allowlist must contain exactly one user"
+    });
+    return;
+  }
+
+  const [wxUserId] = [...allowedWxUsers];
+  const targetLabel = maskId(wxUserId);
+
+  if (validation.dryRun) {
+    api.logger?.info?.(
+      `[neno-bridge] proactive wx dry_run candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
+    );
+
+    sendJson(res, 200, {
+      success: true,
+      dry_run: true,
+      target_label: targetLabel,
+      message_len: validation.message.length,
+      would_send: true
+    });
+    return;
+  }
+
+  api.logger?.info?.(
+    `[neno-bridge] proactive wx send candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
+  );
+
+  try {
+    const outbound = await api.runtime.channel.outbound.loadAdapter("openclaw-weixin");
+    if (!outbound?.sendText) {
+      throw new Error("openclaw-weixin outbound adapter unavailable");
+    }
+
+    const result = await outbound.sendText({
+      cfg: api.config,
+      to: wxUserId,
+      text: validation.message
+    });
+    const sendError = result?.meta?.error;
+    if (sendError) {
+      throw new Error(String(sendError));
+    }
+
+    api.logger?.info?.(`[neno-bridge] proactive wx send ok candidate=${validation.candidateId ?? "none"}`);
+    sendJson(res, 200, {
+      success: true,
+      dry_run: false,
+      sent: true,
+      target_label: targetLabel,
+      message_len: validation.message.length,
+      message_id: result?.messageId || result?.message_id || null
+    });
+  } catch (err) {
+    api.logger?.warn?.(
+      `[neno-bridge] proactive wx send failed candidate=${validation.candidateId ?? "none"} error=${sanitizeErrorMessage(err)}`
+    );
+    sendJson(res, 500, { success: false, error: "send failed" });
+  }
+}
+
 function startProactiveServer(api) {
   const server = http.createServer((req, res) => {
     const requestUrl = new URL(req.url || "/", `http://${PROACTIVE_HOST}:${PROACTIVE_PORT}`);
-    if (req.method !== "POST" || requestUrl.pathname !== PROACTIVE_SEND_QQ_PATH) {
+    if (req.method !== "POST") {
       sendJson(res, 404, { success: false, error: "not found" });
       return;
     }
 
-    handleProactiveSendQq(req, res, api).catch((err) => {
-      api.logger?.warn?.(`[neno-bridge] proactive qq request failed: ${sanitizeErrorMessage(err)}`);
+    const handler = requestUrl.pathname === PROACTIVE_SEND_QQ_PATH
+      ? handleProactiveSendQq
+      : requestUrl.pathname === PROACTIVE_SEND_WX_PATH
+        ? handleProactiveSendWx
+        : null;
+    if (!handler) {
+      sendJson(res, 404, { success: false, error: "not found" });
+      return;
+    }
+
+    handler(req, res, api).catch((err) => {
+      api.logger?.warn?.(`[neno-bridge] proactive request failed: ${sanitizeErrorMessage(err)}`);
       if (!res.headersSent) {
         sendJson(res, 500, { success: false, error: "send failed" });
       } else {

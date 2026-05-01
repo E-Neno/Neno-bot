@@ -73,3 +73,7 @@ NENO_BRIDGE_SEND_QQ_URL = os.getenv(
     "NENO_BRIDGE_SEND_QQ_URL",
     "http://127.0.0.1:18793/proactive/send-qq",
 ).strip()
+NENO_BRIDGE_SEND_WX_URL = os.getenv(
+    "NENO_BRIDGE_SEND_WX_URL",
+    "http://127.0.0.1:18793/proactive/send-wx",
+).strip()

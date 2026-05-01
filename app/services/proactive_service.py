@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.config import (
     NENO_BRIDGE_SEND_QQ_URL,
+    NENO_BRIDGE_SEND_WX_URL,
     PROACTIVE_ACTIVE_END,
     PROACTIVE_ACTIVE_END_TIME,
     PROACTIVE_ACTIVE_START,
@@ -24,6 +25,7 @@ from app.storage.db import (
     fetch_one,
     get_proactive_candidate,
     get_latest_allowed_proactive_target,
+    get_latest_proactive_target,
     list_proactive_events,
     list_proactive_candidates,
     list_proactive_targets,
@@ -33,10 +35,12 @@ from app.storage.db import (
 )
 from app.utils.logging_utils import log_event
 
-SUPPORTED_PLATFORMS = {"qq"}
+SUPPORTED_PLATFORMS = {"qq", "wx"}
 SEND_QQ_TIMEOUT_SECONDS = 10
 SEND_QQ_REAL_TIMEOUT_SECONDS = 15
 SEND_QQ_DRY_RUN_MAX_MESSAGE_LENGTH = 500
+SEND_WX_TIMEOUT_SECONDS = 10
+SEND_WX_REAL_TIMEOUT_SECONDS = 15
 
 SAFE_TEMPLATES = [
     "你是不是又在折腾服务器。",
@@ -132,12 +136,28 @@ def _latest_platform_target(platform: str, *, require_24h: bool = False) -> dict
 def _select_platform(requested_platform: str | None) -> tuple[str | None, dict[str, Any] | None, str | None]:
     platform = (requested_platform or "").strip().lower() or None
     if platform is not None and platform not in SUPPORTED_PLATFORMS:
-        return None, None, "platform must be qq"
+        return None, None, "platform must be qq or wx"
 
     if platform in (None, "qq"):
         row = get_latest_allowed_proactive_target("qq")
         if row:
             return "qq", row, None
+        if platform == "qq":
+            return (
+                None,
+                None,
+                "没有可用 QQ 主动目标，请先给机器人发一条 QQ 消息，并在主动目标中允许该目标。",
+            )
+
+    if platform == "wx":
+        row = get_latest_proactive_target("wx")
+        if row:
+            return "wx", row, None
+        return (
+            None,
+            None,
+            "没有可用 WX 主动目标，请先给机器人发一条微信私聊消息。",
+        )
 
     return (
         None,
@@ -318,16 +338,38 @@ def sanitize_proactive_candidate(candidate: dict | None) -> dict | None:
     return sanitized
 
 
-def record_qq_proactive_target(*, session_id: str, user_id: str, seen_at: str | None = None) -> dict:
+def record_platform_proactive_target(
+    *,
+    platform: str,
+    session_id: str,
+    user_id: str,
+    seen_at: str | None = None,
+) -> dict:
+    normalized_platform = (platform or "").strip().lower()
+    if normalized_platform not in {"qq", "wx"}:
+        raise ValueError("platform must be qq or wx")
+
     target_hash = _target_hash_for_session(session_id)
     target_label = _mask_identifier(user_id)
     return upsert_proactive_target(
-        platform="qq",
+        platform=normalized_platform,
         session_id=session_id,
         target_hash=target_hash,
         target_label=target_label,
-        is_allowed=target_hash in PROACTIVE_QQ_ALLOWED_TARGET_HASHES,
+        is_allowed=(
+            normalized_platform == "qq"
+            and target_hash in PROACTIVE_QQ_ALLOWED_TARGET_HASHES
+        ),
         last_seen_at=seen_at or datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def record_qq_proactive_target(*, session_id: str, user_id: str, seen_at: str | None = None) -> dict:
+    return record_platform_proactive_target(
+        platform="qq",
+        session_id=session_id,
+        user_id=user_id,
+        seen_at=seen_at,
     )
 
 
@@ -378,12 +420,59 @@ def _post_neno_bridge_send_qq(candidate_id: int, message: str, dry_run: bool) ->
     return data
 
 
+def _post_neno_bridge_send_wx(candidate_id: int, message: str, dry_run: bool) -> dict:
+    payload = {
+        "candidate_id": candidate_id,
+        "message": message,
+        "dry_run": dry_run,
+    }
+    request = urllib.request.Request(
+        NENO_BRIDGE_SEND_WX_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        timeout = SEND_WX_TIMEOUT_SECONDS if dry_run else SEND_WX_REAL_TIMEOUT_SECONDS
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            data = json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        try:
+            data = json.loads(raw) if raw else {}
+        except Exception:
+            data = {}
+        detail = data.get("error") if isinstance(data, dict) else None
+        raise HTTPException(status_code=502, detail=detail or "neno-bridge wx send failed") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="neno-bridge wx send unavailable") from exc
+
+    if not isinstance(data, dict) or data.get("success") is not True:
+        raise HTTPException(status_code=502, detail="neno-bridge wx send returned invalid response")
+    if dry_run and data.get("dry_run") is not True:
+        raise HTTPException(status_code=502, detail="neno-bridge wx dry_run returned invalid response")
+    if not dry_run and data.get("sent") is not True:
+        raise HTTPException(status_code=502, detail="neno-bridge wx send returned invalid response")
+    return data
+
+
 def _get_sendable_qq_candidate(candidate_id: int) -> dict:
     candidate = get_proactive_candidate(candidate_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="proactive candidate not found")
     if candidate.get("platform") != "qq":
         raise HTTPException(status_code=400, detail="only qq candidates can be sent")
+    if candidate.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="only pending candidates can be sent")
+    return candidate
+
+
+def _get_sendable_candidate(candidate_id: int) -> dict:
+    candidate = get_proactive_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="proactive candidate not found")
     if candidate.get("status") != "pending":
         raise HTTPException(status_code=400, detail="only pending candidates can be sent")
     return candidate
@@ -464,7 +553,7 @@ def _save_proactive_context(
     )
 
 
-def send_qq_candidate(
+def _send_qq_candidate(
     candidate_id: int,
     dry_run: bool,
     *,
@@ -649,6 +738,217 @@ def send_qq_candidate(
             success=True,
         )
     return response
+
+
+def _send_wx_candidate_dry_run(
+    candidate: dict,
+    message: str,
+    *,
+    event_source: str = "manual",
+    trace_id: str | None = None,
+) -> dict:
+    candidate_id = int(candidate["id"])
+    target_label = str(candidate.get("target_label") or "")
+    message_len = len(message or "")
+
+    metadata = _load_candidate_metadata(candidate)
+    metadata["dry_run_at"] = datetime.now().isoformat(timespec="seconds")
+    metadata["dry_run_result"] = {
+        "success": True,
+        "dry_run": True,
+        "platform": "wx",
+        "target_label": target_label,
+        "message_len": message_len,
+        "would_send": True,
+        "real_send_supported": True,
+    }
+    updated_candidate = update_proactive_candidate_metadata(
+        candidate_id,
+        _dump_candidate_metadata(metadata),
+    )
+
+    response = {
+        "success": True,
+        "dry_run": True,
+        "platform": "wx",
+        "target_label": target_label,
+        "message_len": message_len,
+        "would_send": True,
+        "candidate": sanitize_proactive_candidate(updated_candidate or candidate),
+    }
+    if event_source == "manual":
+        record_proactive_event(
+            event_type="manual_send_dry_run",
+            platform="wx",
+            target_label=target_label,
+            candidate_id=candidate_id,
+            action="manual_send_dry_run",
+            success=True,
+            skipped=False,
+            metadata={
+                "message_len": message_len,
+                "would_send": True,
+                "real_send_supported": True,
+            },
+        )
+    _log_proactive(
+        "proactive_dry_run_ok",
+        trace_id=trace_id,
+        platform="wx",
+        candidate_id=candidate_id,
+        target_label=target_label,
+        action=f"{event_source}_dry_run",
+        dry_run=True,
+        success=True,
+    )
+    return response
+
+
+def _send_wx_candidate(
+    candidate_id: int,
+    dry_run: bool,
+    *,
+    event_source: str = "manual",
+    trace_id: str | None = None,
+) -> dict:
+    candidate = _get_sendable_candidate(candidate_id)
+    if candidate.get("platform") != "wx":
+        raise HTTPException(status_code=400, detail="only wx candidates can be sent by wx sender")
+    message = _get_candidate_message(candidate)
+
+    if dry_run:
+        return _send_wx_candidate_dry_run(
+            candidate,
+            message,
+            event_source=event_source,
+            trace_id=trace_id,
+        )
+
+    try:
+        result = _post_neno_bridge_send_wx(candidate_id, message, dry_run=False)
+    except HTTPException as exc:
+        _record_failed_send(candidate, str(exc.detail))
+        if event_source == "manual":
+            _log_proactive(
+                "proactive_manual_failed",
+                trace_id=trace_id,
+                platform="wx",
+                candidate_id=candidate_id,
+                target_label=candidate.get("target_label"),
+                action="manual_sent",
+                dry_run=False,
+                success=False,
+                reason=str(exc.detail),
+            )
+            record_proactive_event(
+                event_type="manual_failed",
+                platform="wx",
+                target_label=str(candidate.get("target_label") or ""),
+                candidate_id=candidate_id,
+                action="manual_sent",
+                success=False,
+                skipped=False,
+                reason=str(exc.detail),
+            )
+        raise HTTPException(status_code=502, detail="WX send failed") from exc
+
+    metadata = _load_candidate_metadata(candidate)
+    metadata["sent_at"] = datetime.now().isoformat(timespec="seconds")
+    metadata["target_label"] = result.get("target_label")
+    metadata["send_result"] = {
+        "success": True,
+        "dry_run": False,
+        "sent": True,
+        "platform": "wx",
+        "target_label": result.get("target_label"),
+        "message_len": result.get("message_len"),
+    }
+    _save_proactive_context(candidate, message, metadata, trace_id=trace_id)
+    updated_candidate = update_proactive_candidate_metadata(
+        candidate_id,
+        _dump_candidate_metadata(metadata),
+    )
+
+    updated_candidate = update_proactive_candidate_status(candidate_id, "sent") or updated_candidate
+
+    response = {
+        "success": True,
+        "dry_run": False,
+        "sent": True,
+        "platform": "wx",
+        "target_label": result.get("target_label"),
+        "message_len": result.get("message_len"),
+        "candidate": sanitize_proactive_candidate(updated_candidate or candidate),
+    }
+    if event_source == "manual":
+        record_proactive_event(
+            event_type="manual_sent",
+            platform="wx",
+            target_label=result.get("target_label") or str(candidate.get("target_label") or ""),
+            candidate_id=candidate_id,
+            action="manual_sent",
+            success=True,
+            skipped=False,
+            metadata={"message_len": result.get("message_len")},
+        )
+        _log_proactive(
+            "proactive_manual_sent",
+            trace_id=trace_id,
+            platform="wx",
+            candidate_id=candidate_id,
+            target_label=result.get("target_label") or candidate.get("target_label"),
+            action="manual_sent",
+            dry_run=False,
+            success=True,
+        )
+    return response
+
+
+def send_proactive_candidate(
+    candidate_id: int,
+    dry_run: bool,
+    *,
+    event_source: str = "manual",
+    trace_id: str | None = None,
+) -> dict:
+    if not isinstance(dry_run, bool):
+        raise HTTPException(status_code=400, detail="dry_run must be a boolean")
+
+    candidate = _get_sendable_candidate(candidate_id)
+    platform = str(candidate.get("platform") or "").strip().lower()
+    if platform == "qq":
+        return _send_qq_candidate(
+            candidate_id,
+            dry_run,
+            event_source=event_source,
+            trace_id=trace_id,
+        )
+    if platform == "wx":
+        return _send_wx_candidate(
+            candidate_id,
+            dry_run,
+            event_source=event_source,
+            trace_id=trace_id,
+        )
+    raise HTTPException(status_code=400, detail="unsupported candidate platform")
+
+
+def send_qq_candidate(
+    candidate_id: int,
+    dry_run: bool,
+    *,
+    event_source: str = "manual",
+    trace_id: str | None = None,
+) -> dict:
+    candidate = _get_sendable_candidate(candidate_id)
+    if candidate.get("platform") != "qq":
+        raise HTTPException(status_code=400, detail="only qq candidates can be sent")
+    return send_proactive_candidate(
+        candidate_id,
+        dry_run,
+        event_source=event_source,
+        trace_id=trace_id,
+    )
 
 
 def generate_proactive_candidate(platform: str | None = None, trace_id: str | None = None) -> dict:

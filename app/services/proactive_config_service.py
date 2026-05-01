@@ -25,6 +25,7 @@ PROACTIVE_CONFIG_KEYS = [
     "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET",
     "PROACTIVE_AUTO_SEND_MAX_PER_DAY",
     "NENO_BRIDGE_SEND_QQ_URL",
+    "NENO_BRIDGE_SEND_WX_URL",
 ]
 
 DEFAULT_PROACTIVE_CONFIG = {
@@ -45,6 +46,7 @@ DEFAULT_PROACTIVE_CONFIG = {
     "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET": "true",
     "PROACTIVE_AUTO_SEND_MAX_PER_DAY": "1",
     "NENO_BRIDGE_SEND_QQ_URL": "http://127.0.0.1:18793/proactive/send-qq",
+    "NENO_BRIDGE_SEND_WX_URL": "http://127.0.0.1:18793/proactive/send-wx",
 }
 
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -107,6 +109,7 @@ def get_proactive_config() -> dict[str, Any]:
             "PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET": values["PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET"],
             "PROACTIVE_AUTO_SEND_MAX_PER_DAY": values["PROACTIVE_AUTO_SEND_MAX_PER_DAY"],
             "NENO_BRIDGE_SEND_QQ_URL": values["NENO_BRIDGE_SEND_QQ_URL"],
+            "NENO_BRIDGE_SEND_WX_URL": values["NENO_BRIDGE_SEND_WX_URL"],
         },
     }
 
@@ -149,12 +152,12 @@ def _validate_hashes(value: str) -> str:
     return text
 
 
-def _validate_bridge_url(value: str) -> str:
+def _validate_bridge_url(name: str, value: str) -> str:
     text = value.strip()
     if not text.startswith("http://127.0.0.1:"):
         raise HTTPException(
             status_code=400,
-            detail="NENO_BRIDGE_SEND_QQ_URL must start with http://127.0.0.1:",
+            detail=f"{name} must start with http://127.0.0.1:",
         )
     return text
 
@@ -243,7 +246,15 @@ def update_proactive_config(req: ProactiveConfigUpdateRequest) -> dict[str, Any]
             10,
         )
     if "NENO_BRIDGE_SEND_QQ_URL" in payload:
-        updates["NENO_BRIDGE_SEND_QQ_URL"] = _validate_bridge_url(payload["NENO_BRIDGE_SEND_QQ_URL"])
+        updates["NENO_BRIDGE_SEND_QQ_URL"] = _validate_bridge_url(
+            "NENO_BRIDGE_SEND_QQ_URL",
+            payload["NENO_BRIDGE_SEND_QQ_URL"],
+        )
+    if "NENO_BRIDGE_SEND_WX_URL" in payload:
+        updates["NENO_BRIDGE_SEND_WX_URL"] = _validate_bridge_url(
+            "NENO_BRIDGE_SEND_WX_URL",
+            payload["NENO_BRIDGE_SEND_WX_URL"],
+        )
 
     if not updates:
         raise HTTPException(status_code=400, detail="no proactive config fields provided")

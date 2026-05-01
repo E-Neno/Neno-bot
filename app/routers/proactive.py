@@ -6,6 +6,7 @@ from app.schemas import (
     ProactiveGenerateRequest,
     ProactiveGenerateTestRequest,
     ProactiveRunOnceRequest,
+    ProactiveSendRequest,
     ProactiveSendQqRequest,
 )
 from app.security import require_admin_token
@@ -22,6 +23,7 @@ from app.services.proactive_service import (
     get_recent_proactive_events,
     get_recent_proactive_targets,
     sanitize_proactive_candidate,
+    send_proactive_candidate,
     send_qq_candidate,
 )
 from app.storage.db import update_proactive_candidate_status
@@ -114,3 +116,8 @@ def proactive_dismiss(req: ProactiveDismissRequest):
 @router.post("/send-qq", dependencies=[Depends(require_admin_token)])
 def proactive_send_qq(req: ProactiveSendQqRequest):
     return send_qq_candidate(candidate_id=req.id, dry_run=req.dry_run, trace_id=new_trace_id())
+
+
+@router.post("/send", dependencies=[Depends(require_admin_token)])
+def proactive_send(req: ProactiveSendRequest):
+    return send_proactive_candidate(candidate_id=req.id, dry_run=req.dry_run, trace_id=new_trace_id())

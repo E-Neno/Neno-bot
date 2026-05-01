@@ -432,6 +432,23 @@ def get_latest_allowed_proactive_target(platform: str) -> dict | None:
     return row_to_dict(row, fields)
 
 
+def get_latest_proactive_target(platform: str) -> dict | None:
+    fields = _proactive_target_fields()
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM proactive_targets
+        WHERE platform = ?
+          AND session_id != ''
+          AND target_hash != ''
+        ORDER BY last_seen_at DESC, updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (platform,),
+    )
+    return row_to_dict(row, fields)
+
+
 def add_proactive_event(
     *,
     event_type: str,

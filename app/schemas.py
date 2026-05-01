@@ -86,6 +86,11 @@ class ProactiveSendQqRequest(BaseModel):
     dry_run: StrictBool
 
 
+class ProactiveSendRequest(BaseModel):
+    id: int
+    dry_run: StrictBool
+
+
 class ProactiveRunOnceRequest(BaseModel):
     ignore_random: StrictBool = True
     ignore_recent_chat: StrictBool = False
@@ -112,6 +117,7 @@ class ProactiveConfigUpdateRequest(BaseModel):
     PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET: StrictBool | None = None
     PROACTIVE_AUTO_SEND_MAX_PER_DAY: int | None = None
     NENO_BRIDGE_SEND_QQ_URL: str | None = Field(default=None, max_length=200)
+    NENO_BRIDGE_SEND_WX_URL: str | None = Field(default=None, max_length=200)
 
     class Config:
         extra = "forbid"

@@ -8,7 +8,7 @@ from app.schemas import PlatformMessageRequest, PlatformMessageResponse
 from app.security import require_platform_token
 from app.services.burst_merge_service import BurstMergeService
 from app.services.chat_service import run_chat_turn
-from app.services.proactive_service import record_qq_proactive_target
+from app.services.proactive_service import record_platform_proactive_target
 from app.services.stats_service import record_chat_stat
 from app.utils.logging_utils import log_event, new_trace_id
 
@@ -170,9 +170,13 @@ def openclaw_message(payload: Any = Body(...)):
         message_len=len(message),
     )
 
-    if platform == "qq" and chat_type == "private":
+    if platform in {"qq", "wx"} and chat_type == "private":
         try:
-            record_qq_proactive_target(session_id=session_id, user_id=user_id)
+            record_platform_proactive_target(
+                platform=platform,
+                session_id=session_id,
+                user_id=user_id,
+            )
         except Exception as exc:
             log_event(
                 "platform",
