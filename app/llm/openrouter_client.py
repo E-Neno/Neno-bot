@@ -81,3 +81,31 @@ def chat_with_openrouter(
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
     return content
+
+
+def multimodal_chat_with_openrouter(
+    api_key: str,
+    url: str,
+    model_name: str,
+    text_prompt: str,
+    image_urls: list[str],
+    timeout: int = 60,
+    trace_id: str | None = None,
+) -> str:
+    content = [{"type": "text", "text": text_prompt}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {"url": image_url},
+        }
+        for image_url in image_urls
+    )
+    messages = [{"role": "user", "content": content}]
+    return chat_with_openrouter(
+        api_key=api_key,
+        url=url,
+        model_name=model_name,
+        messages=messages,
+        timeout=timeout,
+        trace_id=trace_id,
+    )
