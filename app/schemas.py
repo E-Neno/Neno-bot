@@ -3,9 +3,18 @@ from typing import Any
 from pydantic import BaseModel, Field, StrictBool, validator
 
 
+class MediaAttachment(BaseModel):
+    kind: str = Field(..., max_length=32)
+    url: str | None = Field(default=None, max_length=2000)
+    mime_type: str | None = Field(default=None, max_length=128)
+    source: str | None = Field(default=None, max_length=64)
+    text_hint: str | None = Field(default=None, max_length=500)
+
+
 class ChatRequest(BaseModel):
-    message: str = Field(..., max_length=2000)
+    message: str = Field(default="", max_length=2000)
     session_id: str = Field(default="default", max_length=128)
+    attachments: list[MediaAttachment] = Field(default_factory=list)
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -32,6 +41,8 @@ class PlatformMessageRequest(BaseModel):
     chat_type: str | None = None
     group_id: str | None = None
     message: str | None = Field(default=None, max_length=2000)
+    attachments: list[MediaAttachment] = Field(default_factory=list)
+    message_type: str | None = Field(default=None, max_length=32)
 
 
 class PlatformMessageResponse(BaseModel):
