@@ -40,6 +40,7 @@ def _env_time(key: str, default: str) -> time:
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 CHAT_MODEL_NAME = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
+VISION_MODEL_NAME = os.getenv("OPENROUTER_VISION_MODEL", CHAT_MODEL_NAME)
 MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "6"))
 MEMORY_LIMIT = int(os.getenv("MEMORY_LIMIT", "3"))
