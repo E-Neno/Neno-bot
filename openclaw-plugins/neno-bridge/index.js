@@ -972,13 +972,17 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
       }
     ] : [];
   const hasImageAttachment = attachments.some((item) => firstString(item?.kind) === "image");
+  const hasVoiceAttachment = attachments.some((item) => firstString(item?.kind) === "voice");
   const hasUsableImageAttachment = attachments.some(
     (item) => firstString(item?.kind) === "image" && (firstString(item?.url) || firstString(item?.media_path))
   );
+  const hasUsableVoiceAttachment = attachments.some(
+    (item) => firstString(item?.kind) === "voice" && firstString(item?.media_path)
+  );
 
-  if (!text && !hasImageAttachment) {
-    api.logger?.info?.("[neno-bridge] wx unsupported: no text and no image evidence");
-    logWxDebug(api, "no text and no image", event);
+  if (!text && !hasImageAttachment && !hasVoiceAttachment) {
+    api.logger?.info?.("[neno-bridge] wx unsupported: no text, no image, no voice evidence");
+    logWxDebug(api, "no text and no recognized media", event);
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
@@ -989,8 +993,15 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
-  if (!text) {
+  if (hasVoiceAttachment && !hasUsableVoiceAttachment) {
+    api.logger?.warn?.("[neno-bridge] voice_attachment_missing_media_path platform=wx");
+    return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
+  }
+
+  if (!text && hasImageAttachment) {
     api.logger?.info?.("[neno-bridge] wx image-only input accepted");
+  } else if (!text && hasVoiceAttachment) {
+    api.logger?.info?.("[neno-bridge] wx voice-only input accepted");
   }
 
   const identity = extractWxUserIdentity(event);
@@ -1015,7 +1026,7 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   const groupId = chatType === "group" ? extractWxGroupId(event) || session.id || null : null;
 
   api.logger?.info?.(
-    `[neno-bridge] received wx input from user=${maskId(userId)} chat_type=${chatType} len=${text.length} has_image=${hasImageAttachment}`
+    `[neno-bridge] received wx input from user=${maskId(userId)} chat_type=${chatType} len=${text.length} has_image=${hasImageAttachment} has_voice=${hasVoiceAttachment}`
   );
   if (hasImageAttachment) {
     api.logger?.info?.(
@@ -1028,6 +1039,19 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
       `[neno-bridge] image_attachment_payload platform=wx attachment_keys=${JSON.stringify(attachments.map((item) => Object.keys(item)))} has_media_path=${attachments.some((item) => Boolean(firstString(item?.media_path)))}`
     );
   }
+  if (hasVoiceAttachment) {
+    api.logger?.info?.(`[neno-bridge] voice_attachment_detected platform=wx`);
+    api.logger?.info?.(
+      `[neno-bridge] voice_attachment_payload platform=wx attachment_keys=${JSON.stringify(attachments.map((item) => Object.keys(item)))} has_media_path=${attachments.some((item) => Boolean(firstString(item?.media_path)))}`
+    );
+  }
+
+  let finalMessageType = "text";
+  if (hasImageAttachment) {
+    finalMessageType = "image";
+  } else if (hasVoiceAttachment) {
+    finalMessageType = "voice";
+  }
 
   return sendToNeno(api, {
     platform: "wx",
@@ -1036,7 +1060,7 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
     group_id: groupId,
     message: text || "",
     attachments,
-    message_type: hasImageAttachment ? "image" : "text"
+    message_type: finalMessageType
   });
 }
 

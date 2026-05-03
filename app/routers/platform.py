@@ -174,10 +174,15 @@ def openclaw_message(payload: Any = Body(...)):
     raw_message = clean_message_value(req.message)
     attachments = req.attachments or []
     has_image_attachment = any(item.kind == "image" for item in attachments)
+    has_voice_attachment = any(item.kind == "voice" for item in attachments)
     message_type = (req.message_type or "").strip().lower() or None
 
     if raw_message is None and not attachments:
         raise HTTPException(status_code=400, detail="message must not be blank")
+
+    # For voice messages without a transcript, provide a placeholder text
+    if not raw_message and has_voice_attachment and not has_image_attachment:
+        raw_message = "[语音消息]"
 
     log_event(
         "platform",
@@ -191,6 +196,7 @@ def openclaw_message(payload: Any = Body(...)):
         message_type=message_type,
         attachment_count=len(attachments),
         has_image_attachment=has_image_attachment,
+        has_voice_attachment=has_voice_attachment,
     )
 
     if has_image_attachment:

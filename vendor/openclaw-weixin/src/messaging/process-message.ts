@@ -70,22 +70,36 @@ function hasInboundImageItem(full: WeixinMessage): boolean {
 function buildBridgeAttachments(
   full: WeixinMessage,
   mediaOpts: WeixinInboundMediaOpts,
-): Array<{ kind: "image"; url?: string; source: "wx"; media_path?: string }> {
+): Array<{ kind: "image" | "voice"; url?: string; source: "wx"; media_path?: string }> {
+  const attachments: Array<{ kind: "image" | "voice"; url?: string; source: "wx"; media_path?: string }> = [];
+
   const imageItem = full.item_list?.find((item) => item.type === MessageItemType.IMAGE)?.image_item;
-  if (!imageItem && !mediaOpts.decryptedPicPath) return [];
+  if (imageItem || mediaOpts.decryptedPicPath) {
+    const url =
+      imageItem?.url ||
+      imageItem?.media?.full_url ||
+      imageItem?.thumb_media?.full_url ||
+      undefined;
 
-  const url =
-    imageItem?.url ||
-    imageItem?.media?.full_url ||
-    imageItem?.thumb_media?.full_url ||
-    undefined;
+    attachments.push({
+      kind: "image",
+      url,
+      source: "wx",
+      media_path: mediaOpts.decryptedPicPath,
+    });
+  }
 
-  return [{
-    kind: "image",
-    url,
-    source: "wx",
-    media_path: mediaOpts.decryptedPicPath,
-  }];
+  const voiceItem = full.item_list?.find((item) => item.type === MessageItemType.VOICE)?.voice_item;
+  if ((voiceItem && !voiceItem.text) || mediaOpts.decryptedVoicePath) {
+    // Voice messages typically don't have a direct URL we can use without auth, rely on media_path
+    attachments.push({
+      kind: "voice",
+      source: "wx",
+      media_path: mediaOpts.decryptedVoicePath,
+    });
+  }
+
+  return attachments;
 }
 
 function attachBridgeInboundMetadata(
@@ -94,9 +108,17 @@ function attachBridgeInboundMetadata(
   mediaOpts: WeixinInboundMediaOpts,
 ): Record<string, unknown> {
   const attachments = buildBridgeAttachments(full, mediaOpts);
+  
+  let messageType = "text";
+  if (hasInboundImageItem(full)) {
+    messageType = "image";
+  } else if (full.item_list?.some((item) => item.type === MessageItemType.VOICE)) {
+    messageType = "voice";
+  }
+
   return {
     ...finalized,
-    message_type: hasInboundImageItem(full) ? "image" : "text",
+    message_type: messageType,
     item_list: full.item_list,
     raw: {
       message_id: full.message_id,
