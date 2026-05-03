@@ -12,6 +12,7 @@ from app.services.chat.multimodal_input_service import (
     MultimodalInputError,
     normalize_multimodal_message,
 )
+from app.services.chat.voice_asr_service import transcribe_voice, VoiceASRError
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_platform_proactive_target
 from app.services.stats_service import record_chat_stat
@@ -180,9 +181,33 @@ def openclaw_message(payload: Any = Body(...)):
     if raw_message is None and not attachments:
         raise HTTPException(status_code=400, detail="message must not be blank")
 
-    # For voice messages without a transcript, provide a placeholder text
+    # For voice messages without a transcript, transcribe them via ASR
     if not raw_message and has_voice_attachment and not has_image_attachment:
-        raw_message = "[语音消息]"
+        voice_attachment = next((item for item in attachments if item.kind == "voice"), None)
+        if voice_attachment and voice_attachment.media_path:
+            try:
+                raw_message = transcribe_voice(voice_attachment.media_path, trace_id)
+                if not raw_message:
+                    # Fallback if ASR returns empty string successfully
+                    raw_message = "[语音消息(未听清)]"
+            except VoiceASRError:
+                # If ASR fails, we bypass the chat turn and ask the user to send it again
+                log_event(
+                    "platform",
+                    "asr_failed_fallback",
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    platform=platform,
+                    chat_type=chat_type,
+                )
+                return PlatformMessageResponse(
+                    success=True,
+                    reply="这条语音我刚刚没听清，你再发一次试试。",
+                    session_id=session_id,
+                )
+        else:
+            raw_message = "[语音消息]"
 
     log_event(
         "platform",
