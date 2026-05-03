@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, StrictBool, validator
 class MediaAttachment(BaseModel):
     kind: str = Field(..., max_length=32)
     url: str | None = Field(default=None, max_length=2000)
+    media_path: str | None = Field(default=None, max_length=1000)
     mime_type: str | None = Field(default=None, max_length=128)
     source: str | None = Field(default=None, max_length=64)
     text_hint: str | None = Field(default=None, max_length=500)

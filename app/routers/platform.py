@@ -7,6 +7,11 @@ from app import config
 from app.schemas import PlatformMessageRequest, PlatformMessageResponse
 from app.security import require_platform_token
 from app.services.burst_merge_service import BurstMergeService
+from app.services.chat.multimodal_input_service import (
+    MULTIMODAL_USER_ERROR_MESSAGE,
+    MultimodalInputError,
+    normalize_multimodal_message,
+)
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_platform_proactive_target
 from app.services.stats_service import record_chat_stat
@@ -51,6 +56,17 @@ def clean_optional(value: Any) -> str | None:
     if not isinstance(value, str):
         raise HTTPException(status_code=400, detail="group_id must be a string")
     cleaned = value.strip()
+    return cleaned or None
+
+
+def clean_message_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="message must be a string")
+    cleaned = value.strip()
+    if len(cleaned) > MAX_MESSAGE_LENGTH:
+        raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
     return cleaned or None
 
 
@@ -155,9 +171,13 @@ def openclaw_message(payload: Any = Body(...)):
         raise HTTPException(status_code=400, detail="invalid request body") from exc
 
     session_id, platform, user_id, chat_type = build_platform_session_id(req)
-    message = clean_required(req.message, "message")
-    if len(message) > MAX_MESSAGE_LENGTH:
-        raise HTTPException(status_code=400, detail="message must be 2000 characters or fewer")
+    raw_message = clean_message_value(req.message)
+    attachments = req.attachments or []
+    has_image_attachment = any(item.kind == "image" for item in attachments)
+    message_type = (req.message_type or "").strip().lower() or None
+
+    if raw_message is None and not attachments:
+        raise HTTPException(status_code=400, detail="message must not be blank")
 
     log_event(
         "platform",
@@ -167,8 +187,51 @@ def openclaw_message(payload: Any = Body(...)):
         chat_type=chat_type,
         user_id=user_id,
         session_id=session_id,
-        message_len=len(message),
+        message_len=len(raw_message or ""),
+        message_type=message_type,
+        attachment_count=len(attachments),
+        has_image_attachment=has_image_attachment,
     )
+
+    if has_image_attachment:
+        try:
+            normalized_message = normalize_multimodal_message(
+                message=raw_message,
+                attachments=attachments,
+                trace_id=trace_id,
+            )
+        except MultimodalInputError as exc:
+            log_event(
+                "platform",
+                "multimodal_normalize_failed",
+                trace_id=trace_id,
+                platform=platform,
+                chat_type=chat_type,
+                user_id=user_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise HTTPException(status_code=400, detail=MULTIMODAL_USER_ERROR_MESSAGE) from exc
+
+        if not normalized_message:
+            raise HTTPException(status_code=400, detail="normalized message must not be blank")
+
+        log_event(
+            "platform",
+            "multimodal_normalize_ok",
+            trace_id=trace_id,
+            platform=platform,
+            chat_type=chat_type,
+            user_id=user_id,
+            session_id=session_id,
+            normalized_message_len=len(normalized_message),
+        )
+        message = normalized_message
+    else:
+        if raw_message is None:
+            raise HTTPException(status_code=400, detail="message must not be blank")
+        message = raw_message
 
     if platform in {"qq", "wx"} and chat_type == "private":
         try:

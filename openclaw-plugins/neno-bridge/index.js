@@ -104,6 +104,176 @@ function extractWxText(event) {
   );
 }
 
+function isHttpUrl(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function pushUniqueCandidate(candidates, url, source) {
+  if (!isHttpUrl(url)) return;
+  if (candidates.some((item) => item.url === url)) return;
+  candidates.push({ url, source });
+}
+
+function lowerIncludesOneOf(value, tokens) {
+  const text = String(value || "").toLowerCase();
+  return tokens.some((token) => text.includes(token));
+}
+
+const WX_IMAGE_MARKERS = ["image", "img", "pic", "photo", "thumb"];
+const WX_IMAGE_URL_FIELDS = [
+  "url",
+  "src",
+  "href",
+  "download_url",
+  "downloadUrl",
+  "media_url",
+  "mediaUrl",
+  "file_url",
+  "fileUrl",
+  "image_url",
+  "imageUrl",
+  "pic_url",
+  "picUrl",
+  "thumb_url",
+  "thumbUrl",
+  "cdn_url",
+  "cdnUrl",
+  "origin_url",
+  "originUrl"
+];
+
+function itemLooksLikeWxImage(item) {
+  if (!isObject(item) || Array.isArray(item)) return false;
+  return Object.keys(item).some((key) => lowerIncludesOneOf(key, WX_IMAGE_MARKERS)) ||
+    lowerIncludesOneOf(item?.type, WX_IMAGE_MARKERS) ||
+    lowerIncludesOneOf(item?.kind, WX_IMAGE_MARKERS) ||
+    lowerIncludesOneOf(item?.name, WX_IMAGE_MARKERS);
+}
+
+function collectWxImageUrlCandidates(value, source, candidates, depth = 0) {
+  if (depth > 5 || value === null || value === undefined) return;
+  if (typeof value === "string") {
+    pushUniqueCandidate(candidates, value, source);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectWxImageUrlCandidates(item, `${source}[${index}]`, candidates, depth + 1));
+    return;
+  }
+  if (!isObject(value)) return;
+
+  for (const field of WX_IMAGE_URL_FIELDS) {
+    if (field in value) {
+      pushUniqueCandidate(candidates, value[field], `${source}.${field}`);
+    }
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (typeof child === "string" && isHttpUrl(child) && lowerIncludesOneOf(key, WX_IMAGE_MARKERS)) {
+      pushUniqueCandidate(candidates, child, `${source}.${key}`);
+      continue;
+    }
+    if (isObject(child) || Array.isArray(child)) {
+      if (lowerIncludesOneOf(key, WX_IMAGE_MARKERS) || key === "item_list" || key === "attachments") {
+        collectWxImageUrlCandidates(child, `${source}.${key}`, candidates, depth + 1);
+      }
+    }
+  }
+}
+
+function detectWxImageInput(event) {
+  const candidates = [];
+  const evidence = [];
+  const roots = [
+    ["event", event],
+    ["event.item_list", event?.item_list],
+    ["event.raw", event?.raw],
+    ["event.raw.item_list", getPath(event, ["raw", "item_list"])],
+    ["event.payload", event?.payload],
+    ["event.payload.item_list", getPath(event, ["payload", "item_list"])],
+    ["event.data", event?.data],
+    ["event.data.item_list", getPath(event, ["data", "item_list"])],
+    ["event.msg", event?.msg],
+    ["event.detail", event?.detail]
+  ];
+
+  for (const [source, value] of roots) {
+    collectWxImageUrlCandidates(value, source, candidates);
+  }
+
+  const markerFields = [
+    ["event.type", event?.type],
+    ["event.eventType", event?.eventType],
+    ["event.kind", event?.kind],
+    ["event.name", event?.name],
+    ["event.messageType", event?.messageType],
+    ["event.msg_type", event?.msg_type],
+    ["event.content_type", event?.content_type],
+    ["event.raw.type", getPath(event, ["raw", "type"])],
+    ["event.payload.type", getPath(event, ["payload", "type"])],
+    ["event.data.type", getPath(event, ["data", "type"])]
+  ];
+  for (const [source, value] of markerFields) {
+    if (lowerIncludesOneOf(value, WX_IMAGE_MARKERS)) evidence.push(source);
+  }
+
+  const itemLists = [
+    ["event.item_list", event?.item_list],
+    ["event.raw.item_list", getPath(event, ["raw", "item_list"])],
+    ["event.payload.item_list", getPath(event, ["payload", "item_list"])],
+    ["event.data.item_list", getPath(event, ["data", "item_list"])]
+  ];
+  for (const [source, items] of itemLists) {
+    if (Array.isArray(items) && items.some(itemLooksLikeWxImage)) {
+      evidence.push(source);
+    }
+  }
+
+  const imagePresent = candidates.length > 0 || evidence.length > 0;
+  return {
+    imagePresent,
+    imageUrl: candidates[0]?.url || "",
+    imageUrlSource: candidates[0]?.source || "",
+    evidence
+  };
+}
+
+function hasWxImageLikeField(event) {
+  const imageInput = detectWxImageInput(event);
+  return imageInput.imagePresent;
+}
+
+function logWxIngress(api, event) {
+  const topKeys = isObject(event) ? Object.keys(event) : [];
+  const itemList = Array.isArray(event?.item_list)
+    ? event.item_list
+    : Array.isArray(getPath(event, ["raw", "item_list"]))
+      ? getPath(event, ["raw", "item_list"])
+      : [];
+  const itemListTypes = Array.isArray(itemList)
+    ? itemList.map((item) => firstString(item?.type, item?.kind) || "unknown")
+    : [];
+  const hasAttachments = Array.isArray(event?.attachments) && event.attachments.length > 0;
+  const messageType = firstString(
+    event?.message_type,
+    event?.messageType,
+    getPath(event, ["raw", "message_type"]),
+    getPath(event, ["payload", "message_type"]),
+    getPath(event, ["data", "message_type"])
+  ) || "unknown";
+  api.logger?.info?.(
+    `[neno-bridge] wx_event_ingress topKeys=${JSON.stringify(topKeys)} has_item_list=${itemList.length > 0} item_list_types=${JSON.stringify(itemListTypes)} has_attachments=${hasAttachments} message_type=${messageType}`
+  );
+}
+
 function normalizeQqText(text, qqFaceMap) {
   const trimmed = String(text || "").trim();
   if (!trimmed) return "";
@@ -777,10 +947,50 @@ async function qqAdapter({ event, ctx, api, qqFaceMap, allowedQqUsers }) {
 }
 
 async function wxAdapter({ event, api, allowedWxUsers }) {
+  logWxIngress(api, event);
   const text = extractWxText(event);
-  if (!text) {
-    logWxDebug(api, "no text", event);
+  const imageInput = detectWxImageInput(event);
+  const upstreamAttachments = Array.isArray(event?.attachments)
+    ? event.attachments
+      .filter((item) => isObject(item) && !Array.isArray(item))
+      .map((item) => ({
+        kind: firstString(item?.kind) || "image",
+        url: firstString(item?.url) || imageInput.imageUrl || undefined,
+        source: firstString(item?.source) || "wx",
+        media_path: firstString(item?.media_path, item?.mediaPath) || undefined,
+        mime_type: firstString(item?.mime_type, item?.mimeType) || undefined,
+        text_hint: firstString(item?.text_hint, item?.textHint) || undefined
+      }))
+    : [];
+  const attachments = upstreamAttachments.length > 0
+    ? upstreamAttachments
+    : imageInput.imagePresent ? [
+      {
+        kind: "image",
+        url: imageInput.imageUrl || undefined,
+        source: "wx"
+      }
+    ] : [];
+  const hasImageAttachment = attachments.some((item) => firstString(item?.kind) === "image");
+  const hasUsableImageAttachment = attachments.some(
+    (item) => firstString(item?.kind) === "image" && (firstString(item?.url) || firstString(item?.media_path))
+  );
+
+  if (!text && !hasImageAttachment) {
+    api.logger?.info?.("[neno-bridge] wx unsupported: no text and no image evidence");
+    logWxDebug(api, "no text and no image", event);
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
+  }
+
+  if (hasImageAttachment && !hasUsableImageAttachment) {
+    api.logger?.warn?.(
+      `[neno-bridge] image_attachment_missing_url platform=wx evidence=${JSON.stringify(imageInput.evidence)}`
+    );
+    return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
+  }
+
+  if (!text) {
+    api.logger?.info?.("[neno-bridge] wx image-only input accepted");
   }
 
   const identity = extractWxUserIdentity(event);
@@ -805,15 +1015,28 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   const groupId = chatType === "group" ? extractWxGroupId(event) || session.id || null : null;
 
   api.logger?.info?.(
-    `[neno-bridge] received wx text from user=${maskId(userId)} chat_type=${chatType} len=${text.length}`
+    `[neno-bridge] received wx input from user=${maskId(userId)} chat_type=${chatType} len=${text.length} has_image=${hasImageAttachment}`
   );
+  if (hasImageAttachment) {
+    api.logger?.info?.(
+      `[neno-bridge] image_attachment_detected platform=wx source=${imageInput.imageUrlSource || "unknown"}`
+    );
+    api.logger?.info?.(
+      `[neno-bridge] image_attachment_url platform=wx url=${imageInput.imageUrl || ""}`
+    );
+    api.logger?.info?.(
+      `[neno-bridge] image_attachment_payload platform=wx attachment_keys=${JSON.stringify(attachments.map((item) => Object.keys(item)))} has_media_path=${attachments.some((item) => Boolean(firstString(item?.media_path)))}`
+    );
+  }
 
   return sendToNeno(api, {
     platform: "wx",
     user_id: userId,
     chat_type: chatType,
     group_id: groupId,
-    message: text
+    message: text || "",
+    attachments,
+    message_type: hasImageAttachment ? "image" : "text"
   });
 }
 

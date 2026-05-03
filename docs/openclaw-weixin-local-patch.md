@@ -8,12 +8,14 @@ Runtime file:
 
 ```text
 /home/admin/.openclaw/plugins/openclaw-weixin-local/node_modules/@tencent-weixin/openclaw-weixin/src/monitor/monitor.ts
+/home/admin/.openclaw/plugins/openclaw-weixin-local/node_modules/@tencent-weixin/openclaw-weixin/src/messaging/process-message.ts
 ```
 
-Tracked copy:
+Tracked copies:
 
 ```text
 vendor/openclaw-weixin/src/monitor/monitor.ts
+vendor/openclaw-weixin/src/messaging/process-message.ts
 ```
 
 Purpose:
@@ -27,12 +29,17 @@ Purpose:
 - Emit temporary diagnostic logs for burst ordering:
   `bridge_burst_started_sort_fields`, `bridge_burst_appended_sort_fields`, and
   `bridge_burst_flush_item`.
+- Preserve Weixin image dispatch metadata only on the downstream dispatch event:
+  `message_type`, `item_list`, `raw`, and `attachments`.
 
-To refresh the tracked copy after changing the runtime plugin file:
+To refresh the tracked copies after changing the runtime plugin files:
 
 ```bash
 cp /home/admin/.openclaw/plugins/openclaw-weixin-local/node_modules/@tencent-weixin/openclaw-weixin/src/monitor/monitor.ts \
   vendor/openclaw-weixin/src/monitor/monitor.ts
+mkdir -p vendor/openclaw-weixin/src/messaging
+cp /home/admin/.openclaw/plugins/openclaw-weixin-local/node_modules/@tencent-weixin/openclaw-weixin/src/messaging/process-message.ts \
+  vendor/openclaw-weixin/src/messaging/process-message.ts
 ```
 
 To inspect runtime logs:

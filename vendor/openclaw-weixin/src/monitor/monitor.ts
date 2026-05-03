@@ -249,8 +249,10 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       const list = resp.msgs ?? [];
       const orderedList = sortWeixinMessagesForBurst(list);
       for (const full of orderedList) {
+        const topKeys = Object.keys(full ?? {}).join(",");
+        const itemTypes = full.item_list?.map((i) => i.type).join(",") ?? "none";
         aLog.info(
-          `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
+          `inbound message: from=${maskWeixinId(full.from_user_id ?? "")} messageId=${full.message_id ?? "none"} topKeys=${topKeys || "none"} hasItemList=${Array.isArray(full.item_list)} itemTypes=${itemTypes}`,
         );
 
         const now = Date.now();

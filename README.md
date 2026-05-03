@@ -1,6 +1,6 @@
 # Neno Bot
 
-Neno Bot is a local FastAPI backend for chat, memory, relationship state, platform message forwarding, and QQ proactive message candidates.
+Neno Bot is a local FastAPI backend for chat, memory, relationship state, platform message forwarding, QQ proactive message candidates, and WeChat image-to-text chat input.
 
 ## Start
 
@@ -18,6 +18,23 @@ The browser test console is available at:
 http://127.0.0.1:8000/test
 ```
 
+## Current Scope
+
+Main supported paths:
+
+- normal text chat
+- chat memory and relationship state
+- platform message forwarding
+- QQ proactive message candidates
+- WeChat image input -> visual understanding -> normalized text -> normal text reply
+
+Not included in the current image route:
+
+- voice input
+- TTS
+- image generation
+- video
+
 ## Environment
 
 Required local settings live in `.env`. Do not commit `.env`.
@@ -26,6 +43,7 @@ Main settings:
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_CHAT_MODEL`
+- `OPENROUTER_VISION_MODEL`
 - `OPENROUTER_MEMORY_MODEL`
 - `HISTORY_LIMIT`
 - `MEMORY_LIMIT`
@@ -64,3 +82,23 @@ Use the included example files as templates:
 - `allowed_wx_users.example.json`
 
 Do not commit OpenClaw runtime configuration, local identity files, allowlists, or account state.
+
+## Image Input Notes
+
+The current WeChat image route uses:
+
+1. upstream WeChat image event
+2. preserved image attachment metadata
+3. local `media_path`
+4. local file read
+5. base64 `data:` URL
+6. OpenRouter multimodal
+7. normalized text passed into the existing chat main chain
+
+This route does not rely on using the upstream WeChat attachment URL directly as the final multimodal provider input.
+
+Related notes:
+
+- `docs/wx-image-event-path-audit-v1.md`
+- `docs/wx-image-input-route-v1_1.md`
+- `docs/openclaw-weixin-local-patch.md`
