@@ -102,3 +102,29 @@ Related notes:
 - `docs/wx-image-event-path-audit-v1.md`
 - `docs/wx-image-input-route-v1_1.md`
 - `docs/openclaw-weixin-local-patch.md`
+
+## 中文说明
+
+Neno Bot 是一个本地 FastAPI 后端，当前主要能力包括：
+
+- 普通文本聊天
+- 记忆与关系状态管理
+- 平台消息转发
+- QQ 主动消息候选
+- 微信图片输入 -> 视觉理解 -> 归一化文本 -> 正常文字回复
+
+当前图片输入路线是：
+
+1. 微信上游图片事件进入 `openclaw-weixin`
+2. 桥接层保留图片附件元数据
+3. Neno 读取本地 `media_path`
+4. 将本地图片文件转成 base64 `data:` URL
+5. 发送到 OpenRouter 多模态模型
+6. 将识别结果归一化后送入现有聊天主链
+
+当前范围只支持“微信图片输入 -> 文字回复”，暂不包含：
+
+- 语音
+- TTS
+- 图片生成
+- 视频
