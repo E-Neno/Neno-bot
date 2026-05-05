@@ -54,10 +54,11 @@ def skip_result(
     reason: str,
     checks: list[dict[str, Any]] | None = None,
     trace_id: str | None = None,
+    platform: str | None = None,
 ) -> dict[str, Any]:
     record_proactive_event(
         event_type="rule_skipped",
-        platform="qq",
+        platform=platform,
         action="skipped",
         success=True,
         skipped=True,
@@ -79,6 +80,7 @@ def skip_result(
         "skipped": True,
         "reason": reason,
         "action": "skipped",
+        "platform": platform,
         "proactive_mode": PROACTIVE_MODE,
         "checks": checks or [],
     }
@@ -88,9 +90,13 @@ def observed_result(checks: list[dict[str, Any]], trace_id: str | None = None) -
     failed = next((check for check in checks if check["ok"] is False), None)
     can_send = failed is None
     reason = "observe would pass" if can_send else str(failed["detail"])
+    platform = next(
+        (str(check.get("platform") or "").strip() for check in checks if check.get("platform")),
+        None,
+    ) or None
     record_proactive_event(
         event_type="scheduler_observed",
-        platform="qq",
+        platform=platform,
         action="observed",
         success=True,
         skipped=not can_send,
@@ -112,6 +118,7 @@ def observed_result(checks: list[dict[str, Any]], trace_id: str | None = None) -
         "skipped": not can_send,
         "action": "observed",
         "reason": reason,
+        "platform": platform,
         "would_pass": can_send,
         "proactive_mode": PROACTIVE_MODE,
         "checks": checks,
@@ -125,6 +132,7 @@ def generated_pending_result(candidate: dict, reason: str | None = None) -> dict
         "action": "generated_pending",
         "generated_pending": True,
         "candidate_id": candidate["id"],
+        "platform": candidate.get("platform"),
         "target_label": candidate.get("target_label"),
     }
     if reason:
@@ -172,6 +180,8 @@ def normalize_manual_run_result(
             str(result.get("reason") or result.get("error") or result.get("action") or "")
         ),
         "candidate_id": result.get("candidate_id"),
+        "platform": result.get("platform"),
+        "target_label": result.get("target_label"),
         "dry_run_only": dry_run_only,
         "proactive_mode": result.get("proactive_mode") or PROACTIVE_MODE,
         "would_pass": result.get("would_pass"),

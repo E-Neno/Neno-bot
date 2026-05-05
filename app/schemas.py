@@ -29,6 +29,7 @@ class ChatResponse(BaseModel):
 class PlatformMessageRequest(BaseModel):
     platform: str | None = None
     user_id: str | None = None
+    real_user_id: str | None = None
     chat_type: str | None = None
     group_id: str | None = None
     message: str | None = Field(default=None, max_length=2000)

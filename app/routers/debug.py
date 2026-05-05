@@ -272,6 +272,8 @@ def _diagnose_proactive() -> dict:
 
     details.append(f"当前模式：{mode_label} ({mode})")
     details.append(f"模式说明：{status.get('mode_description') or '-'}")
+    details.append(f"当前收口边界：{status.get('auto_scheduler_scope_label') or 'QQ-first'}")
+    details.append(f"能力说明：{status.get('auto_scheduler_summary') or '-'}")
     details.append(
         f"硬冷却：{'冷却中' if status.get('hard_cooldown_active') else '未触发'} / {status.get('hard_cooldown_minutes')} 分钟"
     )
@@ -304,12 +306,12 @@ def _diagnose_proactive() -> dict:
         suggestions.append("连续自动发送失败已达到阈值；先检查发送桥、白名单和最近失败事件。")
         return _card("proactive", "主动消息", "error", "连续失败暂停自动调度", details, suggestions)
     if mode == "auto":
-        suggestions.append("当前模式允许自动真实发送；请确认 QQ 白名单、每日上限和硬冷却设置。")
+        suggestions.append("当前模式允许自动真实发送，但本分支验收口径仍按 QQ-first。不要把 WX 视为已完成 auto 平台化。")
     if "failed" in action_text or "failed" in event_text:
         suggestions.append("查看同 trace_id 的 debug_events，以及 neno-bridge / 候选状态。")
         return _card("proactive", "主动消息", "error", "最近主动消息链路存在失败", details, suggestions)
     if debug_event and debug_event.get("skipped") is True:
-        suggestions.append("如果跳过原因是 pending 候选，先处理候选；如果是白名单，允许对应主动目标。")
+        suggestions.append("如果跳过原因是 pending 候选，先处理候选；如果是 QQ 白名单，允许对应主动目标。")
         return _card("proactive", "主动消息", "warn", "最近主动调度按规则跳过", details, suggestions)
     if action in {"auto_sent", "manual_sent", "auto_send_dry_run_ok", "manual_send_dry_run"}:
         return _card("proactive", "主动消息", "ok", "最近主动消息发送链路正常", details, suggestions)

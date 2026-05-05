@@ -5,6 +5,8 @@ import { loadProactiveStatus } from "./proactiveStatus.js";
 import { loadProactiveEvents } from "./proactiveTimeline.js";
 
 const candidateActionStates = new Map();
+let lastCandidates = [];
+let lastTargets = [];
 
 function normalizeCandidateInput(candidateOrId) {
   if (candidateOrId && typeof candidateOrId === "object") {
@@ -23,9 +25,26 @@ function isCandidateAlreadyHandled(candidateOrId) {
   return candidate.status !== undefined && candidate.status !== "pending";
 }
 
-function candidateActionButtonText(action) {
-  if (action === "dry-run") return "测试发送 QQ";
-  if (action === "send-qq") return "真实发送 QQ";
+function platformLabel(platform) {
+  return String(platform || "").toUpperCase() || "-";
+}
+
+function currentCandidatePlatformFilter() {
+  return document.getElementById("proactiveCandidatePlatformFilter")?.value || "";
+}
+
+function currentTargetPlatformFilter() {
+  return document.getElementById("proactiveTargetPlatformFilter")?.value || "";
+}
+
+function matchesPlatformFilter(platform, filterValue) {
+  return !filterValue || String(platform || "").toLowerCase() === filterValue;
+}
+
+function candidateActionButtonText(action, platform) {
+  const label = platformLabel(platform);
+  if (action === "dry-run") return `测试发送 ${label}`;
+  if (action === "send") return `真实发送 ${label}`;
   if (action === "dismiss") return "丢弃";
   return "";
 }
@@ -55,7 +74,7 @@ function applyCandidateActionState(row, id) {
   const state = candidateActionStates.get(String(id));
   for (const button of row.querySelectorAll("button")) {
     button.disabled = state?.busy === true;
-    const label = candidateActionButtonText(button.dataset.candidateAction);
+    const label = candidateActionButtonText(button.dataset.candidateAction, row.dataset.proactiveCandidatePlatform);
     if (label) {
       button.textContent = label;
     }
@@ -107,9 +126,11 @@ async function refreshAfterCandidateAction() {
 }
 
 export function renderProactiveCandidates(candidates) {
+  lastCandidates = candidates || [];
   const list = document.getElementById("proactiveCandidateList");
   const historyList = document.getElementById("proactiveHistoryList");
-  const items = candidates || [];
+  const filterValue = currentCandidatePlatformFilter();
+  const items = lastCandidates.filter((candidate) => matchesPlatformFilter(candidate.platform, filterValue));
   const pending = items.filter((candidate) => candidate.status === "pending");
   const history = sortProactiveHistory(
     items.filter((candidate) => candidate.status !== "pending")
@@ -127,32 +148,37 @@ export function renderProactiveCandidates(candidates) {
 }
 
 export function renderProactiveTargets(targets) {
+  lastTargets = targets || [];
   const list = document.getElementById("proactiveTargetList");
-  const items = targets || [];
+  const items = lastTargets.filter((target) => matchesPlatformFilter(target.platform, currentTargetPlatformFilter()));
   if (!list) {
     return;
   }
   if (items.length === 0) {
-    list.textContent = "暂无主动目标。请先通过 QQ 私聊给机器人发一条消息。";
+    list.textContent = "暂无主动目标。请先通过 QQ 或微信私聊给机器人发一条消息。";
     return;
   }
 
   clearChildren(list);
-  const latestQq = items.find((target) => target.platform === "qq") || items[0];
-  const title = document.createElement("div");
-  title.className = "candidate-meta";
-  title.textContent = "最近 QQ 主动目标";
-  list.appendChild(title);
-  list.appendChild(createProactiveTargetItem(latestQq));
+  for (const target of items) {
+    list.appendChild(createProactiveTargetItem(target));
+  }
 }
 
 function createProactiveTargetItem(target) {
   const item = document.createElement("div");
   item.className = "candidate-item";
+  const platform = String(target.platform || "").toLowerCase();
 
   const tag = document.createElement("div");
-  tag.className = `tag ${target.is_allowed ? "sent" : "failed"}`;
-  tag.textContent = `${target.platform || "-"} · ${target.is_allowed ? "allowed" : "not allowed"}`;
+  const tagClass = platform === "qq" 
+    ? (target.is_allowed ? "sent" : "failed") 
+    : (target.real_user_id_saved ? "sent" : "failed");
+  const statusText = platform === "qq"
+    ? (target.is_allowed ? "allowed" : "not allowed")
+    : (target.real_user_id_saved === true ? "real target saved" : "real target missing");
+  tag.className = `tag ${tagClass}`;
+  tag.textContent = `${platformLabel(platform)} · ${statusText}`;
 
   const label = document.createElement("div");
   label.className = "candidate-content";
@@ -160,10 +186,14 @@ function createProactiveTargetItem(target) {
 
   const meta = document.createElement("div");
   meta.className = "candidate-meta";
-  meta.textContent = [
+  const detailParts = [
     `last_seen_at=${target.last_seen_at || "-"}`,
     `session_id_saved=${target.session_id_saved === true ? "true" : "false"}`,
-  ].join(" · ");
+  ];
+  if (target.real_user_id_saved === true) {
+    detailParts.push(`real_user=${target.real_user_label || "saved"}`);
+  }
+  meta.textContent = detailParts.join(" · ");
 
   item.append(tag, label, meta);
   return item;
@@ -208,10 +238,18 @@ function createProactiveCandidateItem(candidate) {
 
   const tag = document.createElement("div");
   tag.className = `tag ${candidate.status || ""}`;
-  tag.textContent = `${candidate.platform || "-"} · ${candidateStatusLabel(candidate.status)} · ${candidate.target_label || "-"}`;
+  
+  const isTest = candidate.source === "test" || String(candidate.reason || "").includes("test v") || String(candidate.reason || "").includes("manual safe template");
+  const testBadge = isTest ? " 🧪[测试模拟]" : "";
+  
+  tag.textContent = `${candidate.platform || "-"} · ${candidateStatusLabel(candidate.status)}${testBadge} · ${candidate.target_label || "-"}`;
 
   const content = document.createElement("div");
   content.className = "candidate-content";
+  if (isTest) {
+    content.style.borderLeft = "3px solid #ff9800";
+    content.style.paddingLeft = "8px";
+  }
   content.textContent = candidate.message || "";
 
   const reason = document.createElement("div");
@@ -225,13 +263,10 @@ function createProactiveCandidateItem(candidate) {
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.proactiveCandidateId = candidateActionId(candidate);
+  row.dataset.proactiveCandidatePlatform = String(candidate.platform || "").toLowerCase();
 
   if (candidate.status === "pending") {
-    if (candidate.platform === "qq") {
-      appendQqSendButtons(row, candidate);
-    } else {
-      appendCandidateStatusText(row, "非 QQ 候选");
-    }
+    appendSendButtons(row, candidate);
     appendDismissButton(row, candidate);
   } else if (candidate.status === "dismissed") {
     appendCandidateStatusText(row, "已丢弃");
@@ -264,19 +299,19 @@ function appendDismissButton(row, candidate) {
   row.appendChild(dismissButton);
 }
 
-function appendQqSendButtons(row, candidate) {
+function appendSendButtons(row, candidate) {
   const dryRunButton = document.createElement("button");
   dryRunButton.className = "good";
   dryRunButton.dataset.candidateAction = "dry-run";
-  dryRunButton.textContent = "测试发送 QQ";
-  dryRunButton.addEventListener("click", () => dryRunSendQqCandidate(candidate, dryRunButton));
+  dryRunButton.textContent = candidateActionButtonText("dry-run", candidate.platform);
+  dryRunButton.addEventListener("click", () => dryRunSendCandidate(candidate, dryRunButton));
   row.appendChild(dryRunButton);
 
   const sendButton = document.createElement("button");
   sendButton.className = "danger";
-  sendButton.dataset.candidateAction = "send-qq";
-  sendButton.textContent = "真实发送 QQ";
-  sendButton.addEventListener("click", () => sendQqCandidate(candidate, sendButton));
+  sendButton.dataset.candidateAction = "send";
+  sendButton.textContent = candidateActionButtonText("send", candidate.platform);
+  sendButton.addEventListener("click", () => sendCandidate(candidate, sendButton));
   row.appendChild(sendButton);
 }
 
@@ -497,18 +532,19 @@ export async function dismissProactiveCandidate(candidateOrId, triggerButton) {
   }
 }
 
-export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
+export async function dryRunSendCandidate(candidateOrId, triggerButton) {
   const candidate = normalizeCandidateInput(candidateOrId);
   const id = candidate.id;
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
+  const platform = platformLabel(candidate.platform);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
     return;
   }
 
-  const message = "测试发送中...";
+  const message = `测试发送 ${platform} 中...`;
   setCandidateActionState(candidate, {
     activeAction: "dry-run",
     buttonText: message,
@@ -519,7 +555,7 @@ export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
 
   try {
     const data = await requestJson(
-      "/proactive/send-qq",
+      "/proactive/send",
       {
         method: "POST",
         headers: getAdminHeaders(),
@@ -527,7 +563,7 @@ export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
       },
       "测试失败："
     );
-    const successMessage = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
+    const successMessage = `dry_run 通过：将发送到 ${platform} ${data.target_label || "-"}`;
     setCandidateActionState(candidate, {
       activeAction: "dry-run",
       busy: true,
@@ -554,11 +590,12 @@ export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
   }
 }
 
-export async function sendQqCandidate(candidateOrId, triggerButton) {
+export async function sendCandidate(candidateOrId, triggerButton) {
   const candidate = normalizeCandidateInput(candidateOrId);
   const id = candidate.id;
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
+  const platform = platformLabel(candidate.platform);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
@@ -568,7 +605,7 @@ export async function sendQqCandidate(candidateOrId, triggerButton) {
   if (isCandidateAlreadyHandled(candidate)) {
     const message = candidateAlreadyHandledMessage();
     setCandidateActionState(candidate, {
-      activeAction: "send-qq",
+      activeAction: "send",
       busy: false,
       message,
     });
@@ -576,14 +613,14 @@ export async function sendQqCandidate(candidateOrId, triggerButton) {
     return;
   }
 
-  const ok = confirm("确认发送这条主动消息到 QQ？这会真的发出去。");
+  const ok = confirm(`确认发送这条主动消息到 ${platform}？这会真的发出去。`);
   if (!ok) {
     return;
   }
 
   const sendingMessage = "正在发送...";
   setCandidateActionState(candidate, {
-    activeAction: "send-qq",
+    activeAction: "send",
     buttonText: sendingMessage,
     busy: true,
     message: sendingMessage,
@@ -592,7 +629,7 @@ export async function sendQqCandidate(candidateOrId, triggerButton) {
 
   try {
     await requestJson(
-      "/proactive/send-qq",
+      "/proactive/send",
       {
         method: "POST",
         headers: getAdminHeaders(),
@@ -601,21 +638,37 @@ export async function sendQqCandidate(candidateOrId, triggerButton) {
       "发送失败："
     );
     setCandidateActionState(candidate, {
-      activeAction: "send-qq",
+      activeAction: "send",
       busy: true,
       message: "发送成功",
     });
     await refreshAfterCandidateAction();
     setCandidateActionState(candidate, null);
-    status.textContent = "发送成功";
+    status.textContent = `${platform} 发送成功`;
   } catch (err) {
     const message = sendFailureMessage(err);
     setCandidateActionState(candidate, {
-      activeAction: "send-qq",
+      activeAction: "send",
       busy: false,
       message,
     });
     await refreshAfterCandidateAction();
     status.textContent = message;
   }
+}
+
+export function dryRunSendQqCandidate(candidateOrId, triggerButton) {
+  return dryRunSendCandidate(candidateOrId, triggerButton);
+}
+
+export function sendQqCandidate(candidateOrId, triggerButton) {
+  return sendCandidate(candidateOrId, triggerButton);
+}
+
+export function rerenderProactiveCandidateViews() {
+  renderProactiveCandidates(lastCandidates);
+}
+
+export function rerenderProactiveTargetViews() {
+  renderProactiveTargets(lastTargets);
 }

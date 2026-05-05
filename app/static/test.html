@@ -1991,6 +1991,7 @@
             <select id="proactivePlatformSelect">
               <option value="">默认</option>
               <option value="qq">QQ</option>
+              <option value="wx">WX</option>
             </select>
           </div>
         </div>
@@ -2002,7 +2003,7 @@
           <button id="loadProactiveTargetsBtn" class="secondary">刷新主动目标</button>
           <button id="loadProactiveEventsBtn" class="secondary">刷新时间线</button>
         </div>
-        <div class="config-help">测试候选用于手动测试，不受随机概率、最近聊天、时间窗影响，不会自动发送。自动规则生成用于模拟后台保守判断。</div>
+        <div class="config-help">测试候选用于手动测试，不受随机概率、最近聊天、时间窗影响，不会自动发送。自动规则生成用于模拟后台保守判断；当前分支对 auto 仍按 QQ-first 收口，WX 只保留最小可见性与手动链路。</div>
         <div id="proactiveAutoStatus" class="small">自动状态未加载</div>
         <details class="config-panel">
           <summary>自动主动消息配置</summary>
@@ -2014,7 +2015,7 @@
                 <option value="false">false</option>
                 <option value="true">true</option>
               </select>
-              <div class="config-help">true 表示后台会按规则自动给 QQ 发主动消息；false 表示关闭自动主动消息。保存后需要 nereboot 生效。</div>
+              <div class="config-help">true 表示后台会按规则自动调度主动消息；false 表示关闭自动主动消息。保存后需要 nereboot 生效。</div>
             </div>
             <div class="config-field">
               <label for="proactiveModeInput">mode｜自动主动消息运行模式</label>
@@ -2025,7 +2026,7 @@
                 <option value="dry_run">dry_run｜演习发送</option>
                 <option value="auto">auto｜自动真实发送</option>
               </select>
-              <div class="config-help">优先于旧 enabled/auto send 配置。off 完全关闭；observe 只记录判断；candidate 只生成 pending；dry_run 不真实发送；auto 才允许自动真实发送 QQ。</div>
+              <div class="config-help">优先于旧 enabled/auto send 配置。off 完全关闭；observe 只记录判断；candidate 只生成 pending；dry_run 不真实发送；auto 才允许自动真实发送。当前分支对 auto 仍按 QQ-first 收口。</div>
             </div>
             <div class="config-field">
               <label for="proactiveCheckIntervalInput">check interval｜检查间隔（秒）</label>
@@ -2078,7 +2079,7 @@
                 <option value="false">false</option>
                 <option value="true">true</option>
               </select>
-              <div class="config-help">false 表示自动调度命中后只生成 pending 候选，不调用发送桥；true 才允许自动发送 QQ。</div>
+              <div class="config-help">false 表示自动调度命中后只生成 pending 候选，不调用发送桥；true 才允许自动真实发送。</div>
             </div>
             <div class="config-field">
               <label for="proactiveAutoSendDryRunInput">auto send dry_run｜自动 dry_run 测试开关</label>
@@ -2094,7 +2095,7 @@
                 <option value="true">true</option>
                 <option value="false">false</option>
               </select>
-              <div class="config-help">true 表示自动真实发送前必须确认 proactive_targets 里的目标是 allowed。建议保持 true。</div>
+              <div class="config-help">true 表示自动真实发送前必须确认 proactive_targets 里的目标是 allowed。当前这个约束主要面向 QQ auto 主路径，建议保持 true。</div>
             </div>
             <div class="config-field">
               <label for="proactiveAutoSendMaxPerDayInput">auto send max per day｜自动发送每日上限</label>
@@ -2104,7 +2105,7 @@
             <div class="config-field">
               <label for="proactiveAllowedHashesInput">allowed target hashes｜允许自动发送的 QQ 目标 hash</label>
               <input id="proactiveAllowedHashesInput" type="text" autocomplete="off" />
-              <div class="config-help">安全白名单。为空时不会自动发送；填写允许的 target_hash 后，自动主动消息才允许发给对应 QQ 目标。多个用英文逗号分隔。</div>
+              <div class="config-help">安全白名单。为空时不会自动发送；填写允许的 target_hash 后，自动主动消息才允许发给对应 QQ 目标。多个用英文逗号分隔。当前 auto 收口仍按 QQ-first。</div>
             </div>
             <div class="config-field">
               <label for="proactiveBridgeUrlInput">bridge URL｜Neno Bridge QQ 发送接口</label>

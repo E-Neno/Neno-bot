@@ -21,7 +21,7 @@ from app.config import (
 )
 from app.services.proactive.result_helpers import parse_sqlite_datetime, rule
 from app.services.proactive_service import _mask_hash, is_allowed_qq_target
-from app.storage.db import fetch_one, get_latest_allowed_proactive_target
+from app.storage.db import fetch_one, get_latest_allowed_proactive_target, get_latest_proactive_target
 
 PROACTIVE_MODE_LABELS = {
     "off": "关闭",
@@ -35,14 +35,14 @@ PROACTIVE_MODE_DESCRIPTIONS = {
     "observe": "只观察并记录调度判断，不生成候选，不发送。",
     "candidate": "规则通过后自动生成 pending 候选，不发送。",
     "dry_run": "规则通过后生成候选并执行 dry_run，不真实发送，不写 messages。",
-    "auto": "规则通过后允许自动真实发送；当前仅支持 QQ，成功后才写 messages。",
+    "auto": "规则通过后允许自动真实发送；当前分支按 QQ-first 收口，WX 只保留最小链路与手动支持，不视为 auto 平台化已完成。",
 }
 PROACTIVE_MODE_EFFECTIVE_ACTIONS = {
     "off": "skip",
     "observe": "observe_only",
     "candidate": "generate_pending",
     "dry_run": "generate_and_dry_run",
-    "auto": "generate_and_send_qq",
+    "auto": "generate_and_send",
 }
 
 
@@ -58,8 +58,7 @@ def today_sent_count() -> int:
         """
         SELECT COUNT(*) AS count
         FROM proactive_candidates
-        WHERE platform = 'qq'
-          AND source = 'auto'
+        WHERE source = 'auto'
           AND status = 'sent'
           AND date(created_at, 'localtime') = date('now', 'localtime')
         """
@@ -72,8 +71,7 @@ def today_auto_sent_count() -> int:
         """
         SELECT COUNT(*) AS count
         FROM proactive_candidates
-        WHERE platform = 'qq'
-          AND source = 'auto'
+        WHERE source = 'auto'
           AND status = 'sent'
           AND date(created_at, 'localtime') = date('now', 'localtime')
           AND metadata_json LIKE '%"auto_sent": true%'
@@ -87,8 +85,7 @@ def last_sent_at() -> str | None:
         """
         SELECT created_at
         FROM proactive_candidates
-        WHERE platform = 'qq'
-          AND source = 'auto'
+        WHERE source = 'auto'
           AND status = 'sent'
         ORDER BY created_at DESC, id DESC
         LIMIT 1
@@ -148,34 +145,76 @@ def failure_pause_active() -> bool:
     return PROACTIVE_FAILURE_PAUSE_THRESHOLD > 0 and consecutive_auto_failures() >= PROACTIVE_FAILURE_PAUSE_THRESHOLD
 
 
-def has_recent_user_message() -> bool:
+def has_recent_user_message(platform: str) -> bool:
     row = fetch_one(
         f"""
         SELECT 1 AS found
         FROM chat_stats
-        WHERE platform = 'qq'
+        WHERE platform = ?
           AND created_at >= datetime('now', '-{PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes')
         LIMIT 1
-        """
+        """,
+        (platform,),
     )
     return row is not None
 
 
-def has_pending_qq_candidate() -> bool:
+def has_pending_platform_candidate(platform: str) -> bool:
     row = fetch_one(
         """
         SELECT 1 AS found
         FROM proactive_candidates
-        WHERE platform = 'qq'
+        WHERE platform = ?
           AND status = 'pending'
         LIMIT 1
-        """
+        """,
+        (platform,),
     )
     return row is not None
 
 
 def latest_qq_target() -> dict[str, Any] | None:
     return get_latest_allowed_proactive_target("qq")
+
+
+def latest_wx_target() -> dict[str, Any] | None:
+    return get_latest_proactive_target("wx")
+
+
+def latest_auto_target() -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    qq_target = latest_qq_target()
+    if qq_target is not None:
+        candidates.append(qq_target)
+    wx_target = latest_wx_target()
+    if wx_target is not None:
+        candidates.append(wx_target)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda row: str(row.get("last_seen_at") or row.get("updated_at") or row.get("created_at") or ""),
+    )
+
+
+def target_summary_row(target_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if target_row is None:
+        return None
+    platform = str(target_row.get("platform") or "").strip().lower()
+    target_hash = str(target_row.get("target_hash") or "").strip()
+    return {
+        "platform": platform,
+        "target_label": str(target_row.get("target_label") or "").strip() or _mask_hash(target_hash),
+        "target_hash": _mask_hash(target_hash),
+        "is_allowed": bool(target_row.get("is_allowed")) if platform == "qq" else None,
+        "last_seen_at": target_row.get("last_seen_at"),
+        "real_user_id_saved": bool(str(target_row.get("real_user_id") or "").strip()) if platform == "wx" else None,
+    }
+
+
+def latest_targets_summary() -> list[dict[str, Any]]:
+    items = [target_summary_row(latest_qq_target()), target_summary_row(latest_wx_target())]
+    return [item for item in items if item is not None]
 
 
 def explain_proactive_reason(reason: str | None) -> str:
@@ -205,6 +244,12 @@ def explain_proactive_reason(reason: str | None) -> str:
         return "最新 QQ 目标不在白名单，暂不发送"
     if "no allowed qq target" in lower or "no qq target" in lower:
         return "没有可用 QQ 主动目标，请先给机器人发一条 QQ 消息，并在主动目标中允许该目标。"
+    if "no auto target found" in lower:
+        return "没有可用主动目标，请先给机器人发一条 QQ 或微信私聊消息。"
+    if "latest wx target is not allowed" in lower:
+        return "最新微信目标未通过权限校验，暂不发送。"
+    if "wx target is not allowed" in lower:
+        return "微信目标未通过权限校验，发送失败。"
     if "disabled" in lower:
         return "自动主动消息未开启"
     return text
@@ -227,7 +272,10 @@ def next_rules_summary() -> list[str]:
         f"当前模式：{proactive_mode_label()}",
         proactive_mode_description(),
         "旧 enabled 配置为 true" if PROACTIVE_ENABLED else "旧 enabled 配置为 false",
-        "当前只支持 QQ",
+        "手动候选 / 手动发送 / dry_run / 目标与事件可见性保留 QQ / WX",
+        "自动调度当前按 QQ-first 收口，不把 WX 视为已完成 auto 平台化能力",
+        "QQ 自动发送仍要求 allowed target / hash 白名单",
+        "WX 相关链路仅保留最小 target / send 路径，不作为本次合并的 auto 能力承诺",
         f"每天最多 {PROACTIVE_DAILY_LIMIT} 条",
         f"两次主动消息至少间隔 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟",
         f"硬冷却 {PROACTIVE_HARD_COOLDOWN_MINUTES} 分钟",
@@ -315,44 +363,57 @@ def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
         min_interval_detail = f"距离上次自动主动消息约 {elapsed_minutes} 分钟，要求至少 {PROACTIVE_MIN_INTERVAL_MINUTES} 分钟"
     checks.append(rule("min_interval", min_interval_ok, min_interval_detail))
 
-    recent_chat = has_recent_user_message()
+    target_row = latest_auto_target()
+    platform = str(target_row.get("platform") or "").strip().lower() if target_row else None
+    target_hash = str(target_row["target_hash"] or "") if target_row else ""
+    checks.append(
+        rule(
+            "auto_target",
+            target_row is not None,
+            (
+                f"最近自动判断目标平台 {platform} / {_mask_hash(target_hash)}"
+                if target_row and platform
+                else "没有找到自动主动目标"
+            ),
+        )
+    )
+
+    recent_chat = has_recent_user_message(platform or "qq")
     checks.append(
         rule(
             "recent_chat",
             not recent_chat,
-            f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} QQ 用户消息",
+            f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} {platform or 'qq'} 用户消息",
         )
     )
 
-    pending_candidate = has_pending_qq_candidate()
+    pending_candidate = has_pending_platform_candidate(platform or "qq")
     checks.append(
         rule(
             "pending_candidate",
             not pending_candidate,
-            "已有待处理 QQ 候选" if pending_candidate else "没有待处理 QQ 候选",
+            f"已有待处理 {platform or 'qq'} 候选" if pending_candidate else f"没有待处理 {platform or 'qq'} 候选",
         )
     )
-
-    target_row = latest_qq_target()
-    target_hash = str(target_row["target_hash"] or "") if target_row else ""
+    whitelist_ok = platform == "wx" or (bool(target_hash) and is_allowed_qq_target(target_hash))
     checks.append(
         rule(
-            "qq_target",
-            target_row is not None,
-            f"最近 QQ 目标 {_mask_hash(target_hash)}" if target_row else "没有找到 QQ 目标",
-        )
-    )
-
-    whitelist_ok = bool(target_hash) and is_allowed_qq_target(target_hash)
-    checks.append(
-        rule(
-            "qq_whitelist",
+            "platform_permission",
             whitelist_ok,
-            "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内",
+            (
+                "最近命中的是 WX 目标；当前只保留最小链路观察与手动发送支持，不视为 auto 平台化已完成"
+                if platform == "wx"
+                else "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内"
+            ),
         )
     )
 
-    target_allowed = bool(target_row and int(target_row.get("is_allowed") or 0) == 1)
+    target_allowed = bool(
+        target_row and (
+            platform == "wx"
+            or int(target_row.get("is_allowed") or 0) == 1
+        )
+    )
     checks.append(
         rule(
             "allowed_target",
@@ -394,5 +455,7 @@ def evaluate_proactive_rules(*, include_enabled: bool = True) -> dict[str, Any]:
     return {
         "can_send": can_send,
         "reason": reason,
+        "platform": platform,
+        "target_summary": target_summary_row(target_row),
         "checks": checks,
     }

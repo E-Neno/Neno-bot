@@ -58,10 +58,25 @@ function addButtonClasses(button, ...classes) {
 
 function createProactiveSectionNav() {
   const nav = createElement("div", "proactive-section-nav");
-  for (const label of ["测试区", "自动区", "候选", "时间线", "配置", "诊断"]) {
+  for (const label of ["测试区", "自动区", "候选", "目标", "时间线", "配置", "诊断"]) {
     nav.appendChild(createElement("span", "", label));
   }
   return nav;
+}
+
+function createPlatformFilter(id) {
+  const wrap = createElement("div", "config-field");
+  wrap.appendChild(createElement("label", "", "平台筛选"));
+  const select = createElement("select");
+  select.id = id;
+  for (const [value, label] of [["", "全部"], ["qq", "QQ"], ["wx", "WX"]]) {
+    const option = createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  }
+  wrap.appendChild(select);
+  return wrap;
 }
 
 export function buildProactivePanel(panel, header) {
@@ -105,7 +120,7 @@ export function buildProactivePanel(panel, header) {
   testCard.appendChild(createElement(
     "div",
     "config-help",
-    "用于手动测试：生成 pending QQ 候选，不受随机概率、最近聊天、时间窗影响，不会自动发送。仍会检查 QQ 目标存在和 QQ 白名单。"
+    "用于手动测试：生成 pending 候选，不受随机概率、最近聊天、时间窗影响，不会自动发送。QQ 仍检查 allowed/hash；WX 仍检查真实目标与权限。"
   ));
   const testRow = createElement("div", "row");
   if (generateTestButton) {
@@ -118,7 +133,7 @@ export function buildProactivePanel(panel, header) {
   testCard.appendChild(createElement(
     "div",
     "config-help",
-    "已有 pending QQ 候选时，自动调度不会继续生成；你仍可手动发送、丢弃，或强制生成测试候选。"
+    "已有同平台 pending 候选时，自动调度不会继续生成；你仍可手动发送、丢弃，或强制生成测试候选。"
   ));
   grid.appendChild(testCard);
 
@@ -127,7 +142,7 @@ export function buildProactivePanel(panel, header) {
   statusCard.appendChild(createElement(
     "div",
     "config-help",
-    "这里是后台自动调度规则，不等于手动测试；自动调度优先按 PROACTIVE_MODE 运行，并受硬冷却、连续失败暂停、时间窗、每日上限、最小间隔、最近聊天、随机概率、QQ 白名单和 pending 候选保护。"
+    "这里是后台自动调度规则，不等于手动测试；自动调度优先按 PROACTIVE_MODE 运行，并受硬冷却、连续失败暂停、时间窗、每日上限、最小间隔、最近聊天、随机概率、平台权限和 pending 候选保护。"
   ));
   if (autoStatus) {
     statusCard.appendChild(autoStatus);
@@ -143,6 +158,9 @@ export function buildProactivePanel(panel, header) {
   appendStatusMetric(statusGrid, "硬冷却", "proactiveStatusHardCooldown");
   appendStatusMetric(statusGrid, "连续失败", "proactiveStatusFailurePause");
   appendStatusMetric(statusGrid, "目标 allowed", "proactiveStatusAutoRequireAllowed");
+  appendStatusMetric(statusGrid, "当前判断平台", "proactiveStatusDecisionPlatform");
+  appendStatusMetric(statusGrid, "当前判断目标", "proactiveStatusDecisionTarget");
+  appendStatusMetric(statusGrid, "最近目标", "proactiveStatusLatestTargets");
   appendStatusMetric(statusGrid, "最近发送", "proactiveStatusLastSent");
   appendStatusMetric(statusGrid, "最近检查", "proactiveStatusLastCheck");
   statusCard.appendChild(statusGrid);
@@ -157,7 +175,7 @@ export function buildProactivePanel(panel, header) {
   runOnceCard.appendChild(createElement(
     "div",
     "config-help",
-    "这是手动触发自动调度流程，用于测试；默认不会真实发送 QQ。"
+    "这是手动触发自动调度流程，用于测试；默认不会真实发送，可能命中 QQ 或 WX。"
   ));
   const runOnceForm = createElement("div", "config-form");
   for (const option of [
@@ -189,6 +207,7 @@ export function buildProactivePanel(panel, header) {
   if (refreshEventsButton) {
     const eventRow = createElement("div", "row");
     eventRow.appendChild(refreshEventsButton);
+    eventRow.appendChild(createPlatformFilter("proactiveEventPlatformFilter"));
     eventsCard.appendChild(eventRow);
   }
   eventsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
@@ -197,10 +216,11 @@ export function buildProactivePanel(panel, header) {
 
   const targetsCard = createElement("div", "card");
   targetsCard.appendChild(createElement("h3", "", "主动目标"));
-  targetsCard.appendChild(createElement("div", "config-help", "最近 QQ 私聊会自动记录为主动目标；页面不显示完整 session_id。allowed 由后端按 QQ 白名单保守标记。"));
+  targetsCard.appendChild(createElement("div", "config-help", "最近 QQ / WX 私聊会自动记录为主动目标；页面不显示完整 session_id。QQ 会显示 allowed，WX 会显示真实目标是否已保存。"));
   if (refreshTargetsButton) {
     const targetRow = createElement("div", "row");
     targetRow.appendChild(refreshTargetsButton);
+    targetRow.appendChild(createPlatformFilter("proactiveTargetPlatformFilter"));
     targetsCard.appendChild(targetRow);
   }
   targetsCard.appendChild(createElement("div", "small panel-list", "还没加载"));
@@ -231,7 +251,8 @@ export function buildProactivePanel(panel, header) {
 
   const pendingCard = createElement("div", "card");
   pendingCard.appendChild(createElement("h3", "", "待处理候选 pending"));
-  pendingCard.appendChild(createElement("div", "config-help", "测试发送 QQ 使用 dry_run；真实发送 QQ 需要二次确认，成功后才写入 messages。"));
+  pendingCard.appendChild(createElement("div", "config-help", "候选支持 QQ / WX。dry_run 只验证链路；真实发送需要二次确认，成功后才写入 messages。"));
+  pendingCard.appendChild(createPlatformFilter("proactiveCandidatePlatformFilter"));
   if (pendingList) {
     pendingCard.appendChild(pendingList);
   }
@@ -239,7 +260,7 @@ export function buildProactivePanel(panel, header) {
 
   const history = createElement("details", "card");
   history.appendChild(createElement("summary", "", "显示历史"));
-  history.appendChild(createElement("div", "config-help", "历史记录 sent / dismissed / failed"));
+  history.appendChild(createElement("div", "config-help", "历史记录 sent / dismissed / failed，支持 QQ / WX。"));
   history.appendChild(createElement("div", "proactive-history-list", "还没加载"));
   history.lastChild.id = "proactiveHistoryList";
   grid.appendChild(history);

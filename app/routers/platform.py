@@ -54,6 +54,15 @@ def clean_optional(value: Any) -> str | None:
     return cleaned or None
 
 
+def clean_optional_identifier(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a string")
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, str, str]:
     platform = clean_required(req.platform, "platform")
     user_id = clean_required(req.user_id, "user_id")
@@ -176,6 +185,7 @@ def openclaw_message(payload: Any = Body(...)):
                 platform=platform,
                 session_id=session_id,
                 user_id=user_id,
+                real_user_id=clean_optional_identifier(req.real_user_id, "real_user_id"),
             )
         except Exception as exc:
             log_event(

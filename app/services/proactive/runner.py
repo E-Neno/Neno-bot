@@ -40,10 +40,11 @@ from app.services.proactive.rules import (
     failure_pause_active,
     hard_cooldown_active,
     hard_cooldown_last_event,
-    has_pending_qq_candidate,
+    has_pending_platform_candidate,
     has_recent_user_message,
     last_sent_at,
-    latest_qq_target,
+    latest_auto_target,
+    latest_targets_summary,
     next_rules_summary,
     proactive_mode_description,
     proactive_mode_effective_action,
@@ -55,6 +56,20 @@ from app.services.proactive.rules import (
 from app.services.proactive.send_executor import auto_send_dry_run, auto_send_real
 from app.services.proactive_service import _mask_hash, is_allowed_qq_target, record_proactive_event
 from app.utils.logging_utils import log_event, new_trace_id
+
+
+def proactive_capability_boundary() -> dict[str, Any]:
+    return {
+        "manual_candidate_platforms": ["qq", "wx"],
+        "manual_send_platforms": ["qq", "wx"],
+        "visible_platforms": ["qq", "wx"],
+        "auto_scheduler_scope": "qq_first",
+        "auto_scheduler_scope_label": "QQ-first",
+        "auto_scheduler_summary": (
+            "自动调度当前按 QQ-first 收口。QQ 是已验收主路径；WX 只保留最小目标可见性、候选可见性和手动发送链路，"
+            "不视为 auto 平台化已完成。"
+        ),
+    }
 
 
 def check_and_send_once(
@@ -69,6 +84,7 @@ def check_and_send_once(
 ) -> dict[str, Any]:
     now = datetime.now()
     checks: list[dict[str, Any]] = []
+    selected_platform: str | None = None
 
     log_event(
         "proactive",
@@ -88,7 +104,7 @@ def check_and_send_once(
         )
     )
     if PROACTIVE_MODE == "off":
-        return skip_result("proactive mode off", checks, trace_id=trace_id)
+        return skip_result("proactive mode off", checks, trace_id=trace_id, platform=selected_platform)
 
     checks.append(
         rule(
@@ -144,6 +160,7 @@ def check_and_send_once(
             f"outside active window: {PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
             checks,
             trace_id=trace_id,
+            platform=selected_platform,
         )
 
     probability = max(0.0, min(1.0, PROACTIVE_RANDOM_PROBABILITY))
@@ -161,7 +178,7 @@ def check_and_send_once(
         if not random_hit:
             if PROACTIVE_MODE == "observe":
                 return observed_result(checks, trace_id=trace_id)
-            return skip_result("random probability missed", checks, trace_id=trace_id)
+            return skip_result("random probability missed", checks, trace_id=trace_id, platform=selected_platform)
 
     sent_count = today_sent_count()
     daily_ok = sent_count < PROACTIVE_DAILY_LIMIT
@@ -173,9 +190,9 @@ def check_and_send_once(
         )
     )
     if not daily_ok:
-        if PROACTIVE_MODE == "observe":
-            return observed_result(checks, trace_id=trace_id)
-        return skip_result(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks, trace_id=trace_id)
+            if PROACTIVE_MODE == "observe":
+                return observed_result(checks, trace_id=trace_id)
+            return skip_result(f"daily sent limit reached: {PROACTIVE_DAILY_LIMIT}", checks, trace_id=trace_id, platform=selected_platform)
 
     last_sent = parse_sqlite_datetime(last_sent_at())
     min_interval_ok = last_sent is None or now - last_sent >= timedelta(minutes=PROACTIVE_MIN_INTERVAL_MINUTES)
@@ -188,68 +205,81 @@ def check_and_send_once(
     if not min_interval_ok:
         if PROACTIVE_MODE == "observe":
             return observed_result(checks, trace_id=trace_id)
-        return skip_result(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks, trace_id=trace_id)
+        return skip_result(f"last sent is within {PROACTIVE_MIN_INTERVAL_MINUTES} minutes", checks, trace_id=trace_id, platform=selected_platform)
 
-    recent_chat = has_recent_user_message()
+    target_row = latest_auto_target()
+    selected_platform = str(target_row.get("platform") or "").strip().lower() if target_row else None
+    target_hash = str(target_row.get("target_hash") or "") if target_row else ""
+    checks.append(
+        {
+            **rule(
+                "auto_target",
+                target_row is not None,
+            (
+                    f"最近自动判断目标平台 {selected_platform} / {_mask_hash(target_hash)}"
+                    if target_row and selected_platform
+                    else "没有找到自动主动目标"
+                ),
+            ),
+            "platform": selected_platform,
+        }
+    )
+    if target_row is None:
+        if PROACTIVE_MODE == "observe":
+            return observed_result(checks, trace_id=trace_id)
+        return skip_result("no auto target found in proactive_targets", checks, trace_id=trace_id, platform=selected_platform)
+
+    recent_chat = has_recent_user_message(selected_platform)
     checks.append(
         rule(
             "recent_chat",
             None if ignore_recent_chat else not recent_chat,
             "本次手动触发忽略最近聊天规则"
             if ignore_recent_chat
-            else f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} QQ 用户消息",
+            else f"最近 {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} 分钟{'有' if recent_chat else '没有'} {selected_platform} 用户消息",
         )
     )
     if not ignore_recent_chat and recent_chat:
         if PROACTIVE_MODE == "observe":
             return observed_result(checks, trace_id=trace_id)
         return skip_result(
-            f"qq user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes",
+            f"{selected_platform} user message seen within {PROACTIVE_RECENT_CHAT_SKIP_MINUTES} minutes",
             checks,
             trace_id=trace_id,
+            platform=selected_platform,
         )
 
-    pending_candidate = has_pending_qq_candidate()
+    pending_candidate = has_pending_platform_candidate(selected_platform)
     checks.append(
         rule(
             "pending_candidate",
             None if force else not pending_candidate,
             "本次强制生成，已有 pending 不阻止新候选"
             if force
-            else "已有待处理 QQ 候选" if pending_candidate else "没有待处理 QQ 候选",
+            else f"已有待处理 {selected_platform} 候选" if pending_candidate else f"没有待处理 {selected_platform} 候选",
         )
     )
     if not force and pending_candidate:
         if PROACTIVE_MODE == "observe":
             return observed_result(checks, trace_id=trace_id)
-        return skip_result("pending qq candidate exists", checks, trace_id=trace_id)
+        return skip_result(f"pending {selected_platform} candidate exists", checks, trace_id=trace_id, platform=selected_platform)
 
-    target_row = latest_qq_target()
+    whitelist_ok = selected_platform == "wx" or (bool(target_hash) and is_allowed_qq_target(target_hash))
     checks.append(
         rule(
-            "qq_target",
-            target_row is not None,
-            f"最近 QQ 目标 {_mask_hash(str(target_row['target_hash'] or ''))}" if target_row else "没有找到 QQ 目标",
-        )
-    )
-    if target_row is None:
-        if PROACTIVE_MODE == "observe":
-            return observed_result(checks, trace_id=trace_id)
-        return skip_result("no allowed qq target found in proactive_targets", checks, trace_id=trace_id)
-
-    target_hash = str(target_row["target_hash"] or "")
-    whitelist_ok = bool(target_hash) and is_allowed_qq_target(target_hash)
-    checks.append(
-        rule(
-            "qq_whitelist",
+            "platform_permission",
             whitelist_ok,
-            "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内",
+            (
+                "最近命中的是 WX 目标；当前只保留最小链路观察与手动发送支持，不视为 auto 平台化已完成"
+                if selected_platform == "wx"
+                else "最近 QQ 目标在白名单内" if whitelist_ok else "最近 QQ 目标不在白名单内"
+            ),
         )
     )
     if not whitelist_ok:
         if PROACTIVE_MODE == "observe":
             return observed_result(checks, trace_id=trace_id)
-        return skip_result("latest qq target is not whitelisted", checks, trace_id=trace_id)
+        return skip_result(f"latest {selected_platform} target is not allowed", checks, trace_id=trace_id, platform=selected_platform)
 
     if PROACTIVE_MODE == "observe":
         return observed_result(checks, trace_id=trace_id)
@@ -276,7 +306,7 @@ async def run_proactive_check_once(trace_id: str | None = None) -> dict[str, Any
     state.last_result = await asyncio.to_thread(check_and_send_once, trace_id=trace_id)
     record_proactive_event(
         event_type="scheduler_check",
-        platform="qq",
+        platform=state.last_result.get("platform"),
         target_label=state.last_result.get("target_label"),
         candidate_id=state.last_result.get("candidate_id"),
         action=state.last_result.get("action") or ("skipped" if state.last_result.get("skipped") else "checked"),
@@ -342,10 +372,11 @@ def run_proactive_once_manual(
         dry_run_only=dry_run_only,
         explain_reason=explain_proactive_reason,
     )
+    response.update(proactive_capability_boundary())
     state.last_result = response
     record_proactive_event(
         event_type="manual_scheduler_run",
-        platform="qq",
+        platform=raw_result.get("platform"),
         target_label=raw_result.get("target_label"),
         candidate_id=response.get("candidate_id"),
         action=response.get("action"),
@@ -388,6 +419,7 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
     hard_cooldown = hard_cooldown_active()
     consecutive_failures = consecutive_auto_failures()
     failure_pause = failure_pause_active()
+    boundary = proactive_capability_boundary()
     return {
         "success": True,
         "enabled": PROACTIVE_ENABLED,
@@ -402,6 +434,13 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
         "auto_send_require_allowed_target": PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET,
         "auto_send_max_per_day": PROACTIVE_AUTO_SEND_MAX_PER_DAY,
         "auto_sent_today": auto_sent_today,
+        "supported_platforms": boundary["visible_platforms"],
+        "manual_candidate_platforms": boundary["manual_candidate_platforms"],
+        "manual_send_platforms": boundary["manual_send_platforms"],
+        "visible_platforms": boundary["visible_platforms"],
+        "auto_scheduler_scope": boundary["auto_scheduler_scope"],
+        "auto_scheduler_scope_label": boundary["auto_scheduler_scope_label"],
+        "auto_scheduler_summary": boundary["auto_scheduler_summary"],
         "hard_cooldown_minutes": PROACTIVE_HARD_COOLDOWN_MINUTES,
         "failure_pause_threshold": PROACTIVE_FAILURE_PAUSE_THRESHOLD,
         "hard_cooldown_active": hard_cooldown,
@@ -424,6 +463,7 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
             "auto_send_max_per_day": PROACTIVE_AUTO_SEND_MAX_PER_DAY,
         },
         "qq_allowed_target_count": len(PROACTIVE_QQ_ALLOWED_TARGET_HASHES),
+        "latest_targets": latest_targets_summary(),
         "today_sent_count": today_sent_count(),
         "last_sent_at": last_sent_at(),
         "last_check_at": state.last_check_at,
@@ -432,6 +472,8 @@ def get_proactive_scheduler_status() -> dict[str, Any]:
         "can_send_now": {
             "can_send": rule_evaluation["can_send"],
             "reason": rule_evaluation["reason"],
+            "platform": rule_evaluation.get("platform"),
+            "target_summary": rule_evaluation.get("target_summary"),
         },
     }
 
@@ -441,7 +483,7 @@ def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
     evaluation = evaluate_proactive_rules(include_enabled=True)
     record_proactive_event(
         event_type="scheduler_check",
-        platform="qq",
+        platform=evaluation.get("platform"),
         action="check_now",
         success=True,
         skipped=not evaluation["can_send"],
@@ -465,5 +507,8 @@ def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
         "proactive_mode": PROACTIVE_MODE,
         "can_send": evaluation["can_send"],
         "reason": evaluation["reason"],
+        "platform": evaluation.get("platform"),
+        "target_summary": evaluation.get("target_summary"),
         "checks": evaluation["checks"],
+        **proactive_capability_boundary(),
     }
