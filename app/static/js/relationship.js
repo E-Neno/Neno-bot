@@ -62,6 +62,17 @@ export function renderRelationshipContext(context) {
   box.textContent = context || "暂无";
 }
 
+export function clearRelationshipState(statusText = "暂无会话") {
+  document.getElementById("relStageLabel").textContent = "-";
+  document.getElementById("relConversationCount").textContent = "0";
+  document.getElementById("relFamiliarityScore").textContent = "0";
+  document.getElementById("relTrustScore").textContent = "0";
+  document.getElementById("relEmotionalDepthScore").textContent = "0";
+  document.getElementById("relBoundaryScore").textContent = "0";
+  renderRelationshipContext("暂无");
+  document.getElementById("relationshipStatus").textContent = statusText;
+}
+
 export async function loadRelationshipState() {
   const status = document.getElementById("relationshipStatus");
   status.textContent = "加载中...";

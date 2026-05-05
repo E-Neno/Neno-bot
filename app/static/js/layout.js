@@ -6,7 +6,6 @@ export const panelDefinitions = [
   ["proactivePanel", "主动消息"],
   ["memoryPanel", "记忆库"],
   ["relationshipPanel", "关系状态"],
-  ["sessionPanel", "会话"],
   ["configPanel", "配置"],
   ["debugPanel", "日志 / 调试"],
 ];
@@ -323,14 +322,29 @@ export function buildConsoleLayout() {
   quickCard.appendChild(quickActions);
   overview.panel.appendChild(quickCard);
 
-  const chatPanel = createPanel("chatPanel", "聊天测试", "直接测试 Web 会话，并查看本轮候选记忆和命中记忆。");
+  const chatPanel = createPanel("chatPanel", "聊天测试", "单页完成会话切换、历史查看、真实输入预览和调试。");
   const currentSession = createElement("div", "panel-subtitle", "当前打开 session：-");
   currentSession.id = "currentSessionStatus";
   chatPanel.header.appendChild(currentSession);
   const chatGrid = createElement("div", "console-grid two");
   chat.classList.add("console-chat");
   chatGrid.appendChild(chat);
-  const chatSide = createElement("div", "console-grid");
+  const chatSide = createElement("div", "console-grid chat-side-column");
+  const sessionSummaryCard = createElement("div", "card");
+  sessionSummaryCard.appendChild(createElement("h3", "", "当前上下文"));
+  sessionSummaryCard.appendChild(createElement("div", "config-help", "右键输入消息可查看这条真实输入对应的完整模型预览。"));
+  const sessionSummaryGrid = createElement("div", "status-grid session-context-grid");
+  appendStatusMetric(sessionSummaryGrid, "当前 session", "currentSessionSidebarId");
+  appendStatusMetric(sessionSummaryGrid, "已载入消息", "currentSessionMessageCount");
+  appendStatusMetric(sessionSummaryGrid, "预览入口", "currentSessionPreviewMode");
+  sessionSummaryCard.appendChild(sessionSummaryGrid);
+  chatSide.appendChild(sessionSummaryCard);
+  if (sessionCard) {
+    chatSide.appendChild(sessionCard);
+  }
+  if (relationshipCard) {
+    chatSide.appendChild(relationshipCard);
+  }
   if (chatPreviewCard) {
     chatSide.appendChild(chatPreviewCard);
   }
@@ -354,13 +368,8 @@ export function buildConsoleLayout() {
   }
 
   const relationshipPanel = createPanel("relationshipPanel", "关系状态", "查看和调整当前 session 的关系阶段。");
-  if (relationshipCard) {
-    relationshipPanel.panel.appendChild(relationshipCard);
-  }
-
-  const sessionPanel = createPanel("sessionPanel", "会话", "浏览历史 session 并打开到聊天测试。");
-  if (sessionCard) {
-    sessionPanel.panel.appendChild(sessionCard);
+  if (!relationshipCard) {
+    relationshipPanel.panel.appendChild(createElement("div", "card", "关系状态已并入聊天测试页。"));
   }
 
   const configPanel = createPanel("configPanel", "配置", "Admin Token 和模型/上下文配置。");
@@ -462,7 +471,6 @@ export function buildConsoleLayout() {
     proactivePanel.panel,
     memoryPanel.panel,
     relationshipPanel.panel,
-    sessionPanel.panel,
     configPanel.panel,
     debugPanel.panel
   );
@@ -470,9 +478,16 @@ export function buildConsoleLayout() {
   side.remove();
   app.classList.add("app-shell");
   app.replaceChildren(sidebar, main);
-  setActivePanel("proactivePanel");
+  setActivePanel("chatPanel");
 }
 
 export function updateCurrentSessionStatus(sessionId, fallbackSessionId) {
-  setOptionalText("currentSessionStatus", `当前打开 session：${sessionId || fallbackSessionId || "web-test"}`);
+  const value = sessionId || fallbackSessionId || "web-test";
+  setOptionalText("currentSessionStatus", `当前打开 session：${value}`);
+  setOptionalText("currentSessionSidebarId", value);
+  setOptionalText("currentSessionPreviewMode", "右键真实消息");
+}
+
+export function updateSessionMessageCount(count) {
+  setOptionalText("currentSessionMessageCount", count ?? 0);
 }

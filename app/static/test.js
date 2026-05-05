@@ -44,6 +44,7 @@ function bindBaseEvents() {
   bindChatEvents({
     renderRelationshipState,
     renderRelationshipContext,
+    reloadSessionMessages: loadSessionMessages,
   });
   bindSessionEvents();
   bindConfigEvents({

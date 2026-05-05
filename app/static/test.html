@@ -14,6 +14,12 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       background: #f6f7fb;
       color: #222;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    html {
+      height: 100%;
     }
 
     body.app-loading .app {
@@ -57,6 +63,7 @@
       display: grid;
       grid-template-columns: 1fr 320px;
       height: 100vh;
+      overflow: hidden;
     }
 
     .chat {
@@ -64,6 +71,7 @@
       flex-direction: column;
       border-right: 1px solid #e5e7eb;
       background: #ffffff;
+      min-height: 0;
     }
 
     .header {
@@ -98,6 +106,7 @@
 
     .messages {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       padding: 20px;
     }
@@ -514,6 +523,7 @@
       grid-template-columns: 220px minmax(0, 1fr);
       height: 100vh;
       background: #f6f7fb;
+      overflow: hidden;
     }
 
     .console-sidebar {
@@ -591,9 +601,13 @@
     }
 
     .console-main {
+      height: 100vh;
+      min-height: 0;
       min-width: 0;
       padding: 20px;
-      overflow-y: auto;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     .console-panel {
@@ -604,7 +618,10 @@
     }
 
     .console-panel.active {
-      display: block;
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
       opacity: 1;
       transform: translateY(0);
     }
@@ -637,7 +654,9 @@
 
     .console-grid.two {
       grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
-      align-items: start;
+      align-items: stretch;
+      flex: 1;
+      min-height: 0;
     }
 
     .console-panel .card {
@@ -652,11 +671,131 @@
       border: 1px solid #e5e7eb;
       overflow: hidden;
       min-height: 0;
+      height: 100%;
     }
 
     .console-chat .messages {
-      min-height: 360px;
-      max-height: 58vh;
+      min-height: 0;
+      max-height: none;
+    }
+
+    .chat-side-column {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 14px;
+      align-items: flex-start;
+    }
+
+    .message-row.is-user {
+      align-items: flex-end;
+    }
+
+    .message-meta-line {
+      margin-bottom: 6px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .message-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .message-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.22);
+      color: inherit;
+    }
+
+    .msg.bot .message-badge {
+      background: #e2e8f0;
+      color: #334155;
+    }
+
+    .message-badge.ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .message-badge.danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .message-badge.info {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .message-badge.modality,
+    .message-badge.muted {
+      background: rgba(15, 23, 42, 0.12);
+      color: inherit;
+    }
+
+    .msg.bot .message-badge.modality,
+    .msg.bot .message-badge.muted {
+      background: #cbd5e1;
+      color: #334155;
+    }
+
+    .message-summary {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      opacity: 0.92;
+      white-space: pre-wrap;
+    }
+
+    .message-context-menu {
+      position: fixed;
+      z-index: 12000;
+      display: grid;
+      gap: 4px;
+      min-width: 190px;
+      padding: 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+      backdrop-filter: blur(10px);
+    }
+
+    .message-context-menu.hidden {
+      display: none;
+    }
+
+    .message-context-menu button {
+      width: 100%;
+      border-radius: 9px;
+      text-align: left;
+      background: #f8fafc;
+      color: #1e293b;
+    }
+
+    .message-context-menu button:hover {
+      opacity: 1;
+      background: #e2e8f0;
+    }
+
+    .message-context-menu button.danger {
+      background: #fff1f2;
+      color: #be123c;
     }
 
     .status-grid {
@@ -685,6 +824,10 @@
       font-weight: 800;
       color: #111827;
       word-break: break-word;
+    }
+
+    .session-context-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .tag.pending {
@@ -1799,8 +1942,16 @@
     }
 
     @media (max-width: 980px) {
+      html,
+      body {
+        height: auto;
+        overflow: auto;
+      }
+
       .app.app-shell {
         grid-template-columns: 1fr;
+        height: auto;
+        overflow: visible;
       }
 
       .console-sidebar {
@@ -1832,6 +1983,29 @@
 
       .console-main {
         padding: 14px;
+        height: auto;
+        overflow: auto;
+        display: block;
+      }
+
+      .console-panel.active {
+        display: block;
+        height: auto;
+      }
+
+      .console-grid.two {
+        flex: initial;
+        min-height: auto;
+      }
+
+      .chat.console-chat,
+      .chat-side-column {
+        height: auto;
+        min-height: auto;
+      }
+
+      .chat-side-column {
+        overflow: visible;
       }
 
       .console-grid.two,
@@ -1845,6 +2019,10 @@
       .stats-grid,
       .relationship-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .session-context-grid {
+        grid-template-columns: 1fr;
       }
     }
 
@@ -1883,7 +2061,7 @@
 
       <div class="input-area">
         <textarea id="messageInput" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-        <button id="previewChatBtn" class="secondary">预览模型输入</button>
+          <button id="previewChatBtn" class="secondary">预览输入框</button>
         <button id="sendBtn">发送</button>
       </div>
     </section>
@@ -2174,9 +2352,9 @@
       </div>
 
       <div class="card">
-        <h3>模型输入预览</h3>
-        <div class="config-help">只预览本次将发送给模型的 messages，不调用模型，不写入会话。</div>
-        <div id="chatPreviewStatus" class="status">尚未预览</div>
+        <h3>消息检查 / 模型输入预览</h3>
+        <div class="config-help">优先对聊天记录中的真实输入右键查看；输入框预览仅用于草稿检查。</div>
+        <div id="chatPreviewStatus" class="status">尚未预览；右键一条输入消息可直接查看真实链路。</div>
         <div id="chatPreviewBox" class="chat-preview-box"></div>
       </div>
 

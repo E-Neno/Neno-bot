@@ -3,25 +3,99 @@ import { getAdminHeaders, requestJson } from "./api.js";
 import { setActivePanel } from "./layout.js";
 import {
   addMessage,
+  clearChatDebugState,
   getSessionId,
+  hideContextMenu,
   resetMessages,
+  setMessages,
+  showChatEmptyState,
+  showContextMenu,
   updateCurrentSessionStatus,
 } from "./chat.js";
-import { loadRelationshipState } from "./relationship.js";
+import { clearRelationshipState, loadRelationshipState } from "./relationship.js";
+
+let cachedSessions = [];
+
+function setSessionStatus(message) {
+  const status = document.getElementById("chatPreviewStatus");
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+function applyEmptySessionState(message = "当前没有可用会话。") {
+  document.getElementById("sessionInput").value = "";
+  updateCurrentSessionStatus("无会话");
+  showChatEmptyState("当前没有可用会话，你可以输入新的 session_id 开始测试。");
+  clearChatDebugState({
+    previewStatus: message,
+  });
+  clearRelationshipState("暂无会话");
+}
+
+async function deleteSessionById(sessionId) {
+  const currentSessionId = getSessionId();
+  const sessionsBeforeDelete = [...cachedSessions];
+  const fallbackSession = sessionsBeforeDelete.find((item) => item.session_id !== sessionId) || null;
+
+  await requestJson(
+    "/session/clear",
+    {
+      method: "POST",
+      headers: getAdminHeaders(),
+      body: JSON.stringify({ session_id: sessionId }),
+    },
+    "删除会话失败："
+  );
+
+  await loadSessions();
+
+  if (currentSessionId !== sessionId) {
+    setSessionStatus(`已删除会话 ${sessionId}。`);
+    return;
+  }
+
+  if (fallbackSession?.session_id) {
+    setSessionStatus(`已删除会话 ${sessionId}，已切换到 ${fallbackSession.session_id}。`);
+    selectSession(fallbackSession.session_id);
+    return;
+  }
+
+  applyEmptySessionState("已删除最后一个会话；当前没有可用会话。");
+}
 
 export function renderSessions(sessions) {
   const list = document.getElementById("sessionList");
+  cachedSessions = Array.isArray(sessions) ? sessions : [];
 
-  if (sessions.length === 0) {
+  if (cachedSessions.length === 0) {
     list.textContent = "暂无会话";
     return;
   }
 
   clearChildren(list);
 
-  for (const session of sessions) {
+  for (const session of cachedSessions) {
     const item = document.createElement("div");
     item.className = "session-item";
+    item.dataset.sessionId = session.session_id || "";
+    item.addEventListener("contextmenu", (event) => {
+      if (!session.session_id) {
+        return;
+      }
+      showContextMenu(event, [
+        {
+          label: "删除整个会话",
+          className: "danger",
+          onClick: async () => {
+            if (!confirm(`将删除该会话下的全部消息记录，此操作不可恢复。\n\n会话：${session.session_id}`)) {
+              return;
+            }
+            await deleteSessionById(session.session_id);
+          },
+        },
+      ]);
+    });
 
     const title = document.createElement("div");
     title.className = "session-title";
@@ -46,6 +120,7 @@ export function renderSessions(sessions) {
 
 export async function loadSessions() {
   const list = document.getElementById("sessionList");
+  hideContextMenu();
   list.textContent = "加载中...";
 
   try {
@@ -58,8 +133,11 @@ export async function loadSessions() {
       "加载失败："
     );
     renderSessions(data.sessions || []);
+    return data.sessions || [];
   } catch (err) {
+    cachedSessions = [];
     list.textContent = err.message;
+    return [];
   }
 }
 
@@ -86,18 +164,18 @@ export async function loadSessionMessages() {
       "加载历史失败："
     );
 
-    if (!data.messages || data.messages.length === 0) {
-      addMessage("bot", `当前会话 ${sessionId} 还没有历史。`);
+    const messages = (data.messages || []).filter(
+      (msg) => msg.role === "user" || msg.role === "assistant"
+    );
+
+    if (messages.length === 0) {
+      setMessages([]);
       return;
     }
 
-    for (const msg of data.messages) {
-      if (msg.role === "user" || msg.role === "assistant") {
-        addMessage(msg.role === "user" ? "user" : "bot", msg.content);
-      }
-    }
+    setMessages(messages);
   } catch (err) {
-    addMessage("bot", `加载会话 ${sessionId} 失败：${err.message}`);
+    addMessage("assistant", `加载会话 ${sessionId} 失败：${err.message}`);
   }
 }
 
@@ -109,19 +187,9 @@ export async function clearSession() {
   }
 
   try {
-    const data = await requestJson(
-      "/session/clear",
-      {
-        method: "POST",
-        headers: getAdminHeaders(),
-        body: JSON.stringify({ session_id: sessionId }),
-      },
-      "清空失败："
-    );
-    resetMessages();
-    addMessage("bot", `已清空 ${sessionId}，删除 ${data.deleted} 条记录。`);
+    await deleteSessionById(sessionId);
   } catch (err) {
-    addMessage("bot", err.message);
+    addMessage("assistant", err.message);
   }
 }
 
