@@ -578,6 +578,3 @@ export async function processOneMessage(
     }
   }
 }
-  }
-  }
-}

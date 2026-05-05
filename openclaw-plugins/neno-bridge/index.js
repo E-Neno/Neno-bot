@@ -269,7 +269,7 @@ function logWxIngress(api, event) {
     getPath(event, ["payload", "message_type"]),
     getPath(event, ["data", "message_type"])
   ) || "unknown";
-  api.logger?.info?.(
+  api?.logger?.info?.(
     `[neno-bridge] wx_event_ingress topKeys=${JSON.stringify(topKeys)} has_item_list=${itemList.length > 0} item_list_types=${JSON.stringify(itemListTypes)} has_attachments=${hasAttachments} message_type=${messageType}`
   );
 }
@@ -608,7 +608,7 @@ async function handleProactiveSendQq(req, res, api) {
   const targetLabel = maskId(openid);
 
   if (validation.dryRun) {
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] proactive qq dry_run candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
     );
 
@@ -622,18 +622,18 @@ async function handleProactiveSendQq(req, res, api) {
     return;
   }
 
-  api.logger?.info?.(
+  api?.logger?.info?.(
     `[neno-bridge] proactive qq send candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
   );
 
   try {
-    const outbound = await api.runtime.channel.outbound.loadAdapter("qqbot");
+    const outbound = await api?.runtime?.channel?.outbound?.loadAdapter("qqbot");
     if (!outbound?.sendText) {
       throw new Error("qqbot outbound adapter unavailable");
     }
 
     const result = await outbound.sendText({
-      cfg: api.config,
+      cfg: api?.config,
       to: target,
       text: validation.message,
       accountId: "default"
@@ -643,7 +643,7 @@ async function handleProactiveSendQq(req, res, api) {
       throw new Error(String(sendError));
     }
 
-    api.logger?.info?.(`[neno-bridge] proactive qq send ok candidate=${validation.candidateId ?? "none"}`);
+    api?.logger?.info?.(`[neno-bridge] proactive qq send ok candidate=${validation.candidateId ?? "none"}`);
     sendJson(res, 200, {
       success: true,
       dry_run: false,
@@ -652,7 +652,7 @@ async function handleProactiveSendQq(req, res, api) {
       message_len: validation.message.length
     });
   } catch (err) {
-    api.logger?.warn?.(
+    api?.logger?.warn?.(
       `[neno-bridge] proactive qq send failed candidate=${validation.candidateId ?? "none"} error=${sanitizeErrorMessage(err)}`
     );
     sendJson(res, 500, { success: false, error: "send failed" });
@@ -687,7 +687,7 @@ async function handleProactiveSendWx(req, res, api) {
   const targetLabel = maskId(wxUserId);
 
   if (validation.dryRun) {
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] proactive wx dry_run candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
     );
 
@@ -701,18 +701,18 @@ async function handleProactiveSendWx(req, res, api) {
     return;
   }
 
-  api.logger?.info?.(
+  api?.logger?.info?.(
     `[neno-bridge] proactive wx send candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
   );
 
   try {
-    const outbound = await api.runtime.channel.outbound.loadAdapter("openclaw-weixin");
+    const outbound = await api?.runtime?.channel?.outbound?.loadAdapter("openclaw-weixin");
     if (!outbound?.sendText) {
       throw new Error("openclaw-weixin outbound adapter unavailable");
     }
 
     const result = await outbound.sendText({
-      cfg: api.config,
+      cfg: api?.config,
       to: wxUserId,
       text: validation.message
     });
@@ -721,7 +721,7 @@ async function handleProactiveSendWx(req, res, api) {
       throw new Error(String(sendError));
     }
 
-    api.logger?.info?.(`[neno-bridge] proactive wx send ok candidate=${validation.candidateId ?? "none"}`);
+    api?.logger?.info?.(`[neno-bridge] proactive wx send ok candidate=${validation.candidateId ?? "none"}`);
     sendJson(res, 200, {
       success: true,
       dry_run: false,
@@ -731,7 +731,7 @@ async function handleProactiveSendWx(req, res, api) {
       message_id: result?.messageId || result?.message_id || null
     });
   } catch (err) {
-    api.logger?.warn?.(
+    api?.logger?.warn?.(
       `[neno-bridge] proactive wx send failed candidate=${validation.candidateId ?? "none"} error=${sanitizeErrorMessage(err)}`
     );
     sendJson(res, 500, { success: false, error: "send failed" });
@@ -757,7 +757,7 @@ function startProactiveServer(api) {
     }
 
     handler(req, res, api).catch((err) => {
-      api.logger?.warn?.(`[neno-bridge] proactive request failed: ${sanitizeErrorMessage(err)}`);
+      api?.logger?.warn?.(`[neno-bridge] proactive request failed: ${sanitizeErrorMessage(err)}`);
       if (!res.headersSent) {
         sendJson(res, 500, { success: false, error: "send failed" });
       } else {
@@ -767,11 +767,11 @@ function startProactiveServer(api) {
   });
 
   server.on("error", (err) => {
-    api.logger?.warn?.(`[neno-bridge] proactive server unavailable: ${sanitizeErrorMessage(err)}`);
+    api?.logger?.warn?.(`[neno-bridge] proactive server unavailable: ${sanitizeErrorMessage(err)}`);
   });
 
   server.listen(PROACTIVE_PORT, PROACTIVE_HOST, () => {
-    api.logger?.info?.(`[neno-bridge] proactive server listening on ${PROACTIVE_HOST}:${PROACTIVE_PORT}`);
+    api?.logger?.info?.(`[neno-bridge] proactive server listening on ${PROACTIVE_HOST}:${PROACTIVE_PORT}`);
   });
 
   return server;
@@ -868,7 +868,7 @@ function safeInspectWxEvent(event) {
 function logWxDebug(api, reason, event) {
   if (wxDebugCount >= WX_DEBUG_LIMIT) {
     if (wxDebugCount === WX_DEBUG_LIMIT) {
-      api.logger?.warn?.("[neno-bridge][wx-debug] suppressed");
+      api?.logger?.warn?.("[neno-bridge][wx-debug] suppressed");
     }
     wxDebugCount += 1;
     return;
@@ -876,10 +876,10 @@ function logWxDebug(api, reason, event) {
 
   wxDebugCount += 1;
   const summary = safeInspectWxEvent(event);
-  api.logger?.warn?.(`[neno-bridge][wx-debug] extraction failed: ${reason}`);
-  api.logger?.warn?.(`[neno-bridge][wx-debug] topKeys=${JSON.stringify(summary.topKeys)}`);
-  api.logger?.warn?.(`[neno-bridge][wx-debug] eventSummary=${JSON.stringify(summary.eventSummary)}`);
-  api.logger?.warn?.(`[neno-bridge][wx-debug] pathSummary=${JSON.stringify(summary.pathSummary)}`);
+  api?.logger?.warn?.(`[neno-bridge][wx-debug] extraction failed: ${reason}`);
+  api?.logger?.warn?.(`[neno-bridge][wx-debug] topKeys=${JSON.stringify(summary.topKeys)}`);
+  api?.logger?.warn?.(`[neno-bridge][wx-debug] eventSummary=${JSON.stringify(summary.eventSummary)}`);
+  api?.logger?.warn?.(`[neno-bridge][wx-debug] pathSummary=${JSON.stringify(summary.pathSummary)}`);
 }
 
 async function postToNeno(payload) {
@@ -913,19 +913,19 @@ async function postToNeno(payload) {
 async function qqAdapter({ event, ctx, api, qqFaceMap, allowedQqUsers }) {
   const userId = extractUserId(event, ctx);
   if (!userId) {
-    api.logger?.warn?.(`[neno-bridge] missing user info ${JSON.stringify(safeLogSummary(event, ctx))}`);
+    api?.logger?.warn?.(`[neno-bridge] missing user info ${JSON.stringify(safeLogSummary(event, ctx))}`);
     return { handled: true, text: MISSING_USER_REPLY };
   }
 
   if (!allowedQqUsers.has(userId)) {
-    api.logger?.warn?.(`[neno-bridge] rejected qq user=${maskId(userId)} not in allowlist`);
+    api?.logger?.warn?.(`[neno-bridge] rejected qq user=${maskId(userId)} not in allowlist`);
     return { handled: true, text: QQ_NOT_ALLOWED_REPLY };
   }
 
   const rawText = extractText(event);
   const text = normalizeQqText(rawText, qqFaceMap);
   if (!text) {
-    api.logger?.info?.(`[neno-bridge] handled unsupported qq message ${JSON.stringify(safeLogSummary(event, ctx))}`);
+    api?.logger?.info?.(`[neno-bridge] handled unsupported qq message ${JSON.stringify(safeLogSummary(event, ctx))}`);
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
@@ -933,7 +933,7 @@ async function qqAdapter({ event, ctx, api, qqFaceMap, allowedQqUsers }) {
   const chatType = isGroupChat(event, groupIdRaw) ? "group" : "private";
   const groupId = chatType === "group" ? groupIdRaw || null : null;
 
-  api.logger?.info?.(
+  api?.logger?.info?.(
     `[neno-bridge] received qq text from user=${maskId(userId)} chat_type=${chatType} len=${text.length}`
   );
 
@@ -981,27 +981,27 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   );
 
   if (!text && !hasImageAttachment && !hasVoiceAttachment) {
-    api.logger?.info?.("[neno-bridge] wx unsupported: no text, no image, no voice evidence");
+    api?.logger?.info?.("[neno-bridge] wx unsupported: no text, no image, no voice evidence");
     logWxDebug(api, "no text and no recognized media", event);
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
   if (hasImageAttachment && !hasUsableImageAttachment) {
-    api.logger?.warn?.(
+    api?.logger?.warn?.(
       `[neno-bridge] image_attachment_missing_url platform=wx evidence=${JSON.stringify(imageInput.evidence)}`
     );
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
   if (hasVoiceAttachment && !hasUsableVoiceAttachment) {
-    api.logger?.warn?.("[neno-bridge] voice_attachment_missing_media_path platform=wx");
+    api?.logger?.warn?.("[neno-bridge] voice_attachment_missing_media_path platform=wx");
     return { handled: true, text: UNSUPPORTED_MESSAGE_REPLY };
   }
 
   if (!text && hasImageAttachment) {
-    api.logger?.info?.("[neno-bridge] wx image-only input accepted");
+    api?.logger?.info?.("[neno-bridge] wx image-only input accepted");
   } else if (!text && hasVoiceAttachment) {
-    api.logger?.info?.("[neno-bridge] wx voice-only input accepted");
+    api?.logger?.info?.("[neno-bridge] wx voice-only input accepted");
   }
 
   const identity = extractWxUserIdentity(event);
@@ -1013,11 +1013,11 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
 
   if (identity.source.startsWith(WX_SESSION_FIELD)) {
     logWxDebug(api, "senderId unresolved; using session fallback", event);
-    api.logger?.info?.(`[neno-bridge] using wx session fallback for user=${maskId(userId)}`);
+    api?.logger?.info?.(`[neno-bridge] using wx session fallback for user=${maskId(userId)}`);
   }
 
   if (!allowedWxUsers.has(userId)) {
-    api.logger?.warn?.(`[neno-bridge] blocked wx user=${maskId(userId)}`);
+    api?.logger?.warn?.(`[neno-bridge] blocked wx user=${maskId(userId)}`);
     return { handled: true, text: WX_NOT_ALLOWED_REPLY };
   }
 
@@ -1025,23 +1025,23 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   const chatType = event?.isGroup === true ? "group" : "private";
   const groupId = chatType === "group" ? extractWxGroupId(event) || session.id || null : null;
 
-  api.logger?.info?.(
+  api?.logger?.info?.(
     `[neno-bridge] received wx input from user=${maskId(userId)} chat_type=${chatType} len=${text.length} has_image=${hasImageAttachment} has_voice=${hasVoiceAttachment}`
   );
   if (hasImageAttachment) {
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] image_attachment_detected platform=wx source=${imageInput.imageUrlSource || "unknown"}`
     );
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] image_attachment_url platform=wx url=${imageInput.imageUrl || ""}`
     );
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] image_attachment_payload platform=wx attachment_keys=${JSON.stringify(attachments.map((item) => Object.keys(item)))} has_media_path=${attachments.some((item) => Boolean(firstString(item?.media_path)))}`
     );
   }
   if (hasVoiceAttachment) {
-    api.logger?.info?.(`[neno-bridge] voice_attachment_detected platform=wx`);
-    api.logger?.info?.(
+    api?.logger?.info?.(`[neno-bridge] voice_attachment_detected platform=wx`);
+    api?.logger?.info?.(
       `[neno-bridge] voice_attachment_payload platform=wx attachment_keys=${JSON.stringify(attachments.map((item) => Object.keys(item)))} has_media_path=${attachments.some((item) => Boolean(firstString(item?.media_path)))}`
     );
   }
@@ -1069,13 +1069,13 @@ async function sendToNeno(api, payload) {
     const data = await postToNeno(payload);
     const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
     if (data?.success === true && reply) {
-      api.logger?.info?.(`[neno-bridge] replied len=${reply.length}`);
+      api?.logger?.info?.(`[neno-bridge] replied len=${reply.length}`);
       return { handled: true, text: reply };
     }
-    api.logger?.warn?.("[neno-bridge] Neno response missing success=true or reply");
+    api?.logger?.warn?.("[neno-bridge] Neno response missing success=true or reply");
     return { handled: true, text: FAILURE_REPLY };
   } catch (err) {
-    api.logger?.warn?.(`[neno-bridge] Neno request failed: ${err?.message || String(err)}`);
+    api?.logger?.warn?.(`[neno-bridge] Neno request failed: ${err?.message || String(err)}`);
     return { handled: true, text: FAILURE_REPLY };
   }
 }
@@ -1098,16 +1098,16 @@ const plugin = {
     const allowedWxUsers = loadAllowedWxUsers();
     let proactiveServer = null;
 
-    api.logger?.info?.("[neno-bridge] loaded");
-    api.logger?.info?.(`[neno-bridge] loaded qq face map count=${Object.keys(qqFaceMap).length}`);
-    api.logger?.info?.(
+    api?.logger?.info?.("[neno-bridge] loaded");
+    api?.logger?.info?.(`[neno-bridge] loaded qq face map count=${Object.keys(qqFaceMap).length}`);
+    api?.logger?.info?.(
       `[neno-bridge] loaded qq allowlist count=${allowedQqUsers.size} users=${formatMaskedUserList(allowedQqUsers)}`
     );
-    api.logger?.info?.(
+    api?.logger?.info?.(
       `[neno-bridge] loaded wx allowlist count=${allowedWxUsers.size} users=${formatMaskedUserList(allowedWxUsers)}`
     );
 
-    api.on("before_dispatch", async (event, ctx) => {
+    api?.on?.("before_dispatch", async (event, ctx) => {
       const channel = detectChannel(event, ctx);
       const adapter = channelAdapter(channel);
       if (!adapter) return undefined;
@@ -1115,7 +1115,7 @@ const plugin = {
       return adapter({ event, ctx, api, qqFaceMap, allowedQqUsers, allowedWxUsers });
     });
 
-    api.registerService?.({
+    api?.registerService?.({
       id: "neno-bridge-proactive",
       start() {
         proactiveServer = startProactiveServer(api);

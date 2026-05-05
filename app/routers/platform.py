@@ -181,14 +181,15 @@ def openclaw_message(payload: Any = Body(...)):
     if raw_message is None and not attachments:
         raise HTTPException(status_code=400, detail="message must not be blank")
 
-    # For voice messages without a transcript, transcribe them via ASR
-    if not raw_message and has_voice_attachment and not has_image_attachment:
+    # Priority: If there is a voice attachment, always trigger ASR (unless it's a multimodal image message)
+    if has_voice_attachment and not has_image_attachment:
         voice_attachment = next((item for item in attachments if item.kind == "voice"), None)
         if voice_attachment and voice_attachment.media_path:
             try:
+                # Use ASR to overwrite raw_message (which might be a placeholder like "[语音]")
                 raw_message = transcribe_voice(voice_attachment.media_path, trace_id)
                 if not raw_message:
-                    # Fallback if ASR returns empty string successfully
+                    # Fallback if ASR returns empty string successfully (silence)
                     raw_message = "[语音消息(未听清)]"
             except VoiceASRError:
                 # If ASR fails, we bypass the chat turn and ask the user to send it again
@@ -206,7 +207,8 @@ def openclaw_message(payload: Any = Body(...)):
                     reply="这条语音我刚刚没听清，你再发一次试试。",
                     session_id=session_id,
                 )
-        else:
+        elif not raw_message:
+            # If no file path and no text message, use a generic placeholder
             raw_message = "[语音消息]"
 
     log_event(
