@@ -2,10 +2,12 @@ import json
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.schemas import ChatRequest
 from app.security import require_admin_token
+from app.services.chat.multimodal_input_service import normalize_multimodal_message
+from app.services.chat.voice_asr_service import transcribe_voice, VoiceASRError
 from app.services.chat_service import (
     build_chat_messages_preview,
     mask_session_id,
@@ -13,7 +15,13 @@ from app.services.chat_service import (
 )
 from app.services.memory_candidate_decision_service import decide_memory_candidate
 from app.services.proactive_scheduler import get_proactive_scheduler_status
-from app.storage.db import fetch_all, fetch_one, list_debug_events, list_proactive_events
+from app.storage.db import (
+    fetch_all,
+    fetch_one,
+    get_message_by_id,
+    list_debug_events,
+    list_proactive_events,
+)
 
 router = APIRouter(prefix="/debug", tags=["debug"])
 
@@ -30,13 +38,79 @@ def chat_preview(req: ChatRequest):
     }
 
 
+@router.get("/chat-preview/message", dependencies=[Depends(require_admin_token)])
+def chat_preview_by_message(message_id: int = Query(..., ge=1)):
+    message = get_message_by_id(message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="message not found")
+    if message.get("role") != "user":
+        raise HTTPException(status_code=400, detail="preview is only available for user input messages")
+
+    preview_payload = message.get("preview_payload") or {}
+    preview = preview_payload.get("preview")
+    if not isinstance(preview, dict):
+        raise HTTPException(status_code=404, detail="preview snapshot not found for this message")
+
+    metadata = message.get("metadata") or {}
+    return {
+        "success": True,
+        "message_id": message["id"],
+        "session_id": message["session_id"],
+        "session_id_label": mask_session_id(message["session_id"]),
+        "trace_id": message.get("trace_id"),
+        "message_type": message.get("message_type") or "text",
+        "source": message.get("source") or "chat",
+        "message": {
+            "id": message["id"],
+            "role": message["role"],
+            "content": message["content"],
+            "created_at": message["created_at"],
+            "metadata": metadata,
+        },
+        "preview": preview,
+    }
+
+
 @router.post("/memory-preview", dependencies=[Depends(require_admin_token)])
 def memory_preview(req: ChatRequest):
-    candidate = request_memory_candidate(req.message)
+    message = req.message
+    attachments = req.attachments or []
+    has_image_attachment = any(item.kind == "image" for item in attachments)
+    has_voice_attachment = any(item.kind == "voice" for item in attachments)
+    input_record = {
+        "message_type": "voice" if has_voice_attachment and not has_image_attachment else "image" if has_image_attachment else "text",
+        "raw_input": req.message,
+        "normalized_input": req.message,
+        "attachments": [item.dict() for item in attachments],
+    }
+
+    if has_voice_attachment and not has_image_attachment:
+        voice_attachment = next((item for item in attachments if item.kind == "voice"), None)
+        if voice_attachment and voice_attachment.media_path:
+            try:
+                message = transcribe_voice(voice_attachment.media_path, trace_id="debug-preview")
+            except VoiceASRError:
+                message = "[语音消息(未听清)]"
+        else:
+            message = message or "[语音消息]"
+
+    if has_image_attachment:
+        try:
+            message = normalize_multimodal_message(
+                message=message,
+                attachments=attachments,
+                trace_id="debug-preview",
+            )
+        except Exception:
+            message = message or req.message
+
+    input_record["normalized_input"] = message
+    candidate = request_memory_candidate(message, input_record=input_record)
     decision = decide_memory_candidate(candidate)
     return {
         "success": True,
         "session_id_label": mask_session_id(req.session_id),
+        "normalized_message": message,
         "candidate": candidate,
         "decision": decision,
         "similar_memories": decision.get("similar_memories", []),

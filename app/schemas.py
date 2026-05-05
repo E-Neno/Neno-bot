@@ -27,7 +27,13 @@ class ConfigUpdateRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    trace_id: str | None = None
+    user_message_id: int | None = None
+    assistant_message_id: int | None = None
+    message_type: str | None = None
+    source: str | None = None
     candidate_memory: dict[str, Any] | None = None
+    candidate_memory_debug: dict[str, Any] | None = None
     candidate_memory_decision: dict[str, Any] | None = None
     auto_added: bool = False
     auto_added_memory: bool = False
@@ -137,6 +143,10 @@ class ProactiveConfigUpdateRequest(BaseModel):
 
 class SessionRequest(BaseModel):
     session_id: str = Field(default="default", max_length=128)
+
+
+class SessionMessageDeleteRequest(BaseModel):
+    message_id: int = Field(..., ge=1)
 
 
 class RelationshipUpdateRequest(BaseModel):

@@ -4,8 +4,7 @@ from app.services.memory_context_service import build_memory_context_message
 from app.services.time_context_service import build_time_context_message
 
 
-def build_chat_messages_preview(session_id: str, message: str) -> dict:
-    contexts = load_chat_contexts(session_id, message, readonly=True)
+def build_chat_messages_preview_from_contexts(contexts: dict, message: str) -> dict:
     time_context_text = build_time_context_message(contexts["time_context"])
     memory_context_text = build_memory_context_message(contexts["memory_context"])
     recent_messages = [
@@ -29,3 +28,8 @@ def build_chat_messages_preview(session_id: str, message: str) -> dict:
             "final_message_count": len(contexts["messages"]),
         },
     }
+
+
+def build_chat_messages_preview(session_id: str, message: str) -> dict:
+    contexts = load_chat_contexts(session_id, message, readonly=True)
+    return build_chat_messages_preview_from_contexts(contexts, message)

@@ -20,16 +20,35 @@ def chat(req: ChatRequest):
     started = time.perf_counter()
     trace_id = new_trace_id()
     message = req.message
-    has_image_attachment = any(item.kind == "image" for item in req.attachments)
+    attachments = req.attachments or []
+    has_image_attachment = any(item.kind == "image" for item in attachments)
+    input_record = {
+        "source": "web",
+        "message_type": "image" if has_image_attachment else "text",
+        "raw_input": req.message,
+        "normalized_input": req.message,
+        "attachments": [item.dict() for item in attachments],
+        "pipeline": {
+            "vision": {"hit": has_image_attachment, "success": None},
+            "asr": {"hit": False, "success": None},
+            "normalization": {"status": "bypassed" if not has_image_attachment else "pending"},
+        },
+    }
 
     if has_image_attachment:
         try:
             message = normalize_multimodal_message(
                 message=req.message,
-                attachments=req.attachments,
+                attachments=attachments,
                 trace_id=trace_id,
             )
         except MultimodalInputError as exc:
+            input_record["pipeline"]["vision"]["success"] = False
+            input_record["pipeline"]["normalization"] = {
+                "status": "failed",
+                "failed_at": "vision",
+                "error": str(exc),
+            }
             record_chat_stat(
                 source="web",
                 platform="web",
@@ -53,6 +72,12 @@ def chat(req: ChatRequest):
         if not message:
             raise HTTPException(status_code=400, detail="normalized message must not be blank")
 
+        input_record["normalized_input"] = message
+        input_record["pipeline"]["vision"]["success"] = True
+        input_record["pipeline"]["normalization"] = {
+            "status": "success",
+            "failed_at": None,
+        }
         log_event(
             "chat",
             "multimodal_normalize_ok",
@@ -62,7 +87,12 @@ def chat(req: ChatRequest):
         )
 
     try:
-        result = run_chat_turn(req.session_id, message, trace_id=trace_id)
+        result = run_chat_turn(
+            req.session_id,
+            message,
+            trace_id=trace_id,
+            input_record=input_record,
+        )
     except RuntimeError as exc:
         record_chat_stat(
             source="web",
@@ -100,7 +130,13 @@ def chat(req: ChatRequest):
 
     return ChatResponse(
         reply=result["reply"],
+        trace_id=result.get("trace_id"),
+        user_message_id=result.get("user_message_id"),
+        assistant_message_id=result.get("assistant_message_id"),
+        message_type=result.get("message_type"),
+        source=result.get("source"),
         candidate_memory=result["candidate_memory"],
+        candidate_memory_debug=result.get("candidate_memory_debug"),
         candidate_memory_decision=result["candidate_memory_decision"],
         auto_added=result["auto_added"],
         auto_added_memory=result["auto_added_memory"],

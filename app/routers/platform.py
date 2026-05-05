@@ -98,10 +98,16 @@ def run_platform_chat_turn(
     user_id: str,
     chat_type: str,
     message: str,
+    input_record: dict | None = None,
 ) -> PlatformMessageResponse:
     started = time.perf_counter()
     try:
-        result = run_chat_turn(session_id, message, trace_id=trace_id)
+        result = run_chat_turn(
+            session_id,
+            message,
+            trace_id=trace_id,
+            input_record=input_record,
+        )
     except Exception as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
         record_chat_stat(
@@ -177,6 +183,21 @@ def openclaw_message(payload: Any = Body(...)):
     has_image_attachment = any(item.kind == "image" for item in attachments)
     has_voice_attachment = any(item.kind == "voice" for item in attachments)
     message_type = (req.message_type or "").strip().lower() or None
+    input_record = {
+        "source": f"platform:{platform}",
+        "platform": platform,
+        "chat_type": chat_type,
+        "message_type": "voice" if has_voice_attachment and not has_image_attachment else "image" if has_image_attachment else "text",
+        "raw_input": raw_message,
+        "normalized_input": raw_message,
+        "attachments": [item.dict() for item in attachments],
+        "pipeline": {
+            "vision": {"hit": has_image_attachment, "success": None},
+            "asr": {"hit": has_voice_attachment and not has_image_attachment, "success": None},
+            "normalization": {"status": "pending" if has_image_attachment else "bypassed", "failed_at": None},
+        },
+        "platform_message_type": message_type,
+    }
 
     if raw_message is None and not attachments:
         raise HTTPException(status_code=400, detail="message must not be blank")
@@ -191,8 +212,15 @@ def openclaw_message(payload: Any = Body(...)):
                 if not raw_message:
                     # Fallback if ASR returns empty string successfully (silence)
                     raw_message = "[语音消息(未听清)]"
+                input_record["pipeline"]["asr"]["success"] = True
+                input_record["pipeline"]["asr"]["text"] = raw_message
             except VoiceASRError:
                 # If ASR fails, we bypass the chat turn and ask the user to send it again
+                input_record["pipeline"]["asr"] = {
+                    "hit": True,
+                    "success": False,
+                    "failed_at": "asr",
+                }
                 log_event(
                     "platform",
                     "asr_failed_fallback",
@@ -210,6 +238,8 @@ def openclaw_message(payload: Any = Body(...)):
         elif not raw_message:
             # If no file path and no text message, use a generic placeholder
             raw_message = "[语音消息]"
+            input_record["pipeline"]["asr"]["success"] = False
+            input_record["pipeline"]["asr"]["failed_at"] = "missing_media_path"
 
     log_event(
         "platform",
@@ -234,6 +264,12 @@ def openclaw_message(payload: Any = Body(...)):
                 trace_id=trace_id,
             )
         except MultimodalInputError as exc:
+            input_record["pipeline"]["vision"]["success"] = False
+            input_record["pipeline"]["normalization"] = {
+                "status": "failed",
+                "failed_at": "vision",
+                "error": str(exc),
+            }
             log_event(
                 "platform",
                 "multimodal_normalize_failed",
@@ -250,6 +286,11 @@ def openclaw_message(payload: Any = Body(...)):
         if not normalized_message:
             raise HTTPException(status_code=400, detail="normalized message must not be blank")
 
+        input_record["pipeline"]["vision"]["success"] = True
+        input_record["pipeline"]["normalization"] = {
+            "status": "success",
+            "failed_at": None,
+        }
         log_event(
             "platform",
             "multimodal_normalize_ok",
@@ -265,6 +306,9 @@ def openclaw_message(payload: Any = Body(...)):
         if raw_message is None:
             raise HTTPException(status_code=400, detail="message must not be blank")
         message = raw_message
+
+    input_record["raw_input"] = raw_message
+    input_record["normalized_input"] = message
 
     if platform in {"qq", "wx"} and chat_type == "private":
         try:
@@ -290,13 +334,14 @@ def openclaw_message(payload: Any = Body(...)):
             message=message,
             trace_id=trace_id,
             handler=lambda merged_session_id, merged_message: run_platform_chat_turn(
-                trace_id=trace_id,
-                session_id=merged_session_id,
-                platform=platform,
-                user_id=user_id,
-                chat_type=chat_type,
-                message=merged_message,
-            ),
+            trace_id=trace_id,
+            session_id=merged_session_id,
+            platform=platform,
+            user_id=user_id,
+            chat_type=chat_type,
+            message=merged_message,
+            input_record=input_record,
+        ),
         )
         if submit_result.accepted and submit_result.future is not None:
             response = submit_result.future.wait()
@@ -311,4 +356,5 @@ def openclaw_message(payload: Any = Body(...)):
         user_id=user_id,
         chat_type=chat_type,
         message=message,
+        input_record=input_record,
     )

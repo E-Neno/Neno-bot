@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.schemas import SessionRequest
+from app.schemas import SessionMessageDeleteRequest, SessionRequest
 from app.security import require_admin_token
-from app.storage.db import clear_session_messages, get_session_messages, get_sessions
+from app.storage.db import (
+    clear_session_messages,
+    delete_message_turn,
+    get_session_messages,
+    get_sessions,
+)
 
 router = APIRouter(prefix="/session", tags=["session"])
 
@@ -39,4 +44,15 @@ def session_clear(req: SessionRequest):
         "session_id": req.session_id,
         "deleted": deleted,
         "message": f"已清空会话：{req.session_id}",
+    }
+
+
+@router.post("/delete-message", dependencies=[Depends(require_admin_token)])
+def session_delete_message(req: SessionMessageDeleteRequest):
+    result = delete_message_turn(req.message_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="message not found")
+    return {
+        "success": True,
+        **result,
     }

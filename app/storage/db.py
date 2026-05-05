@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,10 +55,28 @@ def init_db():
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                trace_id TEXT,
+                message_type TEXT DEFAULT 'text',
+                source TEXT DEFAULT 'chat',
+                metadata_json TEXT,
+                preview_payload_json TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        message_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "trace_id" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN trace_id TEXT")
+        if "message_type" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'text'")
+        if "source" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'chat'")
+        if "metadata_json" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN metadata_json TEXT")
+        if "preview_payload_json" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN preview_payload_json TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
@@ -162,14 +181,111 @@ def init_db():
         )
 
 
-def add_message(session_id: str, role: str, content: str):
-    execute_write(
+def add_message(
+    session_id: str,
+    role: str,
+    content: str,
+    *,
+    trace_id: str | None = None,
+    message_type: str = "text",
+    source: str = "chat",
+    metadata: dict[str, Any] | None = None,
+    preview_payload: dict[str, Any] | None = None,
+) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO messages (
+                session_id,
+                role,
+                content,
+                trace_id,
+                message_type,
+                source,
+                metadata_json,
+                preview_payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                role,
+                content,
+                trace_id,
+                message_type,
+                source,
+                json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
+                json.dumps(preview_payload, ensure_ascii=False) if preview_payload is not None else None,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+def _decode_json_field(raw: Any) -> dict[str, Any] | None:
+    if raw in (None, ""):
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _normalize_message_row(item: dict[str, Any]) -> dict[str, Any]:
+    item["metadata"] = _decode_json_field(item.pop("metadata_json", None))
+    item["preview_payload"] = _decode_json_field(item.pop("preview_payload_json", None))
+    item["has_preview"] = bool(item["preview_payload"])
+    return item
+
+
+def delete_message_turn(message_id: int) -> dict[str, Any] | None:
+    row = fetch_one(
         """
-        INSERT INTO messages (session_id, role, content)
-        VALUES (?, ?, ?)
+        SELECT id, session_id, role, trace_id
+        FROM messages
+        WHERE id = ?
+        LIMIT 1
         """,
-        (session_id, role, content),
+        (message_id,),
     )
+    if row is None:
+        return None
+
+    session_id = row["session_id"]
+    trace_id = row["trace_id"]
+    deleted_ids: list[int] = []
+
+    with get_conn() as conn:
+        if trace_id:
+            rows = conn.execute(
+                """
+                SELECT id
+                FROM messages
+                WHERE session_id = ? AND trace_id = ?
+                ORDER BY id ASC
+                """,
+                (session_id, trace_id),
+            ).fetchall()
+            deleted_ids = [int(item["id"]) for item in rows]
+            conn.execute(
+                """
+                DELETE FROM messages
+                WHERE session_id = ? AND trace_id = ?
+                """,
+                (session_id, trace_id),
+            )
+        else:
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            deleted_ids = [message_id]
+
+    return {
+        "message_id": int(row["id"]),
+        "session_id": session_id,
+        "trace_id": trace_id,
+        "deleted_ids": deleted_ids,
+        "deleted_count": len(deleted_ids),
+        "deleted_scope": "turn" if trace_id else "message",
+    }
 
 
 def list_messages(session_id: str, limit: int, fields: list[str]) -> list[dict]:
@@ -183,7 +299,10 @@ def list_messages(session_id: str, limit: int, fields: list[str]) -> list[dict]:
         """,
         (session_id, limit),
     )
-    return rows_to_dicts(list(reversed(rows)), fields)
+    items = rows_to_dicts(list(reversed(rows)), fields)
+    if "metadata_json" in fields or "preview_payload_json" in fields:
+        return [_normalize_message_row(item) for item in items]
+    return items
 
 
 def get_recent_messages(session_id: str, limit: int = 8):
@@ -191,7 +310,48 @@ def get_recent_messages(session_id: str, limit: int = 8):
 
 
 def get_session_messages(session_id: str, limit: int = 50):
-    return list_messages(session_id, limit, ["id", "role", "content", "created_at"])
+    return list_messages(
+        session_id,
+        limit,
+        [
+            "id",
+            "role",
+            "content",
+            "trace_id",
+            "message_type",
+            "source",
+            "metadata_json",
+            "preview_payload_json",
+            "created_at",
+        ],
+    )
+
+
+def get_message_by_id(message_id: int) -> dict[str, Any] | None:
+    fields = [
+        "id",
+        "session_id",
+        "role",
+        "content",
+        "trace_id",
+        "message_type",
+        "source",
+        "metadata_json",
+        "preview_payload_json",
+        "created_at",
+    ]
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM messages
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (message_id,),
+    )
+    if row is None:
+        return None
+    return _normalize_message_row(row_to_dict(row, fields) or {})
 
 
 def add_memory(content: str, memory_type: str = "general"):
