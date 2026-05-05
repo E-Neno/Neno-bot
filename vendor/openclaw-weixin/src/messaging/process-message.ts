@@ -322,12 +322,6 @@ export async function processOneMessage(
   logger.info(
     `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.MediaPath ?? finalized.MediaUrl)}`,
   );
-  logger.info(
-    `inbound_audit: messageId=${full.message_id ?? "none"} rawItemTypes=${summarizeInboundItemTypes(full)} hasImage=${hasInboundImageItem(full)} ctxKeys=${Object.keys(ctx).join(",") || "none"} finalizedKeys=${Object.keys(finalized as Record<string, unknown>).join(",") || "none"} bridgeKeys=${Object.keys(finalizedWithBridgeMetadata).join(",") || "none"}`,
-  );
-  logger.info(
-    `dispatch_input_audit: messageId=${full.message_id ?? "none"} topKeys=${Object.keys(finalizedWithBridgeMetadata).join(",") || "none"} hasItemList=${Array.isArray(finalizedWithBridgeMetadata.item_list)} hasRaw=${Boolean(finalizedWithBridgeMetadata.raw && typeof finalizedWithBridgeMetadata.raw === "object")} hasAttachments=${Array.isArray(finalizedWithBridgeMetadata.attachments) && finalizedWithBridgeMetadata.attachments.length > 0} messageType=${typeof finalizedWithBridgeMetadata.message_type === "string" ? finalizedWithBridgeMetadata.message_type : "unknown"}`,
-  );
   logger.debug(`inbound context: ${redactBody(JSON.stringify(finalized))}`);
 
   await deps.channelRuntime.session.recordInboundSession({
