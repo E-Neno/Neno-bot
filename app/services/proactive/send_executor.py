@@ -15,7 +15,7 @@ from app.services.proactive.rules import today_auto_sent_count
 from app.services.proactive_service import (
     is_allowed_qq_target,
     record_proactive_event,
-    send_qq_candidate,
+    send_proactive_candidate,
 )
 from app.storage.db import update_proactive_candidate_status
 from app.utils.logging_utils import log_event
@@ -33,14 +33,19 @@ def record_auto_send_error(candidate_id: int, action: str, error: str) -> None:
 
 
 def candidate_can_auto_send(candidate: dict, target_row: dict[str, Any]) -> tuple[bool, str | None]:
-    if candidate.get("platform") != "qq":
-        return False, "auto send only supports qq"
+    platform = str(candidate.get("platform") or "").strip().lower()
+    if platform not in {"qq", "wx"}:
+        return False, "auto send only supports qq or wx"
     if candidate.get("status") != "pending":
         return False, "candidate is not pending"
-    if int(target_row.get("is_allowed") or 0) != 1:
-        return False, "target is not allowed"
-    if PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET and not is_allowed_qq_target(str(candidate.get("target_hash") or "")):
-        return False, "target is not allowed"
+    if platform == "qq":
+        if int(target_row.get("is_allowed") or 0) != 1:
+            return False, "target is not allowed"
+        if PROACTIVE_AUTO_SEND_REQUIRE_ALLOWED_TARGET and not is_allowed_qq_target(str(candidate.get("target_hash") or "")):
+            return False, "target is not allowed"
+    else:
+        if not str(target_row.get("real_user_id") or "").strip():
+            return False, "wx real target is missing"
     auto_sent_today = today_auto_sent_count()
     if auto_sent_today >= PROACTIVE_AUTO_SEND_MAX_PER_DAY:
         return False, f"auto send max per day reached: {PROACTIVE_AUTO_SEND_MAX_PER_DAY}"
@@ -53,8 +58,9 @@ def auto_send_dry_run(
     event_source: str = "auto",
     trace_id: str | None = None,
 ) -> dict[str, Any]:
+    platform = str(candidate.get("platform") or "").strip().lower() or None
     try:
-        send_qq_candidate(
+        send_proactive_candidate(
             candidate_id=candidate["id"],
             dry_run=True,
             event_source=event_source,
@@ -64,7 +70,7 @@ def auto_send_dry_run(
         record_auto_send_error(candidate["id"], "auto_send_dry_run_failed", str(exc.detail))
         record_proactive_event(
             event_type="auto_send_dry_run",
-            platform="qq",
+            platform=platform,
             target_label=candidate.get("target_label"),
             candidate_id=candidate["id"],
             action="auto_send_dry_run_failed",
@@ -94,7 +100,7 @@ def auto_send_dry_run(
         record_auto_send_error(candidate["id"], "auto_send_dry_run_failed", type(exc).__name__)
         record_proactive_event(
             event_type="auto_send_dry_run",
-            platform="qq",
+            platform=platform,
             target_label=candidate.get("target_label"),
             candidate_id=candidate["id"],
             action="auto_send_dry_run_failed",
@@ -131,7 +137,7 @@ def auto_send_dry_run(
     )
     record_proactive_event(
         event_type="auto_send_dry_run",
-        platform="qq",
+        platform=platform,
         target_label=candidate.get("target_label"),
         candidate_id=candidate["id"],
         action="auto_send_dry_run_ok",
@@ -153,6 +159,7 @@ def auto_send_dry_run(
         "skipped": False,
         "action": "auto_send_dry_run_ok",
         "candidate_id": candidate["id"],
+        "platform": platform,
         "target_label": candidate.get("target_label"),
     }
 
@@ -162,6 +169,7 @@ def auto_send_real(
     target_row: dict[str, Any],
     trace_id: str | None = None,
 ) -> dict[str, Any]:
+    platform = str(candidate.get("platform") or "").strip().lower() or None
     can_send, blocked_reason = candidate_can_auto_send(candidate, target_row)
     if not can_send:
         update_candidate_metadata(
@@ -172,10 +180,12 @@ def auto_send_real(
                 "auto_send_blocked_reason": blocked_reason,
             },
         )
-        return generated_pending_result(candidate, blocked_reason)
+        result = generated_pending_result(candidate, blocked_reason)
+        result["platform"] = platform
+        return result
 
     try:
-        send_qq_candidate(
+        send_proactive_candidate(
             candidate_id=candidate["id"],
             dry_run=False,
             event_source="auto",
@@ -186,7 +196,7 @@ def auto_send_real(
         update_proactive_candidate_status(candidate["id"], "failed")
         record_proactive_event(
             event_type="auto_send_failed",
-            platform="qq",
+            platform=platform,
             target_label=candidate.get("target_label"),
             candidate_id=candidate["id"],
             action="auto_send_failed",
@@ -218,7 +228,7 @@ def auto_send_real(
         update_proactive_candidate_status(candidate["id"], "failed")
         record_proactive_event(
             event_type="auto_send_failed",
-            platform="qq",
+            platform=platform,
             target_label=candidate.get("target_label"),
             candidate_id=candidate["id"],
             action="auto_send_failed",
@@ -256,7 +266,7 @@ def auto_send_real(
     )
     record_proactive_event(
         event_type="auto_sent",
-        platform="qq",
+        platform=platform,
         target_label=candidate.get("target_label"),
         candidate_id=candidate["id"],
         action="auto_sent",
@@ -280,5 +290,6 @@ def auto_send_real(
         "sent": True,
         "action": "auto_sent",
         "candidate_id": candidate["id"],
+        "platform": platform,
         "target_label": candidate.get("target_label"),
     }

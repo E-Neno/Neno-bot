@@ -12,17 +12,20 @@ import {
 } from "./proactiveConfig.js";
 import {
   dismissProactiveCandidate,
-  dryRunSendQqCandidate,
+  dryRunSendCandidate,
   generateProactiveCandidate,
   generateProactiveTestCandidate,
   loadProactiveCandidates,
   loadProactiveTargets,
+  rerenderProactiveCandidateViews,
+  rerenderProactiveTargetViews,
   renderProactiveCandidates,
   renderProactiveTargets,
-  sendQqCandidate,
+  sendCandidate,
 } from "./proactiveCandidates.js";
 import {
   loadProactiveEvents,
+  rerenderProactiveEventViews,
   renderProactiveEvents,
   runProactiveOnce,
 } from "./proactiveTimeline.js";
@@ -30,7 +33,7 @@ import {
 export {
   checkProactiveNow,
   dismissProactiveCandidate,
-  dryRunSendQqCandidate,
+  dryRunSendCandidate,
   generateProactiveCandidate,
   generateProactiveTestCandidate,
   loadProactiveCandidates,
@@ -47,7 +50,7 @@ export {
   renderProactiveTargets,
   runProactiveOnce,
   saveProactiveConfig,
-  sendQqCandidate,
+  sendCandidate,
 };
 
 export function bindProactiveEvents() {
@@ -81,4 +84,7 @@ export function bindProactiveEvents() {
   document.getElementById("proactiveAllowedHashesInput").addEventListener("input", function () {
     this.dataset.dirty = "true";
   });
+  document.getElementById("proactiveCandidatePlatformFilter")?.addEventListener("change", rerenderProactiveCandidateViews);
+  document.getElementById("proactiveTargetPlatformFilter")?.addEventListener("change", rerenderProactiveTargetViews);
+  document.getElementById("proactiveEventPlatformFilter")?.addEventListener("change", rerenderProactiveEventViews);
 }

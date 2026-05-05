@@ -135,6 +135,7 @@ def init_db():
                 session_id TEXT NOT NULL,
                 target_hash TEXT NOT NULL,
                 target_label TEXT NOT NULL,
+                real_user_id TEXT,
                 is_allowed INTEGER DEFAULT 0,
                 last_seen_at TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -143,6 +144,11 @@ def init_db():
             )
             """
         )
+        proactive_target_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(proactive_targets)").fetchall()
+        }
+        if "real_user_id" not in proactive_target_columns:
+            conn.execute("ALTER TABLE proactive_targets ADD COLUMN real_user_id TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS proactive_events (
@@ -492,6 +498,7 @@ def upsert_proactive_target(
     session_id: str,
     target_hash: str,
     target_label: str,
+    real_user_id: str | None,
     is_allowed: bool,
     last_seen_at: str,
 ) -> dict:
@@ -503,14 +510,16 @@ def upsert_proactive_target(
                 session_id,
                 target_hash,
                 target_label,
+                real_user_id,
                 is_allowed,
                 last_seen_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(platform, session_id) DO UPDATE SET
                 target_hash = excluded.target_hash,
                 target_label = excluded.target_label,
+                real_user_id = COALESCE(excluded.real_user_id, proactive_targets.real_user_id),
                 is_allowed = excluded.is_allowed,
                 last_seen_at = excluded.last_seen_at,
                 updated_at = CURRENT_TIMESTAMP
@@ -520,6 +529,7 @@ def upsert_proactive_target(
                 session_id,
                 target_hash,
                 target_label,
+                real_user_id,
                 1 if is_allowed else 0,
                 last_seen_at,
             ),
@@ -538,6 +548,7 @@ def _proactive_target_fields() -> list[str]:
         "session_id",
         "target_hash",
         "target_label",
+        "real_user_id",
         "is_allowed",
         "last_seen_at",
         "created_at",

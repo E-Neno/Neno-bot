@@ -26,6 +26,7 @@ from app.storage.db import (
     get_proactive_candidate,
     get_latest_allowed_proactive_target,
     get_latest_proactive_target,
+    get_proactive_target_by_session,
     list_proactive_events,
     list_proactive_candidates,
     list_proactive_targets,
@@ -196,7 +197,12 @@ def sanitize_proactive_target(target: dict | None) -> dict | None:
         return None
     sanitized = dict(target)
     sanitized.pop("session_id", None)
+    real_user_id = str(target.get("real_user_id") or "").strip()
+    sanitized.pop("real_user_id", None)
     sanitized["session_id_saved"] = bool(target.get("session_id"))
+    sanitized["real_user_id_saved"] = bool(real_user_id)
+    if real_user_id:
+        sanitized["real_user_label"] = _mask_identifier(real_user_id)
     sanitized["target_hash"] = _mask_hash(str(target.get("target_hash") or ""))
     sanitized["is_allowed"] = bool(target.get("is_allowed"))
     return sanitized
@@ -312,6 +318,10 @@ def _get_target_label(target_row: dict[str, Any]) -> str:
     return str(target_row.get("target_label") or _mask_hash(_get_target_hash(target_row))).strip()
 
 
+def _get_target_real_user_id(target_row: dict[str, Any]) -> str:
+    return str(target_row.get("real_user_id") or "").strip()
+
+
 def _get_target_last_seen_at(target_row: dict[str, Any]) -> str | None:
     value = target_row.get("last_seen_at") or target_row.get("created_at")
     return str(value) if value else None
@@ -334,6 +344,14 @@ def sanitize_proactive_candidate(candidate: dict | None) -> dict | None:
     metadata = _load_candidate_metadata(candidate)
     if metadata.pop("session_id", None):
         metadata["session_id_saved"] = True
+    real_user_id = str(metadata.pop("wx_real_user_id", "") or "").strip()
+    if real_user_id:
+        metadata["wx_real_user_id_saved"] = True
+        metadata["wx_real_user_label"] = _mask_identifier(real_user_id)
+    permission_user_id = str(metadata.pop("wx_permission_user_id", "") or "").strip()
+    if permission_user_id:
+        metadata["wx_permission_user_id_saved"] = True
+        metadata["wx_permission_user_label"] = _mask_identifier(permission_user_id)
     sanitized["metadata_json"] = _dump_candidate_metadata(metadata)
     return sanitized
 
@@ -343,6 +361,7 @@ def record_platform_proactive_target(
     platform: str,
     session_id: str,
     user_id: str,
+    real_user_id: str | None = None,
     seen_at: str | None = None,
 ) -> dict:
     normalized_platform = (platform or "").strip().lower()
@@ -356,6 +375,7 @@ def record_platform_proactive_target(
         session_id=session_id,
         target_hash=target_hash,
         target_label=target_label,
+        real_user_id=(real_user_id or "").strip() or None,
         is_allowed=(
             normalized_platform == "qq"
             and target_hash in PROACTIVE_QQ_ALLOWED_TARGET_HASHES
@@ -420,12 +440,24 @@ def _post_neno_bridge_send_qq(candidate_id: int, message: str, dry_run: bool) ->
     return data
 
 
-def _post_neno_bridge_send_wx(candidate_id: int, message: str, dry_run: bool) -> dict:
+def _post_neno_bridge_send_wx(
+    candidate_id: int,
+    message: str,
+    dry_run: bool,
+    *,
+    target: dict[str, str] | None = None,
+) -> dict:
     payload = {
         "candidate_id": candidate_id,
         "message": message,
         "dry_run": dry_run,
     }
+    if target:
+        payload["target_session_id"] = target.get("session_id")
+        payload["target_user_id"] = target.get("user_id")
+        payload["target_permission_user_id"] = target.get("permission_user_id")
+        payload["target_hash"] = target.get("target_hash")
+        payload["target_label"] = target.get("target_label")
     request = urllib.request.Request(
         NENO_BRIDGE_SEND_WX_URL,
         data=json.dumps(payload).encode("utf-8"),
@@ -489,6 +521,54 @@ def _get_candidate_message(candidate: dict) -> str:
             detail=f"candidate message must be {SEND_QQ_DRY_RUN_MAX_MESSAGE_LENGTH} characters or fewer",
         )
     return message
+
+
+def _extract_private_session_user_id(session_id: str, platform: str) -> str:
+    normalized_platform = (platform or "").strip().lower()
+    prefix = f"{normalized_platform}:private:"
+    cleaned = (session_id or "").strip()
+    if not cleaned.startswith(prefix):
+        raise HTTPException(status_code=400, detail=f"{normalized_platform} candidate session_id is not a private session")
+    user_id = cleaned[len(prefix):].strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail=f"{normalized_platform} candidate session_id missing user id")
+    return user_id
+
+
+def _resolve_wx_candidate_target(candidate: dict) -> dict[str, str]:
+    metadata = _load_candidate_metadata(candidate)
+    session_id = str(metadata.get("session_id") or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="wx candidate missing session_id")
+
+    permission_user_id = _extract_private_session_user_id(session_id, "wx")
+    expected_target_hash = _target_hash_for_session(session_id)
+    candidate_target_hash = str(candidate.get("target_hash") or "").strip()
+    if not candidate_target_hash:
+        raise HTTPException(status_code=400, detail="wx candidate missing target_hash")
+    if candidate_target_hash != expected_target_hash:
+        raise HTTPException(status_code=409, detail="wx candidate target does not match session_id")
+
+    target_row = get_proactive_target_by_session("wx", session_id)
+    real_user_id = str(metadata.get("wx_real_user_id") or "").strip()
+    if target_row is not None:
+        stored_target_hash = _get_target_hash(target_row)
+        if stored_target_hash and stored_target_hash != expected_target_hash:
+            raise HTTPException(status_code=409, detail="wx proactive target does not match candidate session_id")
+        if not real_user_id:
+            real_user_id = _get_target_real_user_id(target_row)
+
+    if not real_user_id:
+        raise HTTPException(status_code=400, detail="wx candidate missing real_user_id")
+
+    target_label = str(candidate.get("target_label") or "").strip() or _mask_identifier(permission_user_id)
+    return {
+        "session_id": session_id,
+        "user_id": real_user_id,
+        "permission_user_id": permission_user_id,
+        "target_hash": expected_target_hash,
+        "target_label": target_label,
+    }
 
 
 def _ensure_allowed_qq_target(candidate: dict) -> None:
@@ -748,7 +828,8 @@ def _send_wx_candidate_dry_run(
     trace_id: str | None = None,
 ) -> dict:
     candidate_id = int(candidate["id"])
-    target_label = str(candidate.get("target_label") or "")
+    resolved_target = _resolve_wx_candidate_target(candidate)
+    target_label = str(resolved_target.get("target_label") or candidate.get("target_label") or "")
     message_len = len(message or "")
 
     metadata = _load_candidate_metadata(candidate)
@@ -758,10 +839,16 @@ def _send_wx_candidate_dry_run(
         "dry_run": True,
         "platform": "wx",
         "target_label": target_label,
+        "target_hash": resolved_target.get("target_hash"),
+        "target_source": "candidate_session_id",
+        "resolved_target_label": _mask_identifier(resolved_target.get("user_id") or ""),
+        "resolved_permission_target_label": _mask_identifier(resolved_target.get("permission_user_id") or ""),
         "message_len": message_len,
         "would_send": True,
         "real_send_supported": True,
     }
+    metadata["wx_real_user_id"] = resolved_target.get("user_id")
+    metadata["wx_permission_user_id"] = resolved_target.get("permission_user_id")
     updated_candidate = update_proactive_candidate_metadata(
         candidate_id,
         _dump_candidate_metadata(metadata),
@@ -789,6 +876,8 @@ def _send_wx_candidate_dry_run(
                 "message_len": message_len,
                 "would_send": True,
                 "real_send_supported": True,
+                "target_source": "candidate_session_id",
+                "target_hash": resolved_target.get("target_hash"),
             },
         )
     _log_proactive(
@@ -825,7 +914,7 @@ def _send_wx_candidate(
         )
 
     try:
-        result = _post_neno_bridge_send_wx(candidate_id, message, dry_run=False)
+        resolved_target = _resolve_wx_candidate_target(candidate)
     except HTTPException as exc:
         _record_failed_send(candidate, str(exc.detail))
         if event_source == "manual":
@@ -850,17 +939,62 @@ def _send_wx_candidate(
                 skipped=False,
                 reason=str(exc.detail),
             )
+        raise
+    try:
+        result = _post_neno_bridge_send_wx(
+            candidate_id,
+            message,
+            dry_run=False,
+            target=resolved_target,
+        )
+    except HTTPException as exc:
+        _record_failed_send(candidate, str(exc.detail))
+        if event_source == "manual":
+            _log_proactive(
+                "proactive_manual_failed",
+                trace_id=trace_id,
+                platform="wx",
+                candidate_id=candidate_id,
+                target_label=candidate.get("target_label"),
+                action="manual_sent",
+                dry_run=False,
+                success=False,
+                reason=str(exc.detail),
+            )
+            record_proactive_event(
+                event_type="manual_failed",
+                platform="wx",
+                target_label=str(candidate.get("target_label") or ""),
+                candidate_id=candidate_id,
+                action="manual_sent",
+                success=False,
+                skipped=False,
+                reason=str(exc.detail),
+                metadata={
+                    "target_source": "candidate_session_id",
+                    "target_hash": resolved_target.get("target_hash"),
+                },
+            )
         raise HTTPException(status_code=502, detail="WX send failed") from exc
 
     metadata = _load_candidate_metadata(candidate)
     metadata["sent_at"] = datetime.now().isoformat(timespec="seconds")
     metadata["target_label"] = result.get("target_label")
+    metadata["resolved_target_label"] = _mask_identifier(resolved_target.get("user_id") or "")
+    metadata["resolved_permission_target_label"] = _mask_identifier(resolved_target.get("permission_user_id") or "")
+    metadata["resolved_target_hash"] = resolved_target.get("target_hash")
+    metadata["wx_real_user_id"] = resolved_target.get("user_id")
+    metadata["wx_permission_user_id"] = resolved_target.get("permission_user_id")
     metadata["send_result"] = {
         "success": True,
         "dry_run": False,
         "sent": True,
         "platform": "wx",
         "target_label": result.get("target_label"),
+        "target_hash": resolved_target.get("target_hash"),
+        "target_source": "candidate_session_id",
+        "resolved_target_label": _mask_identifier(resolved_target.get("user_id") or ""),
+        "resolved_permission_target_label": _mask_identifier(resolved_target.get("permission_user_id") or ""),
         "message_len": result.get("message_len"),
     }
     _save_proactive_context(candidate, message, metadata, trace_id=trace_id)
@@ -889,7 +1023,15 @@ def _send_wx_candidate(
             action="manual_sent",
             success=True,
             skipped=False,
-            metadata={"message_len": result.get("message_len")},
+            metadata={
+                "message_len": result.get("message_len"),
+                "target_source": "candidate_session_id",
+                "target_hash": resolved_target.get("target_hash"),
+                "candidate_target_label": str(candidate.get("target_label") or ""),
+                "bridge_target_label": result.get("target_label"),
+                "resolved_target_label": _mask_identifier(resolved_target.get("user_id") or ""),
+                "resolved_permission_target_label": _mask_identifier(resolved_target.get("permission_user_id") or ""),
+            },
         )
         _log_proactive(
             "proactive_manual_sent",
@@ -1025,6 +1167,7 @@ def generate_proactive_candidate(platform: str | None = None, trace_id: str | No
     reason = "manual safe template; outbound send disabled in v1"
     metadata = {
         "session_id": session_id,
+        "wx_real_user_id": _get_target_real_user_id(target_row) or None,
         "rules": {
             "no_send": True,
             "template_only": True,

@@ -18,13 +18,14 @@ from app.utils.logging_utils import log_event
 
 
 def create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = None) -> dict:
+    platform = str(target_row.get("platform") or "").strip().lower() or "qq"
     target_hash = str(target_row["target_hash"] or "")
     session_id = str(target_row["session_id"] or "").strip()
     metadata = {
         "session_id": session_id,
         "rules": {
             "template_only": True,
-            "platform": "qq",
+            "platform": platform,
             "active_window": f"{PROACTIVE_ACTIVE_START}-{PROACTIVE_ACTIVE_END}",
             "daily_limit": PROACTIVE_DAILY_LIMIT,
             "min_interval_minutes": PROACTIVE_MIN_INTERVAL_MINUTES,
@@ -36,8 +37,11 @@ def create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = Non
         "auto_created_at": now_iso(),
         "source": "auto_scheduler",
     }
+    real_user_id = str(target_row.get("real_user_id") or "").strip()
+    if platform == "wx" and real_user_id:
+        metadata["wx_real_user_id"] = real_user_id
     candidate = add_proactive_candidate(
-        platform="qq",
+        platform=platform,
         target_hash=target_hash,
         target_label=str(target_row["target_label"] or _mask_hash(target_hash)),
         message=random.choice(SAFE_TEMPLATES),
@@ -48,7 +52,7 @@ def create_auto_candidate(target_row: dict[str, Any], trace_id: str | None = Non
     )
     record_proactive_event(
         event_type="candidate_generated",
-        platform="qq",
+        platform=platform,
         target_label=candidate.get("target_label"),
         candidate_id=candidate["id"],
         action="candidate_generated",

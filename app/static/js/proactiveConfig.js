@@ -31,19 +31,19 @@ const proactiveModeInfo = {
     risk: "中低",
   },
   dry_run: {
-    description: "演习发送，不真实发 QQ",
+    description: "演习发送，不真实发消息",
     usage: "验证自动发送链路和保护规则",
     risk: "中",
   },
   auto: {
-    description: "自动真实发送 QQ",
-    usage: "确认白名单、上限和冷却后使用",
+    description: "自动真实发送（当前按 QQ-first 收口）",
+    usage: "确认 QQ 主路径、权限、上限和冷却后使用；不要把 WX 视为已完成 auto 平台化",
     risk: "高",
   },
 };
 
 const proactiveFieldHelpTexts = {
-  proactiveModeInput: "主配置。off 关闭；observe 只记录；candidate 只生成 pending；dry_run 演习；auto 才会自动真实发送 QQ。",
+  proactiveModeInput: "主配置。off 关闭；observe 只记录；candidate 只生成 pending；dry_run 演习；auto 才会自动真实发送。当前合并边界按 QQ-first 收口。",
   proactiveActiveStartInput: "每天从这个时间以后才允许主动调度。",
   proactiveActiveEndInput: "每天超过这个时间后不再主动调度。",
   proactiveRecentSkipInput: "最近聊过就跳过，避免打扰。",
@@ -52,10 +52,10 @@ const proactiveFieldHelpTexts = {
   proactiveHardCooldownInput: "生成、发送或 dry_run 后的额外冷却时间。",
   proactiveFailurePauseThresholdInput: "连续失败达到阈值后，自动调度会暂停。",
   proactiveAutoSendMaxPerDayInput: "自动真实发送的每日上限。",
-  proactiveAutoSendRequireAllowedInput: "自动真实发送前是否要求目标 allowed。",
+  proactiveAutoSendRequireAllowedInput: "自动真实发送前是否要求目标 allowed。当前这个开关主要约束 QQ auto 路径。",
   proactiveRandomProbabilityInput: "每次检查进入后续判断的随机概率。",
-  proactiveAllowedHashesInput: "允许自动发送的 QQ 目标 hash，多个用英文逗号分隔。",
-  proactiveBridgeUrlInput: "Neno Bridge 本地 QQ 发送接口地址。",
+  proactiveAllowedHashesInput: "允许自动发送的 QQ 目标 hash，多个用英文逗号分隔。当前 auto 收口按 QQ-first，这里仍是主约束。",
+  proactiveBridgeUrlInput: "Neno Bridge 本地 QQ 发送接口地址。当前配置面板里的 auto 说明主要围绕 QQ 主路径。",
   proactiveEnabledInput: "旧兼容开关。实际运行优先看 PROACTIVE_MODE。",
   proactiveAutoSendInput: "旧兼容开关。实际运行优先看 PROACTIVE_MODE。",
   proactiveAutoSendDryRunInput: "旧兼容开关。实际运行优先看 PROACTIVE_MODE。",
@@ -157,7 +157,7 @@ function createProactiveModeSummary() {
   summary.appendChild(priority);
 
   const allModes = document.createElement("div");
-  allModes.textContent = "模式：off 关闭，不生成不发送；observe 只观察，只记录判断；candidate 只生成 pending 候选；dry_run 演习发送，不真实发 QQ；auto 自动真实发送 QQ。";
+  allModes.textContent = "模式：off 关闭，不生成不发送；observe 只观察，只记录判断；candidate 只生成 pending 候选；dry_run 演习发送，不真实发消息；auto 自动真实发送，但当前分支按 QQ-first 收口。";
   summary.appendChild(allModes);
 
   return summary;

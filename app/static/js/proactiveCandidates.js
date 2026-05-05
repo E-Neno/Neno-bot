@@ -5,6 +5,8 @@ import { loadProactiveStatus } from "./proactiveStatus.js";
 import { loadProactiveEvents } from "./proactiveTimeline.js";
 
 const candidateActionStates = new Map();
+let lastCandidates = [];
+let lastTargets = [];
 
 function normalizeCandidateInput(candidateOrId) {
   if (candidateOrId && typeof candidateOrId === "object") {
@@ -25,6 +27,22 @@ function isCandidateAlreadyHandled(candidateOrId) {
 
 function platformActionLabel(platform) {
   return String(platform || "").trim().toUpperCase() || "目标";
+}
+
+function platformLabel(platform) {
+  return platformActionLabel(platform);
+}
+
+function currentCandidatePlatformFilter() {
+  return document.getElementById("proactiveCandidatePlatformFilter")?.value || "";
+}
+
+function currentTargetPlatformFilter() {
+  return document.getElementById("proactiveTargetPlatformFilter")?.value || "";
+}
+
+function matchesPlatformFilter(platform, filterValue) {
+  return !filterValue || String(platform || "").toLowerCase() === filterValue;
 }
 
 function candidateActionButtonText(action, platform = "") {
@@ -113,9 +131,11 @@ async function refreshAfterCandidateAction() {
 }
 
 export function renderProactiveCandidates(candidates) {
+  lastCandidates = candidates || [];
   const list = document.getElementById("proactiveCandidateList");
   const historyList = document.getElementById("proactiveHistoryList");
-  const items = candidates || [];
+  const filterValue = currentCandidatePlatformFilter();
+  const items = lastCandidates.filter((candidate) => matchesPlatformFilter(candidate.platform, filterValue));
   const pending = items.filter((candidate) => candidate.status === "pending");
   const history = sortProactiveHistory(
     items.filter((candidate) => candidate.status !== "pending")
@@ -133,8 +153,9 @@ export function renderProactiveCandidates(candidates) {
 }
 
 export function renderProactiveTargets(targets) {
+  lastTargets = targets || [];
   const list = document.getElementById("proactiveTargetList");
-  const items = targets || [];
+  const items = lastTargets.filter((target) => matchesPlatformFilter(target.platform, currentTargetPlatformFilter()));
   if (!list) {
     return;
   }
@@ -144,11 +165,7 @@ export function renderProactiveTargets(targets) {
   }
 
   clearChildren(list);
-  const title = document.createElement("div");
-  title.className = "candidate-meta";
-  title.textContent = "最近主动目标";
-  list.appendChild(title);
-  for (const target of items.slice(0, 5)) {
+  for (const target of items) {
     list.appendChild(createProactiveTargetItem(target));
   }
 }
@@ -156,10 +173,17 @@ export function renderProactiveTargets(targets) {
 function createProactiveTargetItem(target) {
   const item = document.createElement("div");
   item.className = "candidate-item";
+  const platform = String(target.platform || "").toLowerCase();
 
   const tag = document.createElement("div");
-  tag.className = `tag ${target.is_allowed ? "sent" : "failed"}`;
-  tag.textContent = `${target.platform || "-"} · ${target.is_allowed ? "allowed" : "not allowed"}`;
+  const tagClass = platform === "qq"
+    ? (target.is_allowed ? "sent" : "failed")
+    : (target.real_user_id_saved ? "sent" : "failed");
+  const statusText = platform === "qq"
+    ? (target.is_allowed ? "allowed" : "not allowed")
+    : (target.real_user_id_saved === true ? "real target saved" : "real target missing");
+  tag.className = `tag ${tagClass}`;
+  tag.textContent = `${platformLabel(platform)} · ${statusText}`;
 
   const label = document.createElement("div");
   label.className = "candidate-content";
@@ -167,10 +191,14 @@ function createProactiveTargetItem(target) {
 
   const meta = document.createElement("div");
   meta.className = "candidate-meta";
-  meta.textContent = [
+  const detailParts = [
     `last_seen_at=${target.last_seen_at || "-"}`,
     `session_id_saved=${target.session_id_saved === true ? "true" : "false"}`,
-  ].join(" · ");
+  ];
+  if (target.real_user_id_saved === true) {
+    detailParts.push(`real_user=${target.real_user_label || "saved"}`);
+  }
+  meta.textContent = detailParts.join(" · ");
 
   item.append(tag, label, meta);
   return item;
@@ -215,10 +243,17 @@ function createProactiveCandidateItem(candidate) {
 
   const tag = document.createElement("div");
   tag.className = `tag ${candidate.status || ""}`;
-  tag.textContent = `${candidate.platform || "-"} · ${candidateStatusLabel(candidate.status)} · ${candidate.target_label || "-"}`;
+  const isTest = candidate.source === "test" || String(candidate.reason || "").includes("test v") || String(candidate.reason || "").includes("manual safe template");
+  const testBadge = isTest ? " 🧪[测试模拟]" : "";
+
+  tag.textContent = `${candidate.platform || "-"} · ${candidateStatusLabel(candidate.status)}${testBadge} · ${candidate.target_label || "-"}`;
 
   const content = document.createElement("div");
   content.className = "candidate-content";
+  if (isTest) {
+    content.style.borderLeft = "3px solid #ff9800";
+    content.style.paddingLeft = "8px";
+  }
   content.textContent = candidate.message || "";
 
   const reason = document.createElement("div");
@@ -232,7 +267,7 @@ function createProactiveCandidateItem(candidate) {
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.proactiveCandidateId = candidateActionId(candidate);
-  row.dataset.proactiveCandidatePlatform = candidate.platform || "";
+  row.dataset.proactiveCandidatePlatform = String(candidate.platform || "").toLowerCase();
 
   if (candidate.status === "pending") {
     if (candidate.platform === "qq" || candidate.platform === "wx") {
@@ -273,19 +308,17 @@ function appendDismissButton(row, candidate) {
 }
 
 function appendSendButtons(row, candidate) {
-  const platform = candidate.platform || "";
-  const label = platformActionLabel(platform);
   const dryRunButton = document.createElement("button");
   dryRunButton.className = "good";
   dryRunButton.dataset.candidateAction = "dry-run";
-  dryRunButton.textContent = `测试发送 ${label}`;
+  dryRunButton.textContent = candidateActionButtonText("dry-run", candidate.platform);
   dryRunButton.addEventListener("click", () => dryRunSendCandidate(candidate, dryRunButton));
   row.appendChild(dryRunButton);
 
   const sendButton = document.createElement("button");
   sendButton.className = "danger";
   sendButton.dataset.candidateAction = "send";
-  sendButton.textContent = `真实发送 ${label}`;
+  sendButton.textContent = candidateActionButtonText("send", candidate.platform);
   sendButton.addEventListener("click", () => sendCandidate(candidate, sendButton));
   row.appendChild(sendButton);
 }
@@ -510,9 +543,9 @@ export async function dismissProactiveCandidate(candidateOrId, triggerButton) {
 export async function dryRunSendCandidate(candidateOrId, triggerButton) {
   const candidate = normalizeCandidateInput(candidateOrId);
   const id = candidate.id;
-  const platform = platformActionLabel(candidate.platform);
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
+  const platform = platformActionLabel(candidate.platform);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
@@ -538,7 +571,7 @@ export async function dryRunSendCandidate(candidateOrId, triggerButton) {
       },
       "测试失败："
     );
-    const successMessage = `dry_run 通过：将发送到 ${data.target_label || "-"}`;
+    const successMessage = `dry_run 通过：将发送到 ${platform} ${data.target_label || "-"}`;
     setCandidateActionState(candidate, {
       activeAction: "dry-run",
       busy: true,
@@ -572,9 +605,9 @@ export async function dryRunSendQqCandidate(candidateOrId, triggerButton) {
 export async function sendCandidate(candidateOrId, triggerButton) {
   const candidate = normalizeCandidateInput(candidateOrId);
   const id = candidate.id;
-  const platform = platformActionLabel(candidate.platform);
   const status = document.getElementById("proactiveCandidateStatus");
   const token = getAdminToken();
+  const platform = platformActionLabel(candidate.platform);
 
   if (!token) {
     status.textContent = "需要 Admin Token";
@@ -623,7 +656,7 @@ export async function sendCandidate(candidateOrId, triggerButton) {
     });
     await refreshAfterCandidateAction();
     setCandidateActionState(candidate, null);
-    status.textContent = "发送成功";
+    status.textContent = `${platform} 发送成功`;
   } catch (err) {
     const message = sendFailureMessage(err);
     setCandidateActionState(candidate, {
@@ -638,4 +671,12 @@ export async function sendCandidate(candidateOrId, triggerButton) {
 
 export async function sendQqCandidate(candidateOrId, triggerButton) {
   return sendCandidate(candidateOrId, triggerButton);
+}
+
+export function rerenderProactiveCandidateViews() {
+  renderProactiveCandidates(lastCandidates);
+}
+
+export function rerenderProactiveTargetViews() {
+  renderProactiveTargets(lastTargets);
 }

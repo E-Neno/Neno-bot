@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -381,6 +382,7 @@ function extractWxUserIdentity(event) {
     ["from_user_id", event?.from_user_id],
     ["senderId", event?.senderId],
     ["userId", event?.userId],
+    ["author.user_openid", getPath(event, ["author", "user_openid"])],
     ["author.id", getPath(event, ["author", "id"])],
     ["peer.id", getPath(event, ["peer", "id"])],
     ["from.id", getPath(event, ["from", "id"])],
@@ -410,6 +412,29 @@ function extractWxUserIdentity(event) {
   const session = extractWxSessionId(event);
   if (session.id) {
     return { userId: session.id, source: session.source };
+  }
+
+  return { userId: "", source: "" };
+}
+
+function extractWxInboundRealUserId(event) {
+  const candidates = [
+    ["raw.from_user_id", getPath(event, ["raw", "from_user_id"])],
+    ["payload.from_user_id", getPath(event, ["payload", "from_user_id"])],
+    ["data.from_user_id", getPath(event, ["data", "from_user_id"])],
+    ["msg.from_user_id", getPath(event, ["msg", "from_user_id"])],
+    ["detail.from_user_id", getPath(event, ["detail", "from_user_id"])],
+    ["from_user_id", event?.from_user_id],
+    ["author.user_openid", getPath(event, ["author", "user_openid"])],
+    ["author.id", getPath(event, ["author", "id"])],
+    ["peer.id", getPath(event, ["peer", "id"])],
+    ["from.id", getPath(event, ["from", "id"])],
+    ["contact.id", getPath(event, ["contact", "id"])]
+  ];
+
+  for (const [source, value] of candidates) {
+    const id = firstString(value);
+    if (id) return { userId: id, source };
   }
 
   return { userId: "", source: "" };
@@ -579,6 +604,54 @@ function validateProactiveSendPayload(payload) {
   return { ok: true, candidateId, message, dryRun: payload.dry_run };
 }
 
+function targetHashForSession(sessionId) {
+  const text = firstString(sessionId);
+  if (!text) return "";
+  return crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12);
+}
+
+function parseWxPrivateSessionUserId(sessionId) {
+  const text = firstString(sessionId);
+  const prefix = "wx:private:";
+  if (!text.startsWith(prefix)) return "";
+  return text.slice(prefix.length).trim();
+}
+
+function resolveWxProactiveTarget(payload, allowedWxUsers) {
+  if (allowedWxUsers.size < 1) {
+    return { ok: false, status: 403, error: "wx allowlist is empty" };
+  }
+
+  const targetSessionId = firstString(payload?.target_session_id);
+  const targetUserId = firstString(payload?.target_user_id);
+  if (!targetUserId) {
+    return { ok: false, status: 400, error: "wx target_user_id is required" };
+  }
+
+  const permissionUserId = firstString(payload?.target_permission_user_id) || parseWxPrivateSessionUserId(targetSessionId);
+  if (!permissionUserId) {
+    return { ok: false, status: 400, error: "wx target_permission_user_id or private target_session_id is required" };
+  }
+
+  if (!allowedWxUsers.has(permissionUserId)) {
+    return { ok: false, status: 403, error: "wx target is not allowed" };
+  }
+
+  const expectedTargetHash = targetSessionId ? targetHashForSession(targetSessionId) : "";
+  const providedTargetHash = firstString(payload?.target_hash);
+  if (targetSessionId && providedTargetHash && providedTargetHash !== expectedTargetHash) {
+    return { ok: false, status: 409, error: "wx target_hash does not match target_session_id" };
+  }
+
+  return {
+    ok: true,
+    wxUserId: targetUserId,
+    permissionUserId,
+    targetLabel: firstString(payload?.target_label) || maskId(targetUserId),
+    targetHash: providedTargetHash || expectedTargetHash
+  };
+}
+
 async function handleProactiveSendQq(req, res, api) {
   let payload;
   try {
@@ -675,26 +748,21 @@ async function handleProactiveSendWx(req, res, api) {
   }
 
   const allowedWxUsers = loadAllowedWxUsers();
-  if (allowedWxUsers.size !== 1) {
-    sendJson(res, 400, {
-      success: false,
-      error: "wx allowlist must contain exactly one user"
-    });
+  const target = resolveWxProactiveTarget(payload, allowedWxUsers);
+  if (!target.ok) {
+    sendJson(res, target.status, { success: false, error: target.error });
     return;
   }
 
-  const [wxUserId] = [...allowedWxUsers];
-  const targetLabel = maskId(wxUserId);
-
   if (validation.dryRun) {
     api?.logger?.info?.(
-      `[neno-bridge] proactive wx dry_run candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
+      `[neno-bridge] proactive wx dry_run candidate=${validation.candidateId ?? "none"} target=${target.targetLabel} send_target=${maskId(target.wxUserId)} permission_target=${maskId(target.permissionUserId)} len=${validation.message.length}`
     );
 
     sendJson(res, 200, {
       success: true,
       dry_run: true,
-      target_label: targetLabel,
+      target_label: target.targetLabel,
       message_len: validation.message.length,
       would_send: true
     });
@@ -702,7 +770,7 @@ async function handleProactiveSendWx(req, res, api) {
   }
 
   api?.logger?.info?.(
-    `[neno-bridge] proactive wx send candidate=${validation.candidateId ?? "none"} target=${targetLabel} len=${validation.message.length}`
+    `[neno-bridge] proactive wx send candidate=${validation.candidateId ?? "none"} target=${target.targetLabel} send_target=${maskId(target.wxUserId)} permission_target=${maskId(target.permissionUserId)} len=${validation.message.length}`
   );
 
   try {
@@ -713,7 +781,7 @@ async function handleProactiveSendWx(req, res, api) {
 
     const result = await outbound.sendText({
       cfg: api?.config,
-      to: wxUserId,
+      to: target.wxUserId,
       text: validation.message
     });
     const sendError = result?.meta?.error;
@@ -726,7 +794,7 @@ async function handleProactiveSendWx(req, res, api) {
       success: true,
       dry_run: false,
       sent: true,
-      target_label: targetLabel,
+      target_label: target.targetLabel,
       message_len: validation.message.length,
       message_id: result?.messageId || result?.message_id || null
     });
@@ -1006,6 +1074,7 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
 
   const identity = extractWxUserIdentity(event);
   const userId = identity.userId;
+  const realIdentity = extractWxInboundRealUserId(event);
   if (!userId) {
     logWxDebug(api, "no user_id", event);
     return { handled: true, text: WX_MISSING_USER_REPLY };
@@ -1014,6 +1083,12 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   if (identity.source.startsWith(WX_SESSION_FIELD)) {
     logWxDebug(api, "senderId unresolved; using session fallback", event);
     api?.logger?.info?.(`[neno-bridge] using wx session fallback for user=${maskId(userId)}`);
+  }
+
+  if (realIdentity.userId) {
+    api?.logger?.info?.(
+      `[neno-bridge] wx real user extracted business=${maskId(userId)} real=${maskId(realIdentity.userId)} source=${realIdentity.source || "unknown"}`
+    );
   }
 
   if (!allowedWxUsers.has(userId)) {
@@ -1056,6 +1131,7 @@ async function wxAdapter({ event, api, allowedWxUsers }) {
   return sendToNeno(api, {
     platform: "wx",
     user_id: userId,
+    real_user_id: realIdentity.userId || null,
     chat_type: chatType,
     group_id: groupId,
     message: text || "",

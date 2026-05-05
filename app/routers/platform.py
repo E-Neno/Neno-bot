@@ -71,6 +71,15 @@ def clean_message_value(value: Any) -> str | None:
     return cleaned or None
 
 
+def clean_optional_identifier(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a string")
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, str, str]:
     platform = clean_required(req.platform, "platform")
     user_id = clean_required(req.user_id, "user_id")
@@ -316,6 +325,7 @@ def openclaw_message(payload: Any = Body(...)):
                 platform=platform,
                 session_id=session_id,
                 user_id=user_id,
+                real_user_id=clean_optional_identifier(req.real_user_id, "real_user_id"),
             )
         except Exception as exc:
             log_event(
@@ -334,14 +344,14 @@ def openclaw_message(payload: Any = Body(...)):
             message=message,
             trace_id=trace_id,
             handler=lambda merged_session_id, merged_message: run_platform_chat_turn(
-            trace_id=trace_id,
-            session_id=merged_session_id,
-            platform=platform,
-            user_id=user_id,
-            chat_type=chat_type,
-            message=merged_message,
-            input_record=input_record,
-        ),
+                trace_id=trace_id,
+                session_id=merged_session_id,
+                platform=platform,
+                user_id=user_id,
+                chat_type=chat_type,
+                message=merged_message,
+                input_record=input_record,
+            ),
         )
         if submit_result.accepted and submit_result.future is not None:
             response = submit_result.future.wait()
