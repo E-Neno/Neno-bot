@@ -44,6 +44,7 @@ class ChatResponse(BaseModel):
 
 class PlatformMessageRequest(BaseModel):
     platform: str | None = None
+    account_id: str | None = Field(default=None, max_length=64)
     user_id: str | None = None
     real_user_id: str | None = None
     chat_type: str | None = None
@@ -57,6 +58,27 @@ class PlatformMessageResponse(BaseModel):
     success: bool
     reply: str
     session_id: str
+
+
+class PlatformRoutingOverrideRequest(BaseModel):
+    platform: str = Field(..., max_length=16)
+    account_id: str | None = Field(default=None, max_length=64)
+    user_id: str = Field(..., max_length=128)
+    chat_type: str = Field(..., max_length=16)
+    group_id: str | None = Field(default=None, max_length=128)
+    session_id: str = Field(..., max_length=128)
+    operator: str | None = Field(default=None, max_length=64)
+    reason: str | None = Field(default=None, max_length=240)
+
+
+class PlatformRoutingOverrideClearRequest(BaseModel):
+    platform: str = Field(..., max_length=16)
+    account_id: str | None = Field(default=None, max_length=64)
+    user_id: str = Field(..., max_length=128)
+    chat_type: str = Field(..., max_length=16)
+    group_id: str | None = Field(default=None, max_length=128)
+    operator: str | None = Field(default=None, max_length=64)
+    reason: str | None = Field(default=None, max_length=240)
 
 
 class MemoryAddRequest(BaseModel):

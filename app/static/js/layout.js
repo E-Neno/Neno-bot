@@ -362,9 +362,68 @@ export function buildConsoleLayout() {
   appendStatusMetric(sessionSummaryGrid, "预览入口", "currentSessionPreviewMode");
   sessionSummaryCard.appendChild(sessionSummaryGrid);
   chatSide.appendChild(sessionSummaryCard);
+  const routingCard = createElement("div", "card");
+  routingCard.appendChild(createElement("h3", "", "Session Routing Control"));
+  routingCard.appendChild(createElement("div", "config-help", "查询当前平台来源 routing 状态，直接设置 override 到指定 session，或 clear 恢复自动归属。只影响后续入站消息。"));
+  const routingForm = createElement("div", "config-form");
+  for (const [id, label, type] of [
+    ["routingPlatformInput", "platform", "text"],
+    ["routingAccountInput", "account_id", "text"],
+    ["routingUserInput", "user_id", "text"],
+    ["routingChatTypeInput", "chat_type", "text"],
+    ["routingGroupInput", "group_id", "text"],
+    ["routingOverrideSessionInput", "override session_id", "text"],
+  ]) {
+    const field = createElement("div", "config-field");
+    field.appendChild(createElement("label", "", label));
+    const input = createElement("input");
+    input.id = id;
+    input.type = type;
+    if (id === "routingPlatformInput") input.placeholder = "wx";
+    if (id === "routingAccountInput") input.placeholder = "default";
+    if (id === "routingUserInput") input.placeholder = "通常无需手填，优先自动带入";
+    if (id === "routingChatTypeInput") input.placeholder = "private / group";
+    if (id === "routingGroupInput") input.placeholder = "group only";
+    if (id === "routingOverrideSessionInput") input.placeholder = "wx:private:...";
+    field.appendChild(input);
+    if (id === "routingUserInput") {
+      field.appendChild(createElement("div", "config-help", "user_id 通常不需要手填；系统会优先从当前会话最近一条平台入站消息自动带入。"));
+    }
+    routingForm.appendChild(field);
+  }
+  routingCard.appendChild(routingForm);
+  const routingActions = createElement("div", "row");
+  for (const [id, label, className] of [
+    ["routingAutofillBtn", "带入最近平台消息", "secondary"],
+    ["routingQueryBtn", "查询状态", "secondary"],
+    ["routingSetBtn", "设置 Override", ""],
+    ["routingClearBtn", "Clear Override", "danger"],
+  ]) {
+    const button = createElement("button", className, label);
+    button.id = id;
+    routingActions.appendChild(button);
+  }
+  routingCard.appendChild(routingActions);
+  routingCard.appendChild(createElement("div", "status", "尚未查询"));
+  routingCard.lastChild.id = "routingStatus";
+  routingCard.appendChild(createElement("div", "small", "当前来源摘要：-"));
+  routingCard.lastChild.id = "routingSourceSummary";
+  const routingSummaryGrid = createElement("div", "status-grid session-context-grid");
+  appendStatusMetric(routingSummaryGrid, "routing_key", "routingKeyValue");
+  appendStatusMetric(routingSummaryGrid, "auto_session_id", "routingAutoSessionValue");
+  appendStatusMetric(routingSummaryGrid, "final_session_id", "routingFinalSessionValue");
+  appendStatusMetric(routingSummaryGrid, "routing_mode", "routingModeValue");
+  appendStatusMetric(routingSummaryGrid, "routing_reason", "routingReasonValue");
+  appendStatusMetric(routingSummaryGrid, "override active", "routingOverrideActiveValue");
+  routingCard.appendChild(routingSummaryGrid);
+  routingCard.appendChild(createElement("div", "small", "自动带入状态：尚未判断"));
+  routingCard.lastChild.id = "routingSourceHint";
+  routingCard.appendChild(createElement("div", "small", "尚无 explain"));
+  routingCard.lastChild.id = "routingExplainBox";
   if (sessionCard) {
     chatSide.appendChild(sessionCard);
   }
+  chatSide.appendChild(routingCard);
   if (relationshipCard) {
     chatSide.appendChild(relationshipCard);
   }

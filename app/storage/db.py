@@ -185,6 +185,40 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS platform_routing_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT 'default',
+                routing_key TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                operator TEXT,
+                reason TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(platform, account_id, routing_key)
+            )
+            """
+        )
+        routing_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(platform_routing_overrides)").fetchall()
+        }
+        if "account_id" not in routing_columns:
+            conn.execute(
+                "ALTER TABLE platform_routing_overrides ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default'"
+            )
+        if "operator" not in routing_columns:
+            conn.execute("ALTER TABLE platform_routing_overrides ADD COLUMN operator TEXT")
+        if "reason" not in routing_columns:
+            conn.execute("ALTER TABLE platform_routing_overrides ADD COLUMN reason TEXT")
+        if "is_active" not in routing_columns:
+            conn.execute("ALTER TABLE platform_routing_overrides ADD COLUMN is_active INTEGER DEFAULT 1")
+        if "updated_at" not in routing_columns:
+            conn.execute(
+                "ALTER TABLE platform_routing_overrides ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP"
+            )
 
 
 def add_message(
@@ -618,6 +652,139 @@ def get_latest_proactive_target(platform: str) -> dict | None:
         (platform,),
     )
     return row_to_dict(row, fields)
+
+
+def _platform_routing_override_fields() -> list[str]:
+    return [
+        "id",
+        "platform",
+        "account_id",
+        "routing_key",
+        "session_id",
+        "is_active",
+        "operator",
+        "reason",
+        "created_at",
+        "updated_at",
+    ]
+
+
+def get_platform_routing_override(
+    *,
+    platform: str,
+    account_id: str,
+    routing_key: str,
+    active_only: bool = False,
+) -> dict | None:
+    fields = _platform_routing_override_fields()
+    where_active = "AND is_active = 1" if active_only else ""
+    row = fetch_one(
+        f"""
+        SELECT {", ".join(fields)}
+        FROM platform_routing_overrides
+        WHERE platform = ?
+          AND account_id = ?
+          AND routing_key = ?
+          {where_active}
+        LIMIT 1
+        """,
+        (platform, account_id, routing_key),
+    )
+    return row_to_dict(row, fields)
+
+
+def upsert_platform_routing_override(
+    *,
+    platform: str,
+    account_id: str,
+    routing_key: str,
+    session_id: str,
+    operator: str | None = None,
+    reason: str | None = None,
+) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO platform_routing_overrides (
+                platform,
+                account_id,
+                routing_key,
+                session_id,
+                is_active,
+                operator,
+                reason,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, 1, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(platform, account_id, routing_key) DO UPDATE SET
+                session_id = excluded.session_id,
+                is_active = 1,
+                operator = excluded.operator,
+                reason = excluded.reason,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                platform,
+                account_id,
+                routing_key,
+                session_id,
+                operator,
+                reason,
+            ),
+        )
+
+    record = get_platform_routing_override(
+        platform=platform,
+        account_id=account_id,
+        routing_key=routing_key,
+    )
+    if record is None:
+        raise RuntimeError("platform routing override upsert failed")
+    return record
+
+
+def clear_platform_routing_override(
+    *,
+    platform: str,
+    account_id: str,
+    routing_key: str,
+    operator: str | None = None,
+    reason: str | None = None,
+) -> dict | None:
+    current = get_platform_routing_override(
+        platform=platform,
+        account_id=account_id,
+        routing_key=routing_key,
+    )
+    if current is None:
+        return None
+
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE platform_routing_overrides
+            SET is_active = 0,
+                operator = ?,
+                reason = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE platform = ?
+              AND account_id = ?
+              AND routing_key = ?
+            """,
+            (
+                operator,
+                reason,
+                platform,
+                account_id,
+                routing_key,
+            ),
+        )
+
+    return get_platform_routing_override(
+        platform=platform,
+        account_id=account_id,
+        routing_key=routing_key,
+    )
 
 
 def add_proactive_event(

@@ -1,11 +1,16 @@
 import time
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app import config
-from app.schemas import PlatformMessageRequest, PlatformMessageResponse
-from app.security import require_platform_token
+from app.schemas import (
+    PlatformMessageRequest,
+    PlatformMessageResponse,
+    PlatformRoutingOverrideClearRequest,
+    PlatformRoutingOverrideRequest,
+)
+from app.security import require_admin_token, require_platform_token
 from app.services.burst_merge_service import BurstMergeService
 from app.services.chat.multimodal_input_service import (
     MULTIMODAL_USER_ERROR_MESSAGE,
@@ -15,7 +20,13 @@ from app.services.chat.multimodal_input_service import (
 from app.services.chat.voice_asr_service import transcribe_voice, VoiceASRError
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_platform_proactive_target
+from app.services.session_submit_controller import SessionSubmitController, SubmitTicket
 from app.services.stats_service import record_chat_stat
+from app.storage.db import (
+    clear_platform_routing_override,
+    get_platform_routing_override,
+    upsert_platform_routing_override,
+)
 from app.utils.logging_utils import log_event, new_trace_id
 
 router = APIRouter(prefix="/platform", tags=["platform"])
@@ -23,6 +34,7 @@ burst_merge_service = BurstMergeService(
     window_seconds=config.BURST_MERGE_WINDOW_SECONDS,
     max_messages=config.BURST_MERGE_MAX_MESSAGES,
 )
+session_submit_controller = SessionSubmitController()
 
 SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
@@ -80,8 +92,14 @@ def clean_optional_identifier(value: Any, field_name: str) -> str | None:
     return cleaned or None
 
 
-def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, str, str]:
+def clean_account_id(value: Any) -> str:
+    cleaned = clean_optional_identifier(value, "account_id")
+    return cleaned or "default"
+
+
+def parse_platform_message_context(req: PlatformMessageRequest) -> dict[str, str | None]:
     platform = clean_required(req.platform, "platform")
+    account_id = clean_account_id(req.account_id)
     user_id = clean_required(req.user_id, "user_id")
     chat_type = clean_required(req.chat_type, "chat_type")
 
@@ -90,13 +108,97 @@ def build_platform_session_id(req: PlatformMessageRequest) -> tuple[str, str, st
     if chat_type not in SUPPORTED_CHAT_TYPES:
         raise HTTPException(status_code=400, detail="chat_type must be private or group")
 
+    group_id = None
     if chat_type == "private":
-        return f"{platform}:private:{user_id}", platform, user_id, chat_type
+        auto_session_id = f"{platform}:private:{user_id}"
+    else:
+        group_id = clean_optional(req.group_id)
+        if not group_id:
+            raise HTTPException(status_code=400, detail="group_id is required for group chat")
+        auto_session_id = f"{platform}:group:{group_id}:{user_id}"
 
-    group_id = clean_optional(req.group_id)
-    if not group_id:
-        raise HTTPException(status_code=400, detail="group_id is required for group chat")
-    return f"{platform}:group:{group_id}:{user_id}", platform, user_id, chat_type
+    routing_key = build_platform_routing_key(
+        platform=platform,
+        account_id=account_id,
+        chat_type=chat_type,
+        user_id=user_id,
+        group_id=group_id,
+    )
+    return {
+        "platform": platform,
+        "account_id": account_id,
+        "user_id": user_id,
+        "chat_type": chat_type,
+        "group_id": group_id,
+        "auto_session_id": auto_session_id,
+        "routing_key": routing_key,
+    }
+
+
+def build_platform_routing_key(
+    *,
+    platform: str,
+    account_id: str,
+    user_id: str,
+    chat_type: str,
+    group_id: str | None,
+) -> str:
+    if chat_type == "group":
+        if not group_id:
+            raise HTTPException(status_code=400, detail="group_id is required for group chat")
+        return f"{platform}:{account_id}:group:{group_id}:{user_id}"
+    return f"{platform}:{account_id}:private:{user_id}"
+
+
+def resolve_platform_session_route(
+    req: PlatformMessageRequest,
+    *,
+    trace_id: str | None = None,
+    log_decision: bool = True,
+) -> dict[str, Any]:
+    context = parse_platform_message_context(req)
+    platform = str(context["platform"])
+    account_id = str(context["account_id"])
+    routing_key = str(context["routing_key"])
+    auto_session_id = str(context["auto_session_id"])
+    override = get_platform_routing_override(
+        platform=platform,
+        account_id=account_id,
+        routing_key=routing_key,
+        active_only=True,
+    )
+    final_session_id = str((override or {}).get("session_id") or auto_session_id)
+    routing_mode = "override" if override else "auto"
+    routing_reason = "active override" if override else "default auto session routing"
+
+    resolved = {
+        **context,
+        "final_session_id": final_session_id,
+        "routing_mode": routing_mode,
+        "routing_reason": routing_reason,
+        "override_session_id": override.get("session_id") if override else None,
+        "override_operator": override.get("operator") if override else None,
+        "override_updated_at": override.get("updated_at") if override else None,
+    }
+    if log_decision:
+        log_event(
+            "platform",
+            "session_routing_resolved",
+            trace_id=trace_id,
+            platform=platform,
+            account_id=account_id,
+            user_id=str(context["user_id"]),
+            chat_type=str(context["chat_type"]),
+            group_id=context["group_id"],
+            routing_key=routing_key,
+            routing_mode=routing_mode,
+            auto_session_id=auto_session_id,
+            final_session_id=final_session_id,
+            override_session_id=override.get("session_id") if override else None,
+            operator=override.get("operator") if override else None,
+            reason=routing_reason if not override else override.get("reason"),
+        )
+    return resolved
 
 
 def run_platform_chat_turn(
@@ -172,59 +274,50 @@ def run_platform_chat_turn(
     )
 
 
-@router.post(
-    "/openclaw/message",
-    response_model=PlatformMessageResponse,
-    dependencies=[Depends(require_platform_token)],
-)
-def openclaw_message(payload: Any = Body(...)):
-    trace_id = new_trace_id()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="request body must be a JSON object")
-    try:
-        req = PlatformMessageRequest(**payload)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="invalid request body") from exc
+def raise_http_exception(exc: HTTPException) -> None:
+    raise exc
 
-    session_id, platform, user_id, chat_type = build_platform_session_id(req)
-    raw_message = clean_message_value(req.message)
-    attachments = req.attachments or []
+
+def should_use_session_submit_controller(*, platform: str) -> bool:
+    return platform == "wx"
+
+
+def preprocess_platform_message(
+    *,
+    trace_id: str,
+    session_id: str,
+    platform: str,
+    user_id: str,
+    chat_type: str,
+    raw_message: str | None,
+    attachments: list,
+    input_record: dict,
+) -> str | PlatformMessageResponse:
     has_image_attachment = any(item.kind == "image" for item in attachments)
     has_voice_attachment = any(item.kind == "voice" for item in attachments)
-    message_type = (req.message_type or "").strip().lower() or None
-    input_record = {
-        "source": f"platform:{platform}",
-        "platform": platform,
-        "chat_type": chat_type,
-        "message_type": "voice" if has_voice_attachment and not has_image_attachment else "image" if has_image_attachment else "text",
-        "raw_input": raw_message,
-        "normalized_input": raw_message,
-        "attachments": [item.dict() for item in attachments],
-        "pipeline": {
-            "vision": {"hit": has_image_attachment, "success": None},
-            "asr": {"hit": has_voice_attachment and not has_image_attachment, "success": None},
-            "normalization": {"status": "pending" if has_image_attachment else "bypassed", "failed_at": None},
-        },
-        "platform_message_type": message_type,
-    }
 
-    if raw_message is None and not attachments:
-        raise HTTPException(status_code=400, detail="message must not be blank")
+    log_event(
+        "platform",
+        "message_preprocess_start",
+        trace_id=trace_id,
+        platform=platform,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        message_type=input_record.get("message_type"),
+        attachment_count=len(attachments),
+    )
 
-    # Priority: If there is a voice attachment, always trigger ASR (unless it's a multimodal image message)
     if has_voice_attachment and not has_image_attachment:
         voice_attachment = next((item for item in attachments if item.kind == "voice"), None)
         if voice_attachment and voice_attachment.media_path:
             try:
-                # Use ASR to overwrite raw_message (which might be a placeholder like "[语音]")
                 raw_message = transcribe_voice(voice_attachment.media_path, trace_id)
                 if not raw_message:
-                    # Fallback if ASR returns empty string successfully (silence)
                     raw_message = "[语音消息(未听清)]"
                 input_record["pipeline"]["asr"]["success"] = True
                 input_record["pipeline"]["asr"]["text"] = raw_message
             except VoiceASRError:
-                # If ASR fails, we bypass the chat turn and ask the user to send it again
                 input_record["pipeline"]["asr"] = {
                     "hit": True,
                     "success": False,
@@ -245,25 +338,9 @@ def openclaw_message(payload: Any = Body(...)):
                     session_id=session_id,
                 )
         elif not raw_message:
-            # If no file path and no text message, use a generic placeholder
             raw_message = "[语音消息]"
             input_record["pipeline"]["asr"]["success"] = False
             input_record["pipeline"]["asr"]["failed_at"] = "missing_media_path"
-
-    log_event(
-        "platform",
-        "message_received",
-        trace_id=trace_id,
-        platform=platform,
-        chat_type=chat_type,
-        user_id=user_id,
-        session_id=session_id,
-        message_len=len(raw_message or ""),
-        message_type=message_type,
-        attachment_count=len(attachments),
-        has_image_attachment=has_image_attachment,
-        has_voice_attachment=has_voice_attachment,
-    )
 
     if has_image_attachment:
         try:
@@ -318,6 +395,338 @@ def openclaw_message(payload: Any = Body(...)):
 
     input_record["raw_input"] = raw_message
     input_record["normalized_input"] = message
+    log_event(
+        "platform",
+        "message_preprocess_finished",
+        trace_id=trace_id,
+        platform=platform,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        normalized_message_len=len(message or ""),
+    )
+    return message
+
+
+def submit_platform_chat_turn(
+    *,
+    trace_id: str,
+    session_id: str,
+    platform: str,
+    user_id: str,
+    chat_type: str,
+    message: str,
+    input_record: dict | None = None,
+    submit_ticket: SubmitTicket | None = None,
+) -> PlatformMessageResponse:
+    if submit_ticket is None:
+        return run_platform_chat_turn(
+            trace_id=trace_id,
+            session_id=session_id,
+            platform=platform,
+            user_id=user_id,
+            chat_type=chat_type,
+            message=message,
+            input_record=input_record,
+        )
+
+    response_future = session_submit_controller.submit_ready(
+        ticket=submit_ticket,
+        handler=lambda: run_platform_chat_turn(
+            trace_id=trace_id,
+            session_id=session_id,
+            platform=platform,
+            user_id=user_id,
+            chat_type=chat_type,
+            message=message,
+            input_record=input_record,
+        ),
+    )
+    response = response_future.wait()
+    if isinstance(response, PlatformMessageResponse):
+        return response
+    raise HTTPException(status_code=500, detail="chat failed")
+
+
+def submit_platform_response(
+    *,
+    submit_ticket: SubmitTicket | None,
+    response: PlatformMessageResponse,
+) -> PlatformMessageResponse:
+    if submit_ticket is None:
+        return response
+
+    future = session_submit_controller.submit_ready(
+        ticket=submit_ticket,
+        handler=lambda: response,
+    )
+    result = future.wait()
+    if isinstance(result, PlatformMessageResponse):
+        return result
+    raise HTTPException(status_code=500, detail="chat failed")
+
+
+def submit_platform_exception(
+    *,
+    submit_ticket: SubmitTicket | None,
+    exc: HTTPException,
+) -> None:
+    if submit_ticket is None:
+        raise exc
+
+    future = session_submit_controller.submit_ready(
+        ticket=submit_ticket,
+        handler=lambda: raise_http_exception(exc),
+    )
+    future.wait()
+
+
+def build_routing_explain(req: PlatformMessageRequest) -> dict[str, Any]:
+    resolved = resolve_platform_session_route(req, log_decision=False)
+    stored_override = get_platform_routing_override(
+        platform=str(resolved["platform"]),
+        account_id=str(resolved["account_id"]),
+        routing_key=str(resolved["routing_key"]),
+        active_only=False,
+    )
+    return {
+        "platform": resolved["platform"],
+        "account_id": resolved["account_id"],
+        "user_id": resolved["user_id"],
+        "chat_type": resolved["chat_type"],
+        "group_id": resolved["group_id"],
+        "routing_key": resolved["routing_key"],
+        "auto_session_id": resolved["auto_session_id"],
+        "final_session_id": resolved["final_session_id"],
+        "routing_mode": resolved["routing_mode"],
+        "routing_reason": resolved["routing_reason"],
+        "override": {
+            "exists": stored_override is not None,
+            "active": bool((stored_override or {}).get("is_active")),
+            "session_id": (stored_override or {}).get("session_id"),
+            "operator": (stored_override or {}).get("operator"),
+            "reason": (stored_override or {}).get("reason"),
+            "updated_at": (stored_override or {}).get("updated_at"),
+        },
+        "effective_scope": "future inbound messages only",
+    }
+
+
+@router.get("/session-routing", dependencies=[Depends(require_admin_token)])
+def get_session_routing(
+    platform: str = Query(..., max_length=16),
+    user_id: str = Query(..., max_length=128),
+    chat_type: str = Query(..., max_length=16),
+    account_id: str | None = Query(default=None, max_length=64),
+    group_id: str | None = Query(default=None, max_length=128),
+):
+    req = PlatformMessageRequest(
+        platform=platform,
+        account_id=account_id,
+        user_id=user_id,
+        chat_type=chat_type,
+        group_id=group_id,
+    )
+    explain = build_routing_explain(req)
+    return {
+        "success": True,
+        "explain": explain,
+    }
+
+
+@router.post("/session-routing/override", dependencies=[Depends(require_admin_token)])
+def set_session_routing_override(req: PlatformRoutingOverrideRequest):
+    request_context = PlatformMessageRequest(
+        platform=req.platform,
+        account_id=req.account_id,
+        user_id=req.user_id,
+        chat_type=req.chat_type,
+        group_id=req.group_id,
+    )
+    explain_before = build_routing_explain(request_context)
+    override = upsert_platform_routing_override(
+        platform=str(explain_before["platform"]),
+        account_id=str(explain_before["account_id"]),
+        routing_key=str(explain_before["routing_key"]),
+        session_id=clean_required(req.session_id, "session_id"),
+        operator=clean_optional_identifier(req.operator, "operator"),
+        reason=clean_optional_identifier(req.reason, "reason"),
+    )
+    log_event(
+        "platform",
+        "session_routing_override_set",
+        platform=str(explain_before["platform"]),
+        account_id=str(explain_before["account_id"]),
+        user_id=str(explain_before["user_id"]),
+        chat_type=str(explain_before["chat_type"]),
+        group_id=explain_before["group_id"],
+        routing_key=str(explain_before["routing_key"]),
+        auto_session_id=str(explain_before["auto_session_id"]),
+        final_session_id=override.get("session_id"),
+        override_session_id=override.get("session_id"),
+        operator=override.get("operator"),
+        reason=override.get("reason"),
+    )
+    explain_after = build_routing_explain(request_context)
+    return {
+        "success": True,
+        "action": "override_set",
+        "override": override,
+        "explain": explain_after,
+        "effective_scope": "future inbound messages only",
+    }
+
+
+@router.post("/session-routing/clear", dependencies=[Depends(require_admin_token)])
+def clear_session_routing_override(req: PlatformRoutingOverrideClearRequest):
+    request_context = PlatformMessageRequest(
+        platform=req.platform,
+        account_id=req.account_id,
+        user_id=req.user_id,
+        chat_type=req.chat_type,
+        group_id=req.group_id,
+    )
+    explain_before = build_routing_explain(request_context)
+    cleared = clear_platform_routing_override(
+        platform=str(explain_before["platform"]),
+        account_id=str(explain_before["account_id"]),
+        routing_key=str(explain_before["routing_key"]),
+        operator=clean_optional_identifier(req.operator, "operator"),
+        reason=clean_optional_identifier(req.reason, "reason"),
+    )
+    log_event(
+        "platform",
+        "session_routing_override_cleared",
+        platform=str(explain_before["platform"]),
+        account_id=str(explain_before["account_id"]),
+        user_id=str(explain_before["user_id"]),
+        chat_type=str(explain_before["chat_type"]),
+        group_id=explain_before["group_id"],
+        routing_key=str(explain_before["routing_key"]),
+        auto_session_id=str(explain_before["auto_session_id"]),
+        final_session_id=str(explain_before["auto_session_id"]),
+        override_session_id=(cleared or {}).get("session_id"),
+        operator=(cleared or {}).get("operator"),
+        reason=(cleared or {}).get("reason"),
+    )
+    explain_after = build_routing_explain(request_context)
+    return {
+        "success": True,
+        "action": "override_cleared",
+        "cleared": cleared is not None,
+        "override": cleared,
+        "explain": explain_after,
+        "effective_scope": "future inbound messages only",
+    }
+
+
+@router.post(
+    "/openclaw/message",
+    response_model=PlatformMessageResponse,
+    dependencies=[Depends(require_platform_token)],
+)
+def openclaw_message(payload: Any = Body(...)):
+    trace_id = new_trace_id()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    try:
+        req = PlatformMessageRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid request body") from exc
+
+    route = resolve_platform_session_route(req, trace_id=trace_id)
+    session_id = str(route["final_session_id"])
+    platform = str(route["platform"])
+    account_id = str(route["account_id"])
+    user_id = str(route["user_id"])
+    chat_type = str(route["chat_type"])
+    raw_message = clean_message_value(req.message)
+    attachments = req.attachments or []
+    has_image_attachment = any(item.kind == "image" for item in attachments)
+    has_voice_attachment = any(item.kind == "voice" for item in attachments)
+    message_type = (req.message_type or "").strip().lower() or None
+
+    if raw_message is None and not attachments:
+        raise HTTPException(status_code=400, detail="message must not be blank")
+
+    submit_ticket = (
+        session_submit_controller.allocate_ticket(session_id=session_id, trace_id=trace_id)
+        if should_use_session_submit_controller(platform=platform)
+        else None
+    )
+    input_record = {
+        "source": f"platform:{platform}",
+        "platform": platform,
+        "account_id": account_id,
+        "user_id": user_id,
+        "chat_type": chat_type,
+        "group_id": route["group_id"],
+        "message_type": "voice" if has_voice_attachment and not has_image_attachment else "image" if has_image_attachment else "text",
+        "raw_input": raw_message,
+        "normalized_input": raw_message,
+        "attachments": [item.model_dump() for item in attachments],
+        "pipeline": {
+            "vision": {"hit": has_image_attachment, "success": None},
+            "asr": {"hit": has_voice_attachment and not has_image_attachment, "success": None},
+            "normalization": {"status": "pending" if has_image_attachment else "bypassed", "failed_at": None},
+        },
+        "ingress": {
+            "controller_mode": "session_serial_submit" if submit_ticket is not None else "direct",
+            "arrival_seq": submit_ticket.arrival_seq if submit_ticket is not None else None,
+        },
+        "routing": {
+            "routing_key": route["routing_key"],
+            "routing_mode": route["routing_mode"],
+            "routing_reason": route["routing_reason"],
+            "auto_session_id": route["auto_session_id"],
+            "final_session_id": route["final_session_id"],
+            "override_session_id": route["override_session_id"],
+            "override_operator": route["override_operator"],
+            "override_updated_at": route["override_updated_at"],
+        },
+        "platform_message_type": message_type,
+    }
+
+    log_event(
+        "platform",
+        "message_received",
+        trace_id=trace_id,
+        platform=platform,
+        account_id=account_id,
+        chat_type=chat_type,
+        user_id=user_id,
+        session_id=session_id,
+        auto_session_id=route["auto_session_id"],
+        routing_mode=route["routing_mode"],
+        routing_key=route["routing_key"],
+        message_len=len(raw_message or ""),
+        message_type=message_type,
+        attachment_count=len(attachments),
+        has_image_attachment=has_image_attachment,
+        has_voice_attachment=has_voice_attachment,
+    )
+    try:
+        preprocessed = preprocess_platform_message(
+            trace_id=trace_id,
+            session_id=session_id,
+            platform=platform,
+            user_id=user_id,
+            chat_type=chat_type,
+            raw_message=raw_message,
+            attachments=attachments,
+            input_record=input_record,
+        )
+    except HTTPException as exc:
+        submit_platform_exception(submit_ticket=submit_ticket, exc=exc)
+        raise
+
+    if isinstance(preprocessed, PlatformMessageResponse):
+        return submit_platform_response(
+            submit_ticket=submit_ticket,
+            response=preprocessed,
+        )
+
+    message = preprocessed
 
     if platform in {"qq", "wx"} and chat_type == "private":
         try:
@@ -338,12 +747,12 @@ def openclaw_message(payload: Any = Body(...)):
                 error_type=type(exc).__name__,
             )
 
-    if config.BURST_MERGE_ENABLED and chat_type == "private":
+    if config.BURST_MERGE_ENABLED and chat_type == "private" and platform != "wx":
         submit_result = burst_merge_service.submit_burst_message(
             session_id=session_id,
             message=message,
             trace_id=trace_id,
-            handler=lambda merged_session_id, merged_message: run_platform_chat_turn(
+            handler=lambda merged_session_id, merged_message: submit_platform_chat_turn(
                 trace_id=trace_id,
                 session_id=merged_session_id,
                 platform=platform,
@@ -351,6 +760,7 @@ def openclaw_message(payload: Any = Body(...)):
                 chat_type=chat_type,
                 message=merged_message,
                 input_record=input_record,
+                submit_ticket=submit_ticket,
             ),
         )
         if submit_result.accepted and submit_result.future is not None:
@@ -359,7 +769,7 @@ def openclaw_message(payload: Any = Body(...)):
                 return response
             raise HTTPException(status_code=500, detail="chat failed")
 
-    return run_platform_chat_turn(
+    return submit_platform_chat_turn(
         trace_id=trace_id,
         session_id=session_id,
         platform=platform,
@@ -367,4 +777,5 @@ def openclaw_message(payload: Any = Body(...)):
         chat_type=chat_type,
         message=message,
         input_record=input_record,
+        submit_ticket=submit_ticket,
     )
