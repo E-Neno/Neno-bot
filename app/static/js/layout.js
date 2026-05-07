@@ -5,7 +5,6 @@ export const panelDefinitions = [
   ["chatPanel", "聊天测试"],
   ["proactivePanel", "主动消息"],
   ["memoryPanel", "记忆库"],
-  ["relationshipPanel", "关系状态"],
   ["configPanel", "配置"],
   ["debugPanel", "日志 / 调试"],
 ];
@@ -37,6 +36,9 @@ export function setActivePanel(panelId) {
   for (const button of document.querySelectorAll(".console-nav [data-panel-target]")) {
     button.classList.toggle("active", button.dataset.panelTarget === panelId);
   }
+  const isChatPanel = panelId === "chatPanel";
+  document.body.classList.toggle("chat-panel-active", isChatPanel);
+  document.querySelector(".app")?.classList.toggle("chat-panel-active", isChatPanel);
 }
 
 export function appendStatusMetric(grid, label, id) {
@@ -388,11 +390,6 @@ export function buildConsoleLayout() {
     memoryPanel.panel.appendChild(memoryCard);
   }
 
-  const relationshipPanel = createPanel("relationshipPanel", "关系状态", "查看和调整当前 session 的关系阶段。");
-  if (!relationshipCard) {
-    relationshipPanel.panel.appendChild(createElement("div", "card", "关系状态已并入聊天测试页。"));
-  }
-
   const configPanel = createPanel("configPanel", "配置", "Admin Token 和模型/上下文配置。");
   if (configCard) {
     configPanel.panel.appendChild(configCard);
@@ -491,7 +488,6 @@ export function buildConsoleLayout() {
     chatPanel.panel,
     proactivePanel.panel,
     memoryPanel.panel,
-    relationshipPanel.panel,
     configPanel.panel,
     debugPanel.panel
   );

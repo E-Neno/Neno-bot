@@ -4,5 +4,6 @@ requests
 python-dotenv
 pydantic
 httpx
+pytest
 pilk
 dashscope

@@ -1,9 +1,9 @@
+import pytest
 from fastapi import HTTPException
 
 from app.routers.chat import chat
 from app.schemas import ChatRequest, MediaAttachment
 from app.services.chat import multimodal_input_service as service
-
 
 def make_request(message: str = "") -> ChatRequest:
     return ChatRequest(
@@ -18,7 +18,6 @@ def make_request(message: str = "") -> ChatRequest:
             )
         ],
     )
-
 
 def test_normalized_structure() -> None:
     original = service.generate_multimodal_chat_reply
@@ -43,13 +42,9 @@ def test_normalized_structure() -> None:
     finally:
         service.generate_multimodal_chat_reply = original
 
-    print("== normalized_structure ==")
-    print(normalized)
-    print()
     assert normalized.startswith("[用户发送了一张图片，以下是图片理解结果]")
     assert "用户附带文字：这张图你能看到什么？" in normalized
     assert "用户附带文字：你能看懂它在想什么吗" not in normalized
-
 
 def test_user_facing_failure_message() -> None:
     original = service.generate_multimodal_chat_reply
@@ -59,25 +54,10 @@ def test_user_facing_failure_message() -> None:
 
     service.generate_multimodal_chat_reply = fake_generate_multimodal_chat_reply
     try:
-        try:
+        with pytest.raises(HTTPException) as excinfo:
             chat(make_request("这张图你能看到什么？"))
-        except HTTPException as exc:
-            print("== failure_message ==")
-            print(exc.detail)
-            print()
-            assert exc.status_code == 400
-            assert exc.detail == service.MULTIMODAL_USER_ERROR_MESSAGE
-        else:
-            raise AssertionError("expected HTTPException")
+        
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == service.MULTIMODAL_USER_ERROR_MESSAGE
     finally:
         service.generate_multimodal_chat_reply = original
-
-
-def main() -> None:
-    test_normalized_structure()
-    test_user_facing_failure_message()
-    print("multimodal polish checks passed")
-
-
-if __name__ == "__main__":
-    main()
