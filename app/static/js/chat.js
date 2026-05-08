@@ -15,6 +15,8 @@ let relationshipStateRenderer = () => {};
 let relationshipContextRenderer = () => {};
 let reloadSessionMessages = async () => {};
 let renderedMessages = [];
+let selectedMessageId = null;
+let previewedMessageId = null;
 let routingStatusNode = null;
 let routingExplainNode = null;
 let routingSourceHintNode = null;
@@ -23,6 +25,7 @@ let routingQueryBtn = null;
 let routingSetBtn = null;
 let routingClearBtn = null;
 let routingAutofillBtn = null;
+let refreshSessionDebugBtn = null;
 
 function ensureContextMenu() {
   let menu = document.getElementById("messageContextMenu");
@@ -96,6 +99,192 @@ function normalizeMessage(messageOrRole, text) {
     metadata: messageOrRole?.metadata || null,
     has_preview: Boolean(messageOrRole?.has_preview),
   };
+}
+
+function setSelectedMessage(messageId) {
+  selectedMessageId = messageId ?? null;
+  for (const row of document.querySelectorAll("#messages .message-row")) {
+    row.classList.toggle("is-selected", row.dataset.messageId === String(selectedMessageId));
+  }
+}
+
+function clearMessageDebugPanel() {
+  const status = document.getElementById("messageDebugStatus");
+  if (status) {
+    status.textContent = "尚未选择消息。";
+  }
+  const box = document.getElementById("messageDebugBox");
+  if (box) {
+    clearChildren(box);
+    box.textContent = "右键任意 user / assistant 消息，查看该轮聚合与提交调试信息。";
+  }
+}
+
+function clearPreviewPanel() {
+  previewedMessageId = null;
+  const status = document.getElementById("chatPreviewStatus");
+  if (status) {
+    status.textContent = "尚未预览；右键一条输入消息可直接查看真实链路。";
+  }
+  const box = document.getElementById("chatPreviewBox");
+  if (box) {
+    clearChildren(box);
+  }
+}
+
+function findRenderedMessageById(messageId) {
+  return renderedMessages.find((item) => item?.id === messageId) || null;
+}
+
+function renderSelectedMessageDebug(messageId) {
+  const message = findRenderedMessageById(messageId);
+  if (!message) {
+    clearMessageDebugPanel();
+    return;
+  }
+  renderMessageDebugPanel({
+    trace_id: message.trace_id,
+    message_id: message.id,
+    message,
+    preview_source_message_id: message.metadata?.preview_source_message_id || null,
+    preview_source_role: message.metadata?.preview_source_message_id ? "user" : message.role,
+    preview_source_metadata: message.metadata?.preview_source_metadata || {},
+  });
+}
+
+function cloneValue(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function shortBatchLabel(batchId) {
+  const text = String(batchId || "").trim();
+  if (!text) {
+    return "";
+  }
+  const match = text.match(/#batch-(\d+)$/);
+  if (match) {
+    return `Batch #${match[1]}`;
+  }
+  return text.length > 18 ? `${text.slice(0, 8)}...${text.slice(-6)}` : text;
+}
+
+function getAggregationMetadata(message) {
+  const metadata = message?.metadata || {};
+  if (metadata.aggregation) {
+    return metadata.aggregation;
+  }
+  if (metadata.preview_source_metadata?.aggregation) {
+    return metadata.preview_source_metadata.aggregation;
+  }
+  return null;
+}
+
+function getSubmitDebugMetadata(message) {
+  const metadata = message?.metadata || {};
+  if (metadata.submit_debug) {
+    return metadata.submit_debug;
+  }
+  if (metadata.preview_source_metadata?.submit_debug) {
+    return metadata.preview_source_metadata.submit_debug;
+  }
+  return null;
+}
+
+function inferAggregationState(message) {
+  const aggregation = getAggregationMetadata(message) || {};
+  const submitDebug = getSubmitDebugMetadata(message) || {};
+  if (aggregation.batch_state) {
+    return aggregation.batch_state;
+  }
+  if (submitDebug.submit_state === "waiting_for_turn") {
+    return "waiting_for_turn";
+  }
+  if (submitDebug.submit_state === "completed") {
+    return "completed";
+  }
+  if (submitDebug.submit_state === "failed") {
+    return "failed";
+  }
+  return aggregation.is_aggregated === false ? "single_submit" : "";
+}
+
+function buildTraceContextMap(messages) {
+  const traceMap = new Map();
+  for (const message of messages || []) {
+    const traceId = String(message?.trace_id || "").trim();
+    if (!traceId || message?.role !== "user") {
+      continue;
+    }
+    const metadata = cloneValue(message.metadata || {}) || {};
+    const existing = traceMap.get(traceId) || {
+      firstUserId: message.id ?? null,
+      previewSourceMessageId: message.id ?? null,
+      aggregation: null,
+      submitDebug: null,
+      ingress: null,
+      userCount: 0,
+      arrivalSeqs: [],
+      sourceMessageIds: [],
+    };
+    existing.userCount += 1;
+    if (metadata.aggregation && !existing.aggregation) {
+      existing.aggregation = cloneValue(metadata.aggregation);
+    }
+    if (metadata.submit_debug && !existing.submitDebug) {
+      existing.submitDebug = cloneValue(metadata.submit_debug);
+    }
+    if (metadata.ingress && !existing.ingress) {
+      existing.ingress = cloneValue(metadata.ingress);
+    }
+    if (metadata.ingress?.arrival_seq) {
+      existing.arrivalSeqs.push(metadata.ingress.arrival_seq);
+    }
+    if (message.id) {
+      existing.sourceMessageIds.push(message.id);
+    }
+    traceMap.set(traceId, existing);
+  }
+  return traceMap;
+}
+
+function applyDerivedTraceContext(messages) {
+  const normalized = (messages || []).map((item) => normalizeMessage(item));
+  const traceMap = buildTraceContextMap(normalized);
+  return normalized.map((message) => {
+    if (message.role !== "assistant") {
+      return message;
+    }
+    const traceId = String(message.trace_id || "").trim();
+    const context = traceMap.get(traceId);
+    if (!context) {
+      return message;
+    }
+    const metadata = cloneValue(message.metadata || {}) || {};
+    if (context.aggregation && !metadata.aggregation) {
+      metadata.aggregation = cloneValue(context.aggregation);
+    }
+    if (context.submitDebug && !metadata.submit_debug) {
+      metadata.submit_debug = cloneValue(context.submitDebug);
+    }
+    if (context.ingress && !metadata.ingress) {
+      metadata.ingress = cloneValue(context.ingress);
+    }
+    metadata.preview_source_message_id = context.previewSourceMessageId;
+    metadata.source_message_count = context.userCount;
+    metadata.source_arrival_seqs = context.arrivalSeqs;
+    metadata.source_message_ids = context.sourceMessageIds;
+    return {
+      ...message,
+      metadata,
+    };
+  });
 }
 
 function buildTextInputRecord(text, source = "web") {
@@ -463,7 +652,8 @@ function appendBadgeRow(container, labels, extraClass = "") {
 function buildMessageBadges(message) {
   const metadata = message.metadata || {};
   const pipeline = metadata.pipeline || {};
-  const submitDebug = metadata.submit_debug || {};
+  const submitDebug = getSubmitDebugMetadata(message) || {};
+  const aggregation = getAggregationMetadata(message) || {};
   const labels = [];
   const modality = String(message.message_type || metadata.message_type || "text").toLowerCase();
   const modalityLabelMap = {
@@ -502,8 +692,28 @@ function buildMessageBadges(message) {
   if (metadata.ingress?.controller_mode === "session_serial_submit") {
     labels.push({ label: "Gate serial", tone: "ok" });
   }
+  if (metadata.ingress?.controller_mode === "session_aggregate_then_submit") {
+    labels.push({ label: "Gate aggregate", tone: "info" });
+  }
   if (metadata.ingress?.arrival_seq) {
     labels.push({ label: `arrival #${metadata.ingress.arrival_seq}`, tone: "muted" });
+  }
+  if (aggregation.batch_id) {
+    labels.push({ label: shortBatchLabel(aggregation.batch_id), tone: "info" });
+  }
+  if (aggregation.source_count > 1 || aggregation.source_message_count > 1) {
+    labels.push({ label: `${aggregation.source_count || aggregation.source_message_count} in batch`, tone: "muted" });
+  }
+  const aggregationState = inferAggregationState(message);
+  if (aggregationState) {
+    const tone = aggregationState.includes("failed")
+      ? "danger"
+      : aggregationState === "batch_completed" || aggregationState === "completed"
+        ? "ok"
+        : aggregationState === "batch_submitting" || aggregationState === "waiting_for_turn"
+          ? "info"
+          : "muted";
+    labels.push({ label: aggregationState.replace("batch_", ""), tone });
   }
   if (submitDebug.submit_state) {
     const tone = submitDebug.submit_state === "failed"
@@ -521,7 +731,8 @@ function buildMessageBadges(message) {
 function buildMessageSummary(message) {
   const metadata = message.metadata || {};
   const pipeline = metadata.pipeline || {};
-  const submitDebug = metadata.submit_debug || {};
+  const submitDebug = getSubmitDebugMetadata(message) || {};
+  const aggregation = getAggregationMetadata(message) || {};
   const parts = [];
 
   if (metadata.raw_input && metadata.raw_input !== message.content) {
@@ -541,11 +752,23 @@ function buildMessageSummary(message) {
   if (metadata.ingress?.arrival_seq) {
     parts.push(`arrival_seq=${metadata.ingress.arrival_seq}`);
   }
+  if (aggregation.batch_id) {
+    parts.push(`batch=${shortBatchLabel(aggregation.batch_id)}`);
+  }
+  if ((aggregation.source_count || aggregation.source_message_count || 0) > 1) {
+    parts.push(`batch_sources=${aggregation.source_count || aggregation.source_message_count}`);
+  }
+  if (aggregation.batch_state) {
+    parts.push(`batch_state=${aggregation.batch_state}`);
+  }
   if (submitDebug.submit_state) {
     parts.push(`submit=${submitDebug.submit_state}`);
   }
   if (submitDebug.blocked_by_seq) {
     parts.push(`blocked_by=${submitDebug.blocked_by_seq}`);
+  }
+  if (aggregation.source_arrival_seqs?.length && message.role === "assistant") {
+    parts.push(`source_arrivals=${aggregation.source_arrival_seqs.join(",")}`);
   }
   if (submitDebug.failed_phase) {
     parts.push(`failed_phase=${submitDebug.failed_phase}`);
@@ -589,8 +812,9 @@ function renderMessageNode(message) {
     bubble.appendChild(summaryLine);
   }
 
-  if (message.role === "user" && message.id) {
+  if (message.id) {
     row.dataset.messageId = String(message.id);
+    row.classList.toggle("is-selected", selectedMessageId === message.id);
     row.addEventListener("contextmenu", (event) => showMessageContextMenu(event, message));
   }
 
@@ -616,7 +840,7 @@ function renderMessages() {
 }
 
 export function setMessages(messages) {
-  renderedMessages = (messages || []).map((item) => normalizeMessage(item));
+  renderedMessages = applyDerivedTraceContext(messages || []);
   renderMessages();
   updateRoutingSourceHint();
 }
@@ -631,9 +855,12 @@ export function addMessage(messageOrRole, text) {
 
 export function resetMessages() {
   renderedMessages = [];
+  selectedMessageId = null;
   clearChildren(document.getElementById("messages"));
   updateSessionMessageCount(0);
   updateRoutingSourceHint();
+  clearPreviewPanel();
+  clearMessageDebugPanel();
 }
 
 export function showChatEmptyState(message = "当前没有可用会话。") {
@@ -664,6 +891,8 @@ export function clearChatDebugState(options = {}) {
     previewBoxText = "",
     candidateStatus = "",
     relationshipContext = "暂无",
+    messageDebugStatus = "尚未选择消息。",
+    sessionDebugStatus = "还没加载",
   } = options;
 
   lastCandidate = null;
@@ -683,6 +912,26 @@ export function clearChatDebugState(options = {}) {
     if (previewBoxText) {
       previewBox.textContent = previewBoxText;
     }
+  }
+
+  const messageDebugStatusNode = document.getElementById("messageDebugStatus");
+  if (messageDebugStatusNode) {
+    messageDebugStatusNode.textContent = messageDebugStatus;
+  }
+  const messageDebugBox = document.getElementById("messageDebugBox");
+  if (messageDebugBox) {
+    clearChildren(messageDebugBox);
+    messageDebugBox.textContent = "右键任意 user / assistant 消息，查看该轮聚合与提交调试信息。";
+  }
+
+  const sessionDebugStatusNode = document.getElementById("sessionDebugStatus");
+  if (sessionDebugStatusNode) {
+    sessionDebugStatusNode.textContent = sessionDebugStatus;
+  }
+  const sessionDebugBox = document.getElementById("sessionDebugBox");
+  if (sessionDebugBox) {
+    clearChildren(sessionDebugBox);
+    sessionDebugBox.textContent = "点击刷新查看当前 session 的 batch / gate 状态。";
   }
 
   const candidateStatusNode = document.getElementById("candidateStatus");
@@ -876,6 +1125,213 @@ function appendPreviewSection(box, title, content, meta) {
   box.appendChild(section);
 }
 
+function appendDebugMiniCard(box, title, content, meta = "") {
+  const section = document.createElement("div");
+  section.className = "debug-mini-card";
+
+  const head = document.createElement("div");
+  head.className = "debug-mini-head";
+
+  const titleNode = document.createElement("span");
+  titleNode.textContent = title;
+
+  const metaNode = document.createElement("span");
+  metaNode.className = "debug-mini-meta";
+  metaNode.textContent = meta;
+
+  const body = document.createElement("div");
+  body.className = "debug-mini-body";
+  body.textContent = content || "暂无";
+
+  head.append(titleNode, metaNode);
+  section.append(head, body);
+  box.appendChild(section);
+}
+
+function formatTimeValue(value) {
+  return value ? String(value).replace("T", " ").slice(0, 19) : "-";
+}
+
+function formatAggregationDebug(metadata = {}, message = {}) {
+  const aggregation = getAggregationMetadata({ metadata }) || {};
+  const submitDebug = getSubmitDebugMetadata({ metadata }) || {};
+  const sourceCount = aggregation.source_count || aggregation.source_message_count || metadata.source_message_count || 1;
+  const lines = [
+    aggregation.batch_id ? `batch_id=${aggregation.batch_id}` : "batch_id=-",
+    `is_aggregated=${sourceCount > 1 ? "true" : "false"}`,
+    aggregation.batch_state ? `batch_state=${aggregation.batch_state}` : "batch_state=single_submit",
+    aggregation.source_arrival_seqs?.length ? `source_arrival_seqs=${aggregation.source_arrival_seqs.join(",")}` : "",
+    aggregation.source_message_ids?.length ? `source_message_ids=${aggregation.source_message_ids.join(",")}` : "",
+    aggregation.source_trace_ids?.length ? `source_trace_ids=${aggregation.source_trace_ids.join(",")}` : "",
+    `source_message_count=${sourceCount}`,
+    submitDebug.blocked_by_seq ? `blocked_by_seq=${submitDebug.blocked_by_seq}` : "",
+    aggregation.opened_at ? `opened_at=${formatTimeValue(aggregation.opened_at)}` : "",
+    aggregation.sealed_at ? `sealed_at=${formatTimeValue(aggregation.sealed_at)}` : "",
+    submitDebug.ready_at ? `ready_at=${formatTimeValue(submitDebug.ready_at)}` : "",
+    submitDebug.submit_started_at ? `submit_started_at=${formatTimeValue(submitDebug.submit_started_at)}` : "",
+    submitDebug.completed_at ? `completed_at=${formatTimeValue(submitDebug.completed_at)}` : "",
+    submitDebug.failed_at ? `failed_at=${formatTimeValue(submitDebug.failed_at)}` : "",
+    submitDebug.failed_phase ? `failure_stage=${submitDebug.failed_phase}` : "",
+    submitDebug.submit_state ? `completion_state=${submitDebug.submit_state}` : "",
+  ].filter(Boolean);
+
+  if (message.role === "assistant" && aggregation.aggregated_message) {
+    lines.push("", "aggregated_message:", aggregation.aggregated_message);
+  }
+  return lines.join("\n") || "Not aggregated";
+}
+
+function renderMessageDebugPanel(data = {}) {
+  const status = document.getElementById("messageDebugStatus");
+  const box = document.getElementById("messageDebugBox");
+  if (!status || !box) {
+    return;
+  }
+  clearChildren(box);
+
+  const message = data.message || {};
+  const metadata = message.metadata || {};
+  const previewSourceMetadata = data.preview_source_metadata || {};
+  const effectiveMetadata = {
+    ...cloneValue(metadata || {}),
+    preview_source_metadata: cloneValue(previewSourceMetadata || {}),
+  };
+  const aggregation = getAggregationMetadata({ metadata: effectiveMetadata }) || {};
+  const submitDebug = getSubmitDebugMetadata({ metadata: effectiveMetadata }) || {};
+  const isAggregated = (aggregation.source_count || aggregation.source_message_count || 0) > 1;
+  const batchMeta = aggregation.batch_state || submitDebug.submit_state || (isAggregated ? "aggregated" : "single_submit");
+
+  appendDebugMiniCard(
+    box,
+    "Message Link",
+    [
+      message.id ? `message_id=${message.id}` : "",
+      message.role ? `role=${message.role}` : "",
+      data.trace_id ? `trace_id=${data.trace_id}` : "",
+      data.preview_source_message_id ? `preview_source_message_id=${data.preview_source_message_id}` : "",
+      data.preview_source_role ? `preview_source_role=${data.preview_source_role}` : "",
+    ].filter(Boolean).join("\n") || "暂无",
+    batchMeta
+  );
+  appendDebugMiniCard(
+    box,
+    "Aggregation",
+    formatAggregationDebug(effectiveMetadata, message),
+    isAggregated ? "aggregated" : "not aggregated"
+  );
+  appendDebugMiniCard(
+    box,
+    "Submit",
+    [
+      submitDebug.submit_state ? `submit_state=${submitDebug.submit_state}` : "submit_state=-",
+      submitDebug.phase ? `phase=${submitDebug.phase}` : "",
+      submitDebug.blocked_by_seq ? `blocked_by_seq=${submitDebug.blocked_by_seq}` : "",
+      submitDebug.submit_seq ? `submit_seq=${submitDebug.submit_seq}` : "",
+      submitDebug.queue_wait_ms !== undefined && submitDebug.queue_wait_ms !== null ? `queue_wait_ms=${submitDebug.queue_wait_ms}` : "",
+      submitDebug.submit_latency_ms !== undefined && submitDebug.submit_latency_ms !== null ? `submit_latency_ms=${submitDebug.submit_latency_ms}` : "",
+      submitDebug.error_type ? `error_type=${submitDebug.error_type}` : "",
+      submitDebug.error_message ? `error_message=${submitDebug.error_message}` : "",
+    ].filter(Boolean).join("\n") || "暂无",
+    submitDebug.submit_state || "n/a"
+  );
+
+  status.textContent = [
+    message.role === "assistant" ? "当前选中的是 assistant reply。" : "当前选中的是原始消息。",
+    isAggregated ? "这轮回复来自聚合 batch。" : "这轮回复是普通单条 submit。",
+    aggregation.batch_state ? `batch_state=${aggregation.batch_state}` : "",
+    submitDebug.blocked_by_seq ? `blocked_by_seq=${submitDebug.blocked_by_seq}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function renderSessionDebugPanel(sessionId, submitSnapshot = {}, aggregationSnapshot = {}) {
+  const status = document.getElementById("sessionDebugStatus");
+  const box = document.getElementById("sessionDebugBox");
+  if (!status || !box) {
+    return;
+  }
+  clearChildren(box);
+
+  const activeBatch = (aggregationSnapshot.active_batches || [])[0] || null;
+  const recentBatch = (aggregationSnapshot.recent_batches || [])[0] || null;
+  const activeSubmit = (submitSnapshot.active || [])[0] || null;
+  const recentSubmit = (submitSnapshot.recent || [])[0] || null;
+
+  appendDebugMiniCard(
+    box,
+    "Aggregation Live",
+    [
+      activeBatch?.batch_id ? `open_batch=${activeBatch.batch_id}` : "open_batch=-",
+      activeBatch?.batch_state ? `batch_state=${activeBatch.batch_state}` : recentBatch?.batch_state ? `last_batch_state=${recentBatch.batch_state}` : "",
+      activeBatch?.source_count !== undefined ? `source_count=${activeBatch.source_count}` : "",
+      activeBatch?.source_arrival_seqs?.length ? `source_arrival_seqs=${activeBatch.source_arrival_seqs.join(",")}` : "",
+      activeBatch?.ready_count !== undefined ? `ready_count=${activeBatch.ready_count}` : "",
+      activeBatch?.terminal_count !== undefined ? `terminal_count=${activeBatch.terminal_count}` : "",
+      activeBatch?.sealed_at ? `sealed_at=${formatTimeValue(activeBatch.sealed_at)}` : "",
+    ].filter(Boolean).join("\n") || "暂无 active batch",
+    activeBatch?.batch_state || recentBatch?.batch_state || "idle"
+  );
+  appendDebugMiniCard(
+    box,
+    "Submit Live",
+    [
+      activeSubmit?.arrival_seq ? `active_arrival_seq=${activeSubmit.arrival_seq}` : "active_arrival_seq=-",
+      activeSubmit?.submit_state ? `submit_state=${activeSubmit.submit_state}` : recentSubmit?.submit_state ? `last_submit_state=${recentSubmit.submit_state}` : "",
+      activeSubmit?.blocked_by_seq ? `blocked_by_seq=${activeSubmit.blocked_by_seq}` : "",
+      activeSubmit?.submit_seq ? `submit_seq=${activeSubmit.submit_seq}` : recentSubmit?.submit_seq ? `last_submit_seq=${recentSubmit.submit_seq}` : "",
+      activeSubmit?.queue_wait_ms !== undefined && activeSubmit?.queue_wait_ms !== null ? `queue_wait_ms=${activeSubmit.queue_wait_ms}` : "",
+      activeSubmit?.submit_started_at ? `submit_started_at=${formatTimeValue(activeSubmit.submit_started_at)}` : "",
+      activeSubmit?.completed_at ? `completed_at=${formatTimeValue(activeSubmit.completed_at)}` : recentSubmit?.completed_at ? `last_completed_at=${formatTimeValue(recentSubmit.completed_at)}` : "",
+    ].filter(Boolean).join("\n") || "暂无 active submit",
+    activeSubmit?.submit_state || recentSubmit?.submit_state || "idle"
+  );
+  appendDebugMiniCard(
+    box,
+    "Recent Batches",
+    ((aggregationSnapshot.recent_batches || []).slice(0, 3).map((item) => {
+      return [
+        shortBatchLabel(item.batch_id),
+        item.batch_state || "-",
+        item.source_arrival_seqs?.length ? `arrivals=${item.source_arrival_seqs.join(",")}` : "",
+      ].filter(Boolean).join(" · ");
+    }).join("\n")) || "暂无 recent batch",
+    `${aggregationSnapshot.recent_batch_count || 0} recent`
+  );
+
+  status.textContent = [
+    `session=${sessionId}`,
+    activeBatch?.batch_state ? `batch=${activeBatch.batch_state}` : "batch=idle",
+    activeSubmit?.submit_state ? `submit=${activeSubmit.submit_state}` : recentSubmit?.submit_state ? `submit=${recentSubmit.submit_state}` : "submit=idle",
+  ].join(" · ");
+}
+
+export async function loadCurrentSessionDebug(options = {}) {
+  const { silent = false } = options;
+  const sessionId = getSessionId();
+  const status = document.getElementById("sessionDebugStatus");
+  if (!silent && status) {
+    status.textContent = `正在加载 ${sessionId} 的 live session debug...`;
+  }
+  try {
+    const [submitSnapshot, aggregationSnapshot] = await Promise.all([
+      requestJson(
+        `/debug/session-submit?session_id=${encodeURIComponent(sessionId)}`,
+        { method: "GET", headers: getAdminHeaders() },
+        "加载 session submit 状态失败："
+      ),
+      requestJson(
+        `/debug/session-aggregation?session_id=${encodeURIComponent(sessionId)}`,
+        { method: "GET", headers: getAdminHeaders() },
+        "加载 session aggregation 状态失败："
+      ),
+    ]);
+    renderSessionDebugPanel(sessionId, submitSnapshot, aggregationSnapshot);
+  } catch (err) {
+    if (status) {
+      status.textContent = err.message;
+    }
+  }
+}
+
 function renderChatPreview(data, mode = "draft") {
   const box = document.getElementById("chatPreviewBox");
   const status = document.getElementById("chatPreviewStatus");
@@ -887,6 +1343,16 @@ function renderChatPreview(data, mode = "draft") {
   const counts = preview.counts || {};
   const message = data?.message || {};
   const metadata = message?.metadata || {};
+  const previewSourceMetadata = data?.preview_source_metadata || {};
+  const baseMetadata = message?.role === "assistant" && Object.keys(previewSourceMetadata).length
+    ? previewSourceMetadata
+    : metadata;
+  const effectiveMetadata = {
+    ...cloneValue(metadata || {}),
+    preview_source_metadata: cloneValue(previewSourceMetadata || {}),
+  };
+  const aggregation = getAggregationMetadata({ metadata: effectiveMetadata }) || {};
+  const submitDebug = getSubmitDebugMetadata({ metadata: effectiveMetadata }) || {};
   clearChildren(box);
 
   const summary = document.createElement("div");
@@ -897,98 +1363,121 @@ function renderChatPreview(data, mode = "draft") {
   appendPreviewMetric(summary, "记忆", counts.memory_count ?? 0);
   appendPreviewMetric(summary, "历史", counts.recent_message_count ?? 0);
   appendPreviewMetric(summary, "final messages", counts.final_message_count ?? 0);
+  if (mode === "message") {
+    appendPreviewMetric(summary, "Batch", shortBatchLabel(aggregation.batch_id) || "single");
+    appendPreviewMetric(summary, "聚合", (aggregation.source_count || aggregation.source_message_count || 0) > 1 ? "true" : "false");
+    appendPreviewMetric(summary, "状态", aggregation.batch_state || submitDebug.submit_state || "-");
+  }
   box.appendChild(summary);
 
   if (mode === "message") {
     appendPreviewSection(
       box,
       "原始输入",
-      metadata.raw_input || message.content || "",
-      `${textLength(metadata.raw_input || message.content || "")} 字`
+      baseMetadata.raw_input || message.content || "",
+      `${textLength(baseMetadata.raw_input || message.content || "")} 字`
     );
     appendPreviewSection(
       box,
       "识别 / 理解结果",
       [
-        metadata.pipeline?.asr?.text ? `ASR：${metadata.pipeline.asr.text}` : "",
-        metadata.pipeline?.vision?.hit ? `Vision：${metadata.pipeline.vision.success === false ? "failed" : "hit"}` : "",
-        metadata.pipeline?.normalization?.status ? `Normalize：${metadata.pipeline.normalization.status}` : "",
+        baseMetadata.pipeline?.asr?.text ? `ASR：${baseMetadata.pipeline.asr.text}` : "",
+        baseMetadata.pipeline?.vision?.hit ? `Vision：${baseMetadata.pipeline.vision.success === false ? "failed" : "hit"}` : "",
+        baseMetadata.pipeline?.normalization?.status ? `Normalize：${baseMetadata.pipeline.normalization.status}` : "",
       ].filter(Boolean).join("\n") || "暂无",
       "链路命中情况"
     );
     appendPreviewSection(
       box,
       "归一化结果",
-      metadata.normalized_input || preview.current_user_message || "",
-      `${textLength(metadata.normalized_input || preview.current_user_message || "")} 字`
+      baseMetadata.normalized_input || preview.current_user_message || "",
+      `${textLength(baseMetadata.normalized_input || preview.current_user_message || "")} 字`
     );
     appendPreviewSection(
       box,
       "状态 / 失败点",
-      formatJsonBlock(metadata.pipeline || {}),
-      metadata.pipeline?.normalization?.failed_at ? `failed_at=${metadata.pipeline.normalization.failed_at}` : "success / bypass"
+      formatJsonBlock(baseMetadata.pipeline || {}),
+      baseMetadata.pipeline?.normalization?.failed_at ? `failed_at=${baseMetadata.pipeline.normalization.failed_at}` : "success / bypass"
     );
     appendPreviewSection(
       box,
       "Routing Explain",
       [
-        metadata.routing?.routing_key ? `routing_key=${metadata.routing.routing_key}` : "",
-        metadata.routing?.auto_session_id ? `auto_session_id=${metadata.routing.auto_session_id}` : "",
-        metadata.routing?.final_session_id ? `final_session_id=${metadata.routing.final_session_id}` : "",
-        metadata.routing?.routing_mode ? `routing_mode=${metadata.routing.routing_mode}` : "",
-        metadata.routing?.routing_reason ? `routing_reason=${metadata.routing.routing_reason}` : "",
-        metadata.routing?.override_session_id ? `override_session_id=${metadata.routing.override_session_id}` : "",
+        baseMetadata.routing?.routing_key ? `routing_key=${baseMetadata.routing.routing_key}` : "",
+        baseMetadata.routing?.auto_session_id ? `auto_session_id=${baseMetadata.routing.auto_session_id}` : "",
+        baseMetadata.routing?.final_session_id ? `final_session_id=${baseMetadata.routing.final_session_id}` : "",
+        baseMetadata.routing?.routing_mode ? `routing_mode=${baseMetadata.routing.routing_mode}` : "",
+        baseMetadata.routing?.routing_reason ? `routing_reason=${baseMetadata.routing.routing_reason}` : "",
+        baseMetadata.routing?.override_session_id ? `override_session_id=${baseMetadata.routing.override_session_id}` : "",
       ].filter(Boolean).join("\n") || "暂无",
-      metadata.routing?.routing_mode || "n/a"
+      baseMetadata.routing?.routing_mode || "n/a"
     );
     appendPreviewSection(
       box,
       "Ingress / Gate",
       [
-        metadata.ingress?.controller_mode ? `controller_mode=${metadata.ingress.controller_mode}` : "",
-        metadata.ingress?.arrival_seq ? `arrival_seq=${metadata.ingress.arrival_seq}` : "",
-        metadata.ingress?.received_at ? `received_at=${metadata.ingress.received_at}` : "",
-        metadata.account_id ? `account_id=${metadata.account_id}` : "",
-        metadata.platform ? `platform=${metadata.platform}` : "",
-        metadata.user_id ? `user_id=${metadata.user_id}` : "",
-        metadata.chat_type ? `chat_type=${metadata.chat_type}` : "",
-        metadata.group_id ? `group_id=${metadata.group_id}` : "",
+        effectiveMetadata.ingress?.controller_mode ? `controller_mode=${effectiveMetadata.ingress.controller_mode}` : "",
+        effectiveMetadata.ingress?.arrival_seq ? `arrival_seq=${effectiveMetadata.ingress.arrival_seq}` : "",
+        effectiveMetadata.ingress?.received_at ? `received_at=${effectiveMetadata.ingress.received_at}` : "",
+        effectiveMetadata.account_id ? `account_id=${effectiveMetadata.account_id}` : "",
+        effectiveMetadata.platform ? `platform=${effectiveMetadata.platform}` : "",
+        effectiveMetadata.user_id ? `user_id=${effectiveMetadata.user_id}` : "",
+        effectiveMetadata.chat_type ? `chat_type=${effectiveMetadata.chat_type}` : "",
+        effectiveMetadata.group_id ? `group_id=${effectiveMetadata.group_id}` : "",
       ].filter(Boolean).join("\n") || "暂无",
-      metadata.ingress?.controller_mode || "direct"
+      effectiveMetadata.ingress?.controller_mode || "direct"
+    );
+    appendPreviewSection(
+      box,
+      "Aggregation",
+      [
+        aggregation.batch_id ? `batch_id=${aggregation.batch_id}` : "batch_id=-",
+        `is_aggregated=${(aggregation.source_count || aggregation.source_message_count || 0) > 1 ? "true" : "false"}`,
+        aggregation.batch_state ? `batch_state=${aggregation.batch_state}` : "batch_state=single_submit",
+        aggregation.source_count ? `source_count=${aggregation.source_count}` : aggregation.source_message_count ? `source_count=${aggregation.source_message_count}` : "",
+        aggregation.source_arrival_seqs?.length ? `source_arrival_seqs=${aggregation.source_arrival_seqs.join(",")}` : "",
+        aggregation.source_message_ids?.length ? `source_message_ids=${aggregation.source_message_ids.join(",")}` : "",
+        aggregation.source_trace_ids?.length ? `source_trace_ids=${aggregation.source_trace_ids.join(",")}` : "",
+        aggregation.opened_at ? `opened_at=${aggregation.opened_at}` : "",
+        aggregation.deadline_at ? `deadline_at=${aggregation.deadline_at}` : "",
+        aggregation.sealed_at ? `sealed_at=${aggregation.sealed_at}` : "",
+        aggregation.aggregated_message ? `aggregated_message=\n${aggregation.aggregated_message}` : "",
+      ].filter(Boolean).join("\n") || "Not aggregated",
+      aggregation.batch_state || ((aggregation.source_count || aggregation.source_message_count || 0) > 1 ? "aggregated" : "single")
     );
     appendPreviewSection(
       box,
       "Submit Debug",
       [
-        metadata.submit_debug?.submit_state ? `submit_state=${metadata.submit_debug.submit_state}` : "",
-        metadata.submit_debug?.phase ? `phase=${metadata.submit_debug.phase}` : "",
-        metadata.submit_debug?.blocked_by_seq ? `blocked_by_seq=${metadata.submit_debug.blocked_by_seq}` : "",
-        metadata.submit_debug?.submit_seq ? `submit_seq=${metadata.submit_debug.submit_seq}` : "",
-        metadata.submit_debug?.ready_at ? `ready_at=${metadata.submit_debug.ready_at}` : "",
-        metadata.submit_debug?.waiting_started_at ? `waiting_started_at=${metadata.submit_debug.waiting_started_at}` : "",
-        metadata.submit_debug?.submit_started_at ? `submit_started_at=${metadata.submit_debug.submit_started_at}` : "",
-        metadata.submit_debug?.completed_at ? `completed_at=${metadata.submit_debug.completed_at}` : "",
-        metadata.submit_debug?.fallback_completed_at ? `fallback_completed_at=${metadata.submit_debug.fallback_completed_at}` : "",
-        metadata.submit_debug?.failed_at ? `failed_at=${metadata.submit_debug.failed_at}` : "",
-        metadata.submit_debug?.failed_phase ? `failed_phase=${metadata.submit_debug.failed_phase}` : "",
-        metadata.submit_debug?.queue_wait_ms !== undefined && metadata.submit_debug?.queue_wait_ms !== null ? `queue_wait_ms=${metadata.submit_debug.queue_wait_ms}` : "",
-        metadata.submit_debug?.submit_latency_ms !== undefined && metadata.submit_debug?.submit_latency_ms !== null ? `submit_latency_ms=${metadata.submit_debug.submit_latency_ms}` : "",
-        metadata.submit_debug?.error_type ? `error_type=${metadata.submit_debug.error_type}` : "",
-        metadata.submit_debug?.error_message ? `error_message=${metadata.submit_debug.error_message}` : "",
+        submitDebug.submit_state ? `submit_state=${submitDebug.submit_state}` : "",
+        submitDebug.phase ? `phase=${submitDebug.phase}` : "",
+        submitDebug.blocked_by_seq ? `blocked_by_seq=${submitDebug.blocked_by_seq}` : "",
+        submitDebug.submit_seq ? `submit_seq=${submitDebug.submit_seq}` : "",
+        submitDebug.ready_at ? `ready_at=${submitDebug.ready_at}` : "",
+        submitDebug.waiting_started_at ? `waiting_started_at=${submitDebug.waiting_started_at}` : "",
+        submitDebug.submit_started_at ? `submit_started_at=${submitDebug.submit_started_at}` : "",
+        submitDebug.completed_at ? `completed_at=${submitDebug.completed_at}` : "",
+        submitDebug.fallback_completed_at ? `fallback_completed_at=${submitDebug.fallback_completed_at}` : "",
+        submitDebug.failed_at ? `failed_at=${submitDebug.failed_at}` : "",
+        submitDebug.failed_phase ? `failed_phase=${submitDebug.failed_phase}` : "",
+        submitDebug.queue_wait_ms !== undefined && submitDebug.queue_wait_ms !== null ? `queue_wait_ms=${submitDebug.queue_wait_ms}` : "",
+        submitDebug.submit_latency_ms !== undefined && submitDebug.submit_latency_ms !== null ? `submit_latency_ms=${submitDebug.submit_latency_ms}` : "",
+        submitDebug.error_type ? `error_type=${submitDebug.error_type}` : "",
+        submitDebug.error_message ? `error_message=${submitDebug.error_message}` : "",
       ].filter(Boolean).join("\n") || "暂无",
-      metadata.submit_debug?.submit_state || "n/a"
+      submitDebug.submit_state || "n/a"
     );
     appendPreviewSection(
       box,
       "记忆候选",
-      formatMemoryCandidate(metadata.memory_candidate_snapshot),
-      metadata.memory_candidate_snapshot?.source_label || metadata.memory_candidate_snapshot?.source_modality || "无"
+      formatMemoryCandidate(baseMetadata.memory_candidate_snapshot),
+      baseMetadata.memory_candidate_snapshot?.source_label || baseMetadata.memory_candidate_snapshot?.source_modality || "无"
     );
     appendPreviewSection(
       box,
       "记忆决策",
-      formatMemoryDecision(metadata.memory_candidate_decision),
-      metadata.memory_auto_added ? "auto added" : "not auto added"
+      formatMemoryDecision(baseMetadata.memory_candidate_decision),
+      baseMetadata.memory_auto_added ? "auto added" : "not auto added"
     );
   }
 
@@ -1057,6 +1546,10 @@ function buildTraceEventSection(events = []) {
   }
   const lines = items
     .filter((item) => [
+      "session_aggregation_batch_opened",
+      "session_aggregation_ingress_allocated",
+      "session_aggregation_source_ready",
+      "session_aggregation_batch_sealed",
       "session_routing_resolved",
       "session_submit_ingress_allocated",
       "session_submit_ready",
@@ -1071,8 +1564,11 @@ function buildTraceEventSection(events = []) {
         metadata.routing_mode ? `routing_mode=${metadata.routing_mode}` : "",
         metadata.auto_session_id ? `auto=${metadata.auto_session_id}` : "",
         metadata.final_session_id ? `final=${metadata.final_session_id}` : "",
+        metadata.batch_id ? `batch=${shortBatchLabel(metadata.batch_id)}` : "",
+        metadata.batch_state ? `batch_state=${metadata.batch_state}` : "",
         metadata.arrival_seq ? `arrival=${metadata.arrival_seq}` : "",
         metadata.submit_seq ? `submit=${metadata.submit_seq}` : "",
+        metadata.blocked_by_seq ? `blocked_by=${metadata.blocked_by_seq}` : "",
         metadata.queue_wait_ms !== undefined ? `wait=${metadata.queue_wait_ms}ms` : "",
         metadata.queued_remaining !== undefined ? `remaining=${metadata.queued_remaining}` : "",
         metadata.error_type ? `error=${metadata.error_type}` : "",
@@ -1128,6 +1624,8 @@ export async function previewChatInput() {
 }
 
 async function openMessagePreview(messageId) {
+  setSelectedMessage(messageId);
+  previewedMessageId = messageId;
   const status = document.getElementById("chatPreviewStatus");
   if (status) {
     status.textContent = `正在加载消息 #${messageId} 的真实预览...`;
@@ -1162,11 +1660,15 @@ async function openMessagePreview(messageId) {
     }
   }
   renderChatPreview(data, "message");
-  renderRoutingExplainFromMetadata(data?.message?.metadata || {});
+  renderMessageDebugPanel(data);
+  renderRoutingExplainFromMetadata(data?.preview_source_metadata || data?.message?.metadata || {});
+  await loadCurrentSessionDebug({ silent: true });
 }
 
 async function deleteMessageTurn(message) {
-  const scope = message.trace_id ? "该条输入及其本轮回复" : "该条消息";
+  const scope = message.trace_id
+    ? (message.role === "assistant" ? "该轮聚合输入及回复" : "该条输入及其本轮回复")
+    : "该条消息";
   if (!confirm(`确定删除${scope}吗？`)) {
     return;
   }
@@ -1189,11 +1691,35 @@ async function deleteMessageTurn(message) {
 }
 
 function showMessageContextMenu(event, message) {
+  const isSelected = selectedMessageId === message.id;
+  const isPreviewOpen = previewedMessageId === message.id;
   showContextMenu(event, [
     {
-      label: "查看完整输入预览",
+      label: isSelected ? "取消选中这条消息" : "选中这条消息",
+      onClick: async () => {
+        if (isSelected) {
+          setSelectedMessage(null);
+          clearMessageDebugPanel();
+        } else {
+          setSelectedMessage(message.id);
+          renderSelectedMessageDebug(message.id);
+        }
+        await loadCurrentSessionDebug({ silent: true });
+      },
+    },
+    {
+      label: isPreviewOpen
+        ? "取消选中并清空完整输入预览"
+        : (message.role === "assistant" ? "查看完整输入预览（该轮回复）" : "查看完整输入预览"),
       onClick: async () => {
         try {
+          if (isPreviewOpen) {
+            setSelectedMessage(null);
+            clearPreviewPanel();
+            clearMessageDebugPanel();
+            await loadCurrentSessionDebug({ silent: true });
+            return;
+          }
           await openMessagePreview(message.id);
         } catch (err) {
           document.getElementById("chatPreviewStatus").textContent = err.message;
@@ -1275,6 +1801,7 @@ export async function sendMessage() {
     relationshipStateRenderer(data.relationship_state);
     relationshipContextRenderer(data.relationship_context);
     updateRoutingSourceHint();
+    await loadCurrentSessionDebug({ silent: true });
   } catch (err) {
     addMessage("assistant", err.message);
   } finally {
@@ -1298,6 +1825,7 @@ export function bindChatEvents(options = {}) {
   routingSetBtn = document.getElementById("routingSetBtn");
   routingClearBtn = document.getElementById("routingClearBtn");
   routingAutofillBtn = document.getElementById("routingAutofillBtn");
+  refreshSessionDebugBtn = document.getElementById("refreshSessionDebugBtn");
   ensureContextMenu();
 
   input.addEventListener("keydown", function (event) {
@@ -1313,5 +1841,6 @@ export function bindChatEvents(options = {}) {
   routingQueryBtn?.addEventListener("click", queryRoutingExplain);
   routingSetBtn?.addEventListener("click", setRoutingOverride);
   routingClearBtn?.addEventListener("click", clearRoutingOverride);
+  refreshSessionDebugBtn?.addEventListener("click", () => loadCurrentSessionDebug());
   updateRoutingSourceHint();
 }

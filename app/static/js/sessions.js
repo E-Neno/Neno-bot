@@ -6,6 +6,7 @@ import {
   clearChatDebugState,
   getSessionId,
   hideContextMenu,
+  loadCurrentSessionDebug,
   resetMessages,
   setMessages,
   showChatEmptyState,
@@ -29,6 +30,7 @@ function applyEmptySessionState(message = "当前没有可用会话。") {
   showChatEmptyState("当前没有可用会话，你可以输入新的 session_id 开始测试。");
   clearChatDebugState({
     previewStatus: message,
+    sessionDebugStatus: "当前没有可用 session。",
   });
   clearRelationshipState("暂无会话");
 }
@@ -170,10 +172,12 @@ export async function loadSessionMessages() {
 
     if (messages.length === 0) {
       setMessages([]);
+      await loadCurrentSessionDebug({ silent: true });
       return;
     }
 
     setMessages(messages);
+    await loadCurrentSessionDebug({ silent: true });
   } catch (err) {
     addMessage("assistant", `加载会话 ${sessionId} 失败：${err.message}`);
   }

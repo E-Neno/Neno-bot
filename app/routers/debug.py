@@ -20,6 +20,7 @@ from app.storage.db import (
     fetch_all,
     fetch_one,
     get_message_by_id,
+    get_session_messages,
     list_debug_events,
     list_proactive_events,
 )
@@ -44,10 +45,26 @@ def chat_preview_by_message(message_id: int = Query(..., ge=1)):
     message = get_message_by_id(message_id)
     if message is None:
         raise HTTPException(status_code=404, detail="message not found")
+    preview_source = message
     if message.get("role") != "user":
-        raise HTTPException(status_code=400, detail="preview is only available for user input messages")
+        trace_id = message.get("trace_id")
+        if not trace_id:
+            raise HTTPException(status_code=404, detail="preview snapshot not found for this message")
+        session_messages = get_session_messages(message["session_id"], limit=200)
+        preview_source = next(
+            (
+                item
+                for item in session_messages
+                if item.get("role") == "user"
+                and item.get("trace_id") == trace_id
+                and isinstance((item.get("preview_payload") or {}).get("preview"), dict)
+            ),
+            None,
+        )
+        if preview_source is None:
+            raise HTTPException(status_code=404, detail="preview snapshot not found for this message")
 
-    preview_payload = message.get("preview_payload") or {}
+    preview_payload = preview_source.get("preview_payload") or {}
     preview = preview_payload.get("preview")
     if not isinstance(preview, dict):
         raise HTTPException(status_code=404, detail="preview snapshot not found for this message")
@@ -68,6 +85,9 @@ def chat_preview_by_message(message_id: int = Query(..., ge=1)):
             "created_at": message["created_at"],
             "metadata": metadata,
         },
+        "preview_source_message_id": preview_source["id"],
+        "preview_source_role": preview_source.get("role"),
+        "preview_source_metadata": preview_source.get("metadata") or {},
         "preview": preview,
     }
 
@@ -80,6 +100,19 @@ def session_submit_snapshot(session_id: str = Query(..., max_length=128)):
         **snapshot,
         "active_count": len(snapshot["active"]),
         "recent_count": len(snapshot["recent"]),
+    }
+
+
+@router.get("/session-aggregation", dependencies=[Depends(require_admin_token)])
+def session_aggregation_snapshot(session_id: str = Query(..., max_length=128)):
+    snapshot = platform_router.session_aggregation_controller.get_session_snapshot(session_id=session_id)
+    return {
+        "success": True,
+        **snapshot,
+        "active_batch_count": len(snapshot["active_batches"]),
+        "recent_batch_count": len(snapshot["recent_batches"]),
+        "active_source_count": len(snapshot["active_sources"]),
+        "recent_source_count": len(snapshot["recent_sources"]),
     }
 
 

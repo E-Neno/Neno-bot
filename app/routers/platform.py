@@ -1,4 +1,5 @@
 import time
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +22,12 @@ from app.services.chat.multimodal_input_service import (
 from app.services.chat.voice_asr_service import transcribe_voice, VoiceASRError
 from app.services.chat_service import run_chat_turn
 from app.services.proactive_service import record_platform_proactive_target
+from app.services.session_aggregation_controller import (
+    AggregatedSubmitItem,
+    AggregatedSourceMessage,
+    AggregationTicket,
+    SessionAggregationController,
+)
 from app.services.session_submit_controller import SessionSubmitController, SubmitTicket
 from app.services.stats_service import record_chat_stat
 from app.storage.db import (
@@ -37,6 +44,9 @@ burst_merge_service = BurstMergeService(
     max_messages=config.BURST_MERGE_MAX_MESSAGES,
 )
 session_submit_controller = SessionSubmitController()
+session_aggregation_controller = SessionAggregationController(
+    window_seconds=config.WX_SESSION_AGGREGATE_WINDOW_SECONDS,
+)
 
 SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
@@ -90,6 +100,120 @@ def _update_submit_debug_from_ticket(
         return
     snapshot = session_submit_controller.get_ticket_snapshot(ticket=submit_ticket)
     _write_submit_debug(input_record, snapshot=snapshot)
+
+
+def _write_aggregation_debug(
+    input_record: dict[str, Any] | None,
+    *,
+    snapshot: dict[str, Any] | None,
+) -> None:
+    if input_record is None or not snapshot:
+        return
+    input_record["aggregation"] = {
+        "batch_id": snapshot.get("batch_id"),
+        "batch_state": snapshot.get("batch_state"),
+        "arrival_seq": snapshot.get("arrival_seq"),
+        "trace_id": snapshot.get("trace_id"),
+        "received_at": snapshot.get("received_at"),
+        "ready_at": snapshot.get("ready_at"),
+        "completed_at": snapshot.get("completed_at"),
+        "failed_at": snapshot.get("failed_at"),
+        "opened_at": snapshot.get("opened_at"),
+        "deadline_at": snapshot.get("deadline_at"),
+        "sealed_at": snapshot.get("sealed_at"),
+        "source_arrival_seqs": snapshot.get("source_arrival_seqs"),
+        "source_trace_ids": snapshot.get("source_trace_ids"),
+        "source_count": snapshot.get("source_count"),
+        "included_in_batch": snapshot.get("included_in_batch"),
+        "error_type": snapshot.get("error_type"),
+        "error_message": snapshot.get("error_message"),
+        "updated_at": snapshot.get("updated_at"),
+    }
+
+
+def _update_aggregation_debug_from_ticket(
+    *,
+    input_record: dict[str, Any] | None,
+    aggregation_ticket: AggregationTicket | None,
+) -> None:
+    if input_record is None or aggregation_ticket is None:
+        return
+    snapshot = session_aggregation_controller.get_ticket_snapshot(ticket=aggregation_ticket)
+    _write_aggregation_debug(input_record, snapshot=snapshot)
+
+
+def _clone_record(record: dict[str, Any] | None) -> dict[str, Any]:
+    return deepcopy(record or {})
+
+
+def _build_aggregated_user_message(source_messages: list[AggregatedSourceMessage]) -> str:
+    if len(source_messages) == 1:
+        return source_messages[0].message
+    parts = [f"[用户在短时间内连续发送了 {len(source_messages)} 条内容]"]
+    for index, source in enumerate(source_messages, start=1):
+        message_type = str(source.input_record.get("message_type") or "text")
+        parts.append(
+            f"[第{index}条][{message_type}][arrival_seq={source.ticket.arrival_seq}]\n{source.message}"
+        )
+    return "\n\n".join(parts)
+
+
+def _batch_trace_id(batch: AggregatedSubmitItem) -> str:
+    for source in batch.source_messages:
+        if source.trace_id:
+            return source.trace_id
+    return new_trace_id()
+
+
+def _build_batch_summary(
+    *,
+    batch: AggregatedSubmitItem,
+    trace_id: str,
+    aggregated_message: str,
+) -> dict[str, Any]:
+    source_ids = [source.ticket.arrival_seq for source in batch.source_messages]
+    source_message_types = [str(source.input_record.get("message_type") or "text") for source in batch.source_messages]
+    return {
+        "batch_id": batch.batch_id,
+        "is_aggregated": len(batch.source_messages) > 1,
+        "source_arrival_seqs": source_ids,
+        "source_message_ids": [],
+        "source_count": len(batch.source_messages),
+        "source_message_count": len(batch.source_messages),
+        "source_message_types": source_message_types,
+        "source_trace_ids": [source.trace_id for source in batch.source_messages if source.trace_id],
+        "opened_at": batch.opened_at,
+        "sealed_at": batch.sealed_at,
+        "deadline_at": batch.deadline_at,
+        "batch_trace_id": trace_id,
+        "aggregated_message": aggregated_message,
+    }
+
+
+def _build_persist_user_messages(
+    *,
+    batch: AggregatedSubmitItem,
+    batch_summary: dict[str, Any],
+    batch_input_record: dict[str, Any],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for source in batch.source_messages:
+        metadata = _clone_record(source.input_record)
+        metadata["aggregation"] = {
+            **_clone_record(batch_summary),
+            "source_trace_id": source.trace_id,
+            "source_arrival_seq": source.ticket.arrival_seq,
+        }
+        metadata["submit_debug"] = _clone_record(batch_input_record.get("submit_debug"))
+        records.append(
+            {
+                "content": source.message,
+                "message_type": str(source.input_record.get("message_type") or "text"),
+                "source": str(source.input_record.get("source") or "chat"),
+                "metadata": metadata,
+            }
+        )
+    return records
 
 
 def mask_identifier(value: str) -> str:
@@ -262,6 +386,7 @@ def run_platform_chat_turn(
     message: str,
     input_record: dict | None = None,
     submit_ticket: SubmitTicket | None = None,
+    persist_user_messages: list[dict[str, Any]] | None = None,
 ) -> PlatformMessageResponse:
     started = time.perf_counter()
     try:
@@ -270,6 +395,7 @@ def run_platform_chat_turn(
             message,
             trace_id=trace_id,
             input_record=input_record,
+            persist_user_messages=persist_user_messages,
         )
     except Exception as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -298,6 +424,7 @@ def run_platform_chat_turn(
         raise HTTPException(status_code=500, detail="chat failed") from exc
     if input_record is not None:
         input_record["_submit_user_message_id"] = result["user_message_id"]
+        input_record["_submit_user_message_ids"] = result.get("user_message_ids") or []
         input_record["_submit_assistant_message_id"] = result["assistant_message_id"]
 
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -504,6 +631,7 @@ def submit_platform_chat_turn(
     message: str,
     input_record: dict | None = None,
     submit_ticket: SubmitTicket | None = None,
+    persist_user_messages: list[dict[str, Any]] | None = None,
 ) -> PlatformMessageResponse:
     if submit_ticket is None:
         return run_platform_chat_turn(
@@ -514,6 +642,7 @@ def submit_platform_chat_turn(
             chat_type=chat_type,
             message=message,
             input_record=input_record,
+            persist_user_messages=persist_user_messages,
         )
 
     response_future = session_submit_controller.submit_ready(
@@ -532,6 +661,7 @@ def submit_platform_chat_turn(
                 message=message,
                 input_record=input_record,
                 submit_ticket=submit_ticket,
+                persist_user_messages=persist_user_messages,
             ),
         )[1],
     )
@@ -541,10 +671,29 @@ def submit_platform_chat_turn(
         submit_ticket=submit_ticket,
     )
     user_message_id = None if input_record is None else input_record.pop("_submit_user_message_id", None)
+    user_message_ids = [] if input_record is None else list(input_record.pop("_submit_user_message_ids", []) or [])
     if input_record is not None:
         input_record.pop("_submit_assistant_message_id", None)
-    if isinstance(user_message_id, int):
-        update_message_metadata(user_message_id, input_record)
+    if isinstance(user_message_id, int) and user_message_id not in user_message_ids:
+        user_message_ids.insert(0, user_message_id)
+    if persist_user_messages and user_message_ids:
+        for message_id, record in zip(user_message_ids, persist_user_messages):
+            if not isinstance(message_id, int):
+                continue
+            metadata = _clone_record(record.get("metadata"))
+            aggregation = metadata.get("aggregation") or {}
+            if aggregation:
+                aggregation["source_message_ids"] = list(user_message_ids)
+            metadata["submit_debug"] = _clone_record((input_record or {}).get("submit_debug"))
+            update_message_metadata(message_id, metadata)
+    else:
+        if input_record is not None:
+            aggregation = input_record.get("aggregation") or {}
+            if aggregation and user_message_ids:
+                aggregation["source_message_ids"] = list(user_message_ids)
+        for message_id in user_message_ids:
+            if isinstance(message_id, int):
+                update_message_metadata(message_id, input_record)
     if isinstance(response, PlatformMessageResponse):
         return response
     raise HTTPException(status_code=500, detail="chat failed")
@@ -582,6 +731,66 @@ def submit_platform_exception(
         handler=lambda: raise_http_exception(exc),
     )
     future.wait()
+
+
+def _submit_aggregated_platform_batch(
+    *,
+    batch: AggregatedSubmitItem,
+    session_id: str,
+    platform: str,
+    user_id: str,
+    chat_type: str,
+) -> PlatformMessageResponse:
+    trace_id = _batch_trace_id(batch)
+    aggregated_message = _build_aggregated_user_message(batch.source_messages)
+    submit_ticket = session_submit_controller.allocate_ticket(
+        session_id=session_id,
+        trace_id=trace_id,
+    )
+    batch_summary = _build_batch_summary(
+        batch=batch,
+        trace_id=trace_id,
+        aggregated_message=aggregated_message,
+    )
+    batch_input_record = {
+        "source": f"platform:{platform}",
+        "platform": platform,
+        "user_id": user_id,
+        "chat_type": chat_type,
+        "message_type": "aggregated" if len(batch.source_messages) > 1 else str(batch.source_messages[0].input_record.get("message_type") or "text"),
+        "raw_input": aggregated_message,
+        "normalized_input": aggregated_message,
+        "attachments": [],
+        "aggregation": batch_summary,
+        "ingress": {
+            "controller_mode": "session_aggregate_then_submit",
+            "arrival_seq": batch_summary["source_arrival_seqs"][0] if batch_summary["source_arrival_seqs"] else None,
+            "received_at": batch.opened_at,
+        },
+    }
+    snapshot = session_submit_controller.mark_state(
+        ticket=submit_ticket,
+        submit_state="preprocessing",
+        phase="aggregated_submit",
+        message_type=str(batch_input_record.get("message_type") or "text"),
+    )
+    _write_submit_debug(batch_input_record, snapshot=snapshot)
+    persist_user_messages = _build_persist_user_messages(
+        batch=batch,
+        batch_summary=batch_summary,
+        batch_input_record=batch_input_record,
+    )
+    return submit_platform_chat_turn(
+        trace_id=trace_id,
+        session_id=session_id,
+        platform=platform,
+        user_id=user_id,
+        chat_type=chat_type,
+        message=aggregated_message,
+        input_record=batch_input_record,
+        submit_ticket=submit_ticket,
+        persist_user_messages=persist_user_messages,
+    )
 
 
 def build_routing_explain(req: PlatformMessageRequest) -> dict[str, Any]:
@@ -752,8 +961,8 @@ def openclaw_message(payload: Any = Body(...)):
     if raw_message is None and not attachments:
         raise HTTPException(status_code=400, detail="message must not be blank")
 
-    submit_ticket = (
-        session_submit_controller.allocate_ticket(session_id=session_id, trace_id=trace_id)
+    aggregation_ticket = (
+        session_aggregation_controller.allocate_ticket(session_id=session_id, trace_id=trace_id)
         if should_use_session_submit_controller(platform=platform)
         else None
     )
@@ -774,9 +983,10 @@ def openclaw_message(payload: Any = Body(...)):
             "normalization": {"status": "pending" if has_image_attachment else "bypassed", "failed_at": None},
         },
         "ingress": {
-            "controller_mode": "session_serial_submit" if submit_ticket is not None else "direct",
-            "arrival_seq": submit_ticket.arrival_seq if submit_ticket is not None else None,
+            "controller_mode": "session_aggregate_then_submit" if aggregation_ticket is not None else "direct",
+            "arrival_seq": aggregation_ticket.arrival_seq if aggregation_ticket is not None else None,
             "received_at": _now_iso(),
+            "trace_id": trace_id,
         },
         "routing": {
             "routing_key": route["routing_key"],
@@ -790,14 +1000,11 @@ def openclaw_message(payload: Any = Body(...)):
         },
         "platform_message_type": message_type,
     }
-    if submit_ticket is not None:
-        snapshot = session_submit_controller.mark_state(
-            ticket=submit_ticket,
-            submit_state="preprocessing",
-            phase="preprocess",
-            message_type=str(input_record.get("message_type") or "text"),
+    if aggregation_ticket is not None:
+        _update_aggregation_debug_from_ticket(
+            input_record=input_record,
+            aggregation_ticket=aggregation_ticket,
         )
-        _write_submit_debug(input_record, snapshot=snapshot)
 
     log_event(
         "platform",
@@ -827,30 +1034,44 @@ def openclaw_message(payload: Any = Body(...)):
             raw_message=raw_message,
             attachments=attachments,
             input_record=input_record,
-            submit_ticket=submit_ticket,
+            submit_ticket=None,
         )
     except HTTPException as exc:
-        if submit_ticket is not None:
-            snapshot = session_submit_controller.mark_state(
-                ticket=submit_ticket,
-                submit_state="failed",
-                phase="preprocess",
+        if aggregation_ticket is not None:
+            session_aggregation_controller.complete_exception(
+                ticket=aggregation_ticket,
+                exc=exc,
                 message_type=str(input_record.get("message_type") or "text"),
                 error_type=type(exc).__name__,
                 error_message=str(exc.detail),
-                failed_phase="preprocess",
             )
-            _write_submit_debug(input_record, snapshot=snapshot)
-        submit_platform_exception(submit_ticket=submit_ticket, exc=exc)
+        submit_platform_exception(submit_ticket=None, exc=exc)
         raise
 
     if isinstance(preprocessed, PlatformMessageResponse):
+        if aggregation_ticket is not None:
+            _update_aggregation_debug_from_ticket(
+                input_record=input_record,
+                aggregation_ticket=aggregation_ticket,
+            )
+            return session_aggregation_controller.complete_response(
+                ticket=aggregation_ticket,
+                response=preprocessed,
+                source_state="source_excluded",
+                message_type=str(input_record.get("message_type") or "text"),
+            )
         return submit_platform_response(
-            submit_ticket=submit_ticket,
+            submit_ticket=None,
             response=preprocessed,
         )
 
     message = preprocessed
+
+    if aggregation_ticket is not None:
+        _update_aggregation_debug_from_ticket(
+            input_record=input_record,
+            aggregation_ticket=aggregation_ticket,
+        )
 
     if platform in {"qq", "wx"} and chat_type == "private":
         try:
@@ -884,7 +1105,7 @@ def openclaw_message(payload: Any = Body(...)):
                 chat_type=chat_type,
                 message=merged_message,
                 input_record=input_record,
-                submit_ticket=submit_ticket,
+                submit_ticket=None,
             ),
         )
         if submit_result.accepted and submit_result.future is not None:
@@ -892,6 +1113,24 @@ def openclaw_message(payload: Any = Body(...)):
             if isinstance(response, PlatformMessageResponse):
                 return response
             raise HTTPException(status_code=500, detail="chat failed")
+
+    if aggregation_ticket is not None:
+        aggregation_future = session_aggregation_controller.mark_ready(
+            ticket=aggregation_ticket,
+            message=message,
+            input_record=input_record,
+            handler=lambda batch: _submit_aggregated_platform_batch(
+                batch=batch,
+                session_id=session_id,
+                platform=platform,
+                user_id=user_id,
+                chat_type=chat_type,
+            ),
+        )
+        response = aggregation_future.wait()
+        if isinstance(response, PlatformMessageResponse):
+            return response
+        raise HTTPException(status_code=500, detail="chat failed")
 
     return submit_platform_chat_turn(
         trace_id=trace_id,
@@ -901,5 +1140,5 @@ def openclaw_message(payload: Any = Body(...)):
         chat_type=chat_type,
         message=message,
         input_record=input_record,
-        submit_ticket=submit_ticket,
+        submit_ticket=None,
     )

@@ -19,6 +19,7 @@ def run_chat_turn(
     message: str,
     trace_id: str | None = None,
     input_record: dict | None = None,
+    persist_user_messages: list[dict] | None = None,
 ) -> dict:
     trace_id = trace_id or new_trace_id()
     turn_started = time.perf_counter()
@@ -80,20 +81,37 @@ def run_chat_turn(
             latency_ms=int((time.perf_counter() - model_started) * 1000),
         )
 
-        user_message_id = add_message(
-            session_id,
-            "user",
-            message,
-            trace_id=trace_id,
-            message_type=str((input_record or {}).get("message_type") or "text"),
-            source=str((input_record or {}).get("source") or "chat"),
-            metadata=input_record_with_memory,
-            preview_payload={
-                "trace_id": trace_id,
-                "session_id": session_id,
-                "preview": preview,
-            },
-        )
+        preview_payload = {
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "preview": preview,
+        }
+        user_message_ids: list[int] = []
+        user_records = persist_user_messages or [
+            {
+                "content": message,
+                "message_type": str((input_record or {}).get("message_type") or "text"),
+                "source": str((input_record or {}).get("source") or "chat"),
+                "metadata": input_record_with_memory,
+            }
+        ]
+        for record in user_records:
+            metadata = deepcopy(record.get("metadata") or {})
+            metadata["memory_candidate_snapshot"] = memory_result.get("candidate_memory_debug")
+            metadata["memory_candidate_decision"] = memory_result.get("candidate_memory_decision")
+            metadata["memory_auto_added"] = bool(memory_result.get("auto_added_memory"))
+            user_message_ids.append(
+                add_message(
+                    session_id,
+                    "user",
+                    str(record.get("content") or ""),
+                    trace_id=trace_id,
+                    message_type=str(record.get("message_type") or "text"),
+                    source=str(record.get("source") or (input_record or {}).get("source") or "chat"),
+                    metadata=metadata,
+                    preview_payload=preview_payload,
+                )
+            )
         assistant_message_id = add_message(
             session_id,
             "assistant",
@@ -136,7 +154,8 @@ def run_chat_turn(
         )
         return {
             "trace_id": trace_id,
-            "user_message_id": user_message_id,
+            "user_message_id": user_message_ids[0] if user_message_ids else None,
+            "user_message_ids": user_message_ids,
             "assistant_message_id": assistant_message_id,
             "message_type": str((input_record or {}).get("message_type") or "text"),
             "source": str((input_record or {}).get("source") or "chat"),

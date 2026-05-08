@@ -502,6 +502,57 @@
       word-break: break-word;
     }
 
+    .debug-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .debug-mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .debug-mini-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #f8fafc;
+      min-width: 0;
+    }
+
+    .debug-mini-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .debug-mini-meta {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .debug-mini-body {
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .debug-mini-empty {
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
     @media (max-width: 900px) {
       .app {
         grid-template-columns: 1fr;
@@ -718,6 +769,12 @@
 
     .message-row.is-user {
       align-items: flex-end;
+    }
+
+    .message-row.is-selected .msg {
+      outline: 2px solid #0f766e;
+      outline-offset: 2px;
+      box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
     }
 
     .message-meta-line {
@@ -2381,6 +2438,27 @@
         <div class="config-help">优先对聊天记录中的真实输入右键查看；输入框预览仅用于草稿检查。</div>
         <div id="chatPreviewStatus" class="status">尚未预览；右键一条输入消息可直接查看真实链路。</div>
         <div id="chatPreviewBox" class="chat-preview-box"></div>
+      </div>
+
+      <div class="card">
+        <h3>Aggregation / Submit Debug</h3>
+        <div class="config-help">展示当前选中消息或回复关联的 batch / submit 语义；状态以服务端真实字段为准。</div>
+        <div id="messageDebugStatus" class="status">尚未选择消息。</div>
+        <div id="messageDebugBox" class="debug-grid">
+          <div class="debug-mini-empty">右键任意 user / assistant 消息，查看该轮聚合与提交调试信息。</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Live Session Gate / Batch State</h3>
+        <div class="row">
+          <button id="refreshSessionDebugBtn" class="secondary">刷新 Session Debug</button>
+        </div>
+        <div class="config-help">直接查看当前 session 的 live aggregation / submit 状态，用来解释“为什么这条还没回”。</div>
+        <div id="sessionDebugStatus" class="status">还没加载</div>
+        <div id="sessionDebugBox" class="debug-grid">
+          <div class="debug-mini-empty">点击刷新查看当前 session 的 batch / gate 状态。</div>
+        </div>
       </div>
 
       <div class="card">

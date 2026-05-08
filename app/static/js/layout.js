@@ -302,6 +302,8 @@ export function buildConsoleLayout() {
   const relationshipCard = getCardByElementId("relationshipStatus");
   const usedMemoryCard = getCardByElementId("usedMemories");
   const chatPreviewCard = getCardByElementId("chatPreviewBox");
+  const messageDebugCard = getCardByElementId("messageDebugBox");
+  const sessionDebugCard = getCardByElementId("sessionDebugBox");
   const candidateCard = getCardByElementId("candidateBox");
   const memoryCard = getCardByElementId("memoryList");
 
@@ -429,6 +431,12 @@ export function buildConsoleLayout() {
   }
   if (chatPreviewCard) {
     chatSide.appendChild(chatPreviewCard);
+  }
+  if (messageDebugCard) {
+    chatSide.appendChild(messageDebugCard);
+  }
+  if (sessionDebugCard) {
+    chatSide.appendChild(sessionDebugCard);
   }
   if (usedMemoryCard) {
     chatSide.appendChild(usedMemoryCard);
