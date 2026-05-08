@@ -463,6 +463,7 @@ function appendBadgeRow(container, labels, extraClass = "") {
 function buildMessageBadges(message) {
   const metadata = message.metadata || {};
   const pipeline = metadata.pipeline || {};
+  const submitDebug = metadata.submit_debug || {};
   const labels = [];
   const modality = String(message.message_type || metadata.message_type || "text").toLowerCase();
   const modalityLabelMap = {
@@ -504,12 +505,23 @@ function buildMessageBadges(message) {
   if (metadata.ingress?.arrival_seq) {
     labels.push({ label: `arrival #${metadata.ingress.arrival_seq}`, tone: "muted" });
   }
+  if (submitDebug.submit_state) {
+    const tone = submitDebug.submit_state === "failed"
+      ? "danger"
+      : submitDebug.submit_state === "fallback_completed"
+        ? "info"
+        : submitDebug.submit_state === "completed"
+          ? "ok"
+          : "muted";
+    labels.push({ label: `Submit ${submitDebug.submit_state}`, tone });
+  }
   return labels;
 }
 
 function buildMessageSummary(message) {
   const metadata = message.metadata || {};
   const pipeline = metadata.pipeline || {};
+  const submitDebug = metadata.submit_debug || {};
   const parts = [];
 
   if (metadata.raw_input && metadata.raw_input !== message.content) {
@@ -528,6 +540,15 @@ function buildMessageSummary(message) {
   }
   if (metadata.ingress?.arrival_seq) {
     parts.push(`arrival_seq=${metadata.ingress.arrival_seq}`);
+  }
+  if (submitDebug.submit_state) {
+    parts.push(`submit=${submitDebug.submit_state}`);
+  }
+  if (submitDebug.blocked_by_seq) {
+    parts.push(`blocked_by=${submitDebug.blocked_by_seq}`);
+  }
+  if (submitDebug.failed_phase) {
+    parts.push(`failed_phase=${submitDebug.failed_phase}`);
   }
   return parts.join(" · ");
 }
@@ -926,6 +947,7 @@ function renderChatPreview(data, mode = "draft") {
       [
         metadata.ingress?.controller_mode ? `controller_mode=${metadata.ingress.controller_mode}` : "",
         metadata.ingress?.arrival_seq ? `arrival_seq=${metadata.ingress.arrival_seq}` : "",
+        metadata.ingress?.received_at ? `received_at=${metadata.ingress.received_at}` : "",
         metadata.account_id ? `account_id=${metadata.account_id}` : "",
         metadata.platform ? `platform=${metadata.platform}` : "",
         metadata.user_id ? `user_id=${metadata.user_id}` : "",
@@ -933,6 +955,28 @@ function renderChatPreview(data, mode = "draft") {
         metadata.group_id ? `group_id=${metadata.group_id}` : "",
       ].filter(Boolean).join("\n") || "暂无",
       metadata.ingress?.controller_mode || "direct"
+    );
+    appendPreviewSection(
+      box,
+      "Submit Debug",
+      [
+        metadata.submit_debug?.submit_state ? `submit_state=${metadata.submit_debug.submit_state}` : "",
+        metadata.submit_debug?.phase ? `phase=${metadata.submit_debug.phase}` : "",
+        metadata.submit_debug?.blocked_by_seq ? `blocked_by_seq=${metadata.submit_debug.blocked_by_seq}` : "",
+        metadata.submit_debug?.submit_seq ? `submit_seq=${metadata.submit_debug.submit_seq}` : "",
+        metadata.submit_debug?.ready_at ? `ready_at=${metadata.submit_debug.ready_at}` : "",
+        metadata.submit_debug?.waiting_started_at ? `waiting_started_at=${metadata.submit_debug.waiting_started_at}` : "",
+        metadata.submit_debug?.submit_started_at ? `submit_started_at=${metadata.submit_debug.submit_started_at}` : "",
+        metadata.submit_debug?.completed_at ? `completed_at=${metadata.submit_debug.completed_at}` : "",
+        metadata.submit_debug?.fallback_completed_at ? `fallback_completed_at=${metadata.submit_debug.fallback_completed_at}` : "",
+        metadata.submit_debug?.failed_at ? `failed_at=${metadata.submit_debug.failed_at}` : "",
+        metadata.submit_debug?.failed_phase ? `failed_phase=${metadata.submit_debug.failed_phase}` : "",
+        metadata.submit_debug?.queue_wait_ms !== undefined && metadata.submit_debug?.queue_wait_ms !== null ? `queue_wait_ms=${metadata.submit_debug.queue_wait_ms}` : "",
+        metadata.submit_debug?.submit_latency_ms !== undefined && metadata.submit_debug?.submit_latency_ms !== null ? `submit_latency_ms=${metadata.submit_debug.submit_latency_ms}` : "",
+        metadata.submit_debug?.error_type ? `error_type=${metadata.submit_debug.error_type}` : "",
+        metadata.submit_debug?.error_message ? `error_message=${metadata.submit_debug.error_message}` : "",
+      ].filter(Boolean).join("\n") || "暂无",
+      metadata.submit_debug?.submit_state || "n/a"
     );
     appendPreviewSection(
       box,

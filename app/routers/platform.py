@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -25,6 +26,7 @@ from app.services.stats_service import record_chat_stat
 from app.storage.db import (
     clear_platform_routing_override,
     get_platform_routing_override,
+    update_message_metadata,
     upsert_platform_routing_override,
 )
 from app.utils.logging_utils import log_event, new_trace_id
@@ -39,6 +41,55 @@ session_submit_controller = SessionSubmitController()
 SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
 MAX_MESSAGE_LENGTH = 2000
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="milliseconds")
+
+
+def _write_submit_debug(
+    input_record: dict[str, Any] | None,
+    *,
+    snapshot: dict[str, object | None] | None,
+) -> None:
+    if input_record is None or not snapshot:
+        return
+    input_record["submit_debug"] = {
+        "session_id": snapshot.get("session_id"),
+        "arrival_seq": snapshot.get("arrival_seq"),
+        "trace_id": snapshot.get("trace_id"),
+        "submit_state": snapshot.get("submit_state"),
+        "phase": snapshot.get("phase"),
+        "controller_mode": snapshot.get("controller_mode"),
+        "message_type": snapshot.get("message_type"),
+        "received_at": snapshot.get("received_at"),
+        "preprocessing_started_at": snapshot.get("preprocessing_started_at"),
+        "ready_at": snapshot.get("ready_at"),
+        "waiting_started_at": snapshot.get("waiting_started_at"),
+        "submit_started_at": snapshot.get("submit_started_at"),
+        "completed_at": snapshot.get("completed_at"),
+        "failed_at": snapshot.get("failed_at"),
+        "failed_phase": snapshot.get("failed_phase"),
+        "fallback_completed_at": snapshot.get("fallback_completed_at"),
+        "blocked_by_seq": snapshot.get("blocked_by_seq"),
+        "submit_seq": snapshot.get("submit_seq"),
+        "queue_wait_ms": snapshot.get("queue_wait_ms"),
+        "submit_latency_ms": snapshot.get("submit_latency_ms"),
+        "error_type": snapshot.get("error_type"),
+        "error_message": snapshot.get("error_message"),
+        "updated_at": snapshot.get("updated_at"),
+    }
+
+
+def _update_submit_debug_from_ticket(
+    *,
+    input_record: dict[str, Any] | None,
+    submit_ticket: SubmitTicket | None,
+) -> None:
+    if input_record is None or submit_ticket is None:
+        return
+    snapshot = session_submit_controller.get_ticket_snapshot(ticket=submit_ticket)
+    _write_submit_debug(input_record, snapshot=snapshot)
 
 
 def mask_identifier(value: str) -> str:
@@ -210,6 +261,7 @@ def run_platform_chat_turn(
     chat_type: str,
     message: str,
     input_record: dict | None = None,
+    submit_ticket: SubmitTicket | None = None,
 ) -> PlatformMessageResponse:
     started = time.perf_counter()
     try:
@@ -244,6 +296,9 @@ def run_platform_chat_turn(
             latency_ms=latency_ms,
         )
         raise HTTPException(status_code=500, detail="chat failed") from exc
+    if input_record is not None:
+        input_record["_submit_user_message_id"] = result["user_message_id"]
+        input_record["_submit_assistant_message_id"] = result["assistant_message_id"]
 
     latency_ms = int((time.perf_counter() - started) * 1000)
     record_chat_stat(
@@ -292,6 +347,7 @@ def preprocess_platform_message(
     raw_message: str | None,
     attachments: list,
     input_record: dict,
+    submit_ticket: SubmitTicket | None = None,
 ) -> str | PlatformMessageResponse:
     has_image_attachment = any(item.kind == "image" for item in attachments)
     has_voice_attachment = any(item.kind == "voice" for item in attachments)
@@ -323,6 +379,17 @@ def preprocess_platform_message(
                     "success": False,
                     "failed_at": "asr",
                 }
+                if submit_ticket is not None:
+                    snapshot = session_submit_controller.mark_state(
+                        ticket=submit_ticket,
+                        submit_state="preprocessing",
+                        phase="preprocess_failed",
+                        message_type=str(input_record.get("message_type") or "text"),
+                        error_type="VoiceASRError",
+                        error_message="voice transcription failed",
+                        failed_phase="preprocess",
+                    )
+                    _write_submit_debug(input_record, snapshot=snapshot)
                 log_event(
                     "platform",
                     "asr_failed_fallback",
@@ -356,6 +423,17 @@ def preprocess_platform_message(
                 "failed_at": "vision",
                 "error": str(exc),
             }
+            if submit_ticket is not None:
+                snapshot = session_submit_controller.mark_state(
+                    ticket=submit_ticket,
+                    submit_state="failed",
+                    phase="preprocess",
+                    message_type=str(input_record.get("message_type") or "text"),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    failed_phase="preprocess",
+                )
+                _write_submit_debug(input_record, snapshot=snapshot)
             log_event(
                 "platform",
                 "multimodal_normalize_failed",
@@ -395,6 +473,14 @@ def preprocess_platform_message(
 
     input_record["raw_input"] = raw_message
     input_record["normalized_input"] = message
+    if submit_ticket is not None:
+        snapshot = session_submit_controller.mark_state(
+            ticket=submit_ticket,
+            submit_state="ready",
+            phase="preprocess",
+            message_type=str(input_record.get("message_type") or "text"),
+        )
+        _write_submit_debug(input_record, snapshot=snapshot)
     log_event(
         "platform",
         "message_preprocess_finished",
@@ -432,17 +518,33 @@ def submit_platform_chat_turn(
 
     response_future = session_submit_controller.submit_ready(
         ticket=submit_ticket,
-        handler=lambda: run_platform_chat_turn(
-            trace_id=trace_id,
-            session_id=session_id,
-            platform=platform,
-            user_id=user_id,
-            chat_type=chat_type,
-            message=message,
-            input_record=input_record,
-        ),
+        handler=lambda: (
+            _update_submit_debug_from_ticket(
+                input_record=input_record,
+                submit_ticket=submit_ticket,
+            ),
+            run_platform_chat_turn(
+                trace_id=trace_id,
+                session_id=session_id,
+                platform=platform,
+                user_id=user_id,
+                chat_type=chat_type,
+                message=message,
+                input_record=input_record,
+                submit_ticket=submit_ticket,
+            ),
+        )[1],
     )
     response = response_future.wait()
+    _update_submit_debug_from_ticket(
+        input_record=input_record,
+        submit_ticket=submit_ticket,
+    )
+    user_message_id = None if input_record is None else input_record.pop("_submit_user_message_id", None)
+    if input_record is not None:
+        input_record.pop("_submit_assistant_message_id", None)
+    if isinstance(user_message_id, int):
+        update_message_metadata(user_message_id, input_record)
     if isinstance(response, PlatformMessageResponse):
         return response
     raise HTTPException(status_code=500, detail="chat failed")
@@ -459,6 +561,7 @@ def submit_platform_response(
     future = session_submit_controller.submit_ready(
         ticket=submit_ticket,
         handler=lambda: response,
+        completion_state="fallback_completed",
     )
     result = future.wait()
     if isinstance(result, PlatformMessageResponse):
@@ -673,6 +776,7 @@ def openclaw_message(payload: Any = Body(...)):
         "ingress": {
             "controller_mode": "session_serial_submit" if submit_ticket is not None else "direct",
             "arrival_seq": submit_ticket.arrival_seq if submit_ticket is not None else None,
+            "received_at": _now_iso(),
         },
         "routing": {
             "routing_key": route["routing_key"],
@@ -686,6 +790,14 @@ def openclaw_message(payload: Any = Body(...)):
         },
         "platform_message_type": message_type,
     }
+    if submit_ticket is not None:
+        snapshot = session_submit_controller.mark_state(
+            ticket=submit_ticket,
+            submit_state="preprocessing",
+            phase="preprocess",
+            message_type=str(input_record.get("message_type") or "text"),
+        )
+        _write_submit_debug(input_record, snapshot=snapshot)
 
     log_event(
         "platform",
@@ -715,8 +827,20 @@ def openclaw_message(payload: Any = Body(...)):
             raw_message=raw_message,
             attachments=attachments,
             input_record=input_record,
+            submit_ticket=submit_ticket,
         )
     except HTTPException as exc:
+        if submit_ticket is not None:
+            snapshot = session_submit_controller.mark_state(
+                ticket=submit_ticket,
+                submit_state="failed",
+                phase="preprocess",
+                message_type=str(input_record.get("message_type") or "text"),
+                error_type=type(exc).__name__,
+                error_message=str(exc.detail),
+                failed_phase="preprocess",
+            )
+            _write_submit_debug(input_record, snapshot=snapshot)
         submit_platform_exception(submit_ticket=submit_ticket, exc=exc)
         raise
 

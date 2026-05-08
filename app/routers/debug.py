@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.routers import platform as platform_router
 from app.schemas import ChatRequest
 from app.security import require_admin_token
 from app.services.chat.multimodal_input_service import normalize_multimodal_message
@@ -68,6 +69,17 @@ def chat_preview_by_message(message_id: int = Query(..., ge=1)):
             "metadata": metadata,
         },
         "preview": preview,
+    }
+
+
+@router.get("/session-submit", dependencies=[Depends(require_admin_token)])
+def session_submit_snapshot(session_id: str = Query(..., max_length=128)):
+    snapshot = platform_router.session_submit_controller.get_session_snapshot(session_id=session_id)
+    return {
+        "success": True,
+        **snapshot,
+        "active_count": len(snapshot["active"]),
+        "recent_count": len(snapshot["recent"]),
     }
 
 

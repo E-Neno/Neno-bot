@@ -394,6 +394,23 @@ def get_message_by_id(message_id: int) -> dict[str, Any] | None:
     return _normalize_message_row(row_to_dict(row, fields) or {})
 
 
+def update_message_metadata(message_id: int, metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    affected = execute_write(
+        """
+        UPDATE messages
+        SET metadata_json = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
+            message_id,
+        ),
+    )
+    if affected <= 0:
+        return None
+    return get_message_by_id(message_id)
+
+
 def add_memory(content: str, memory_type: str = "general"):
     execute_write(
         """
