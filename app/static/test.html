@@ -2107,6 +2107,107 @@
       }
     }
 
+    #criticalAlertContainer {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 10001;
+      display: grid;
+      gap: 8px;
+      max-width: 380px;
+      width: min(380px, calc(100vw - 32px));
+      pointer-events: none;
+    }
+
+    .critical-alert-toast {
+      pointer-events: auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      border: 1px solid #f1cdcb;
+      border-radius: 14px;
+      background: #fff7f5;
+      color: #895652;
+      box-shadow: 0 12px 32px rgba(116, 96, 80, 0.14);
+      animation: criticalAlertIn 260ms ease;
+      transition: opacity 200ms ease, transform 200ms ease;
+    }
+
+    .critical-alert-toast-hiding {
+      opacity: 0;
+      transform: translateX(40px);
+    }
+
+    @keyframes criticalAlertIn {
+      from {
+        opacity: 0;
+        transform: translateX(40px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .critical-alert-toast-icon {
+      font-size: 18px;
+      line-height: 1;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .critical-alert-toast-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .critical-alert-toast-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #784c46;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .critical-alert-toast-reason {
+      font-size: 12px;
+      color: #9b6b66;
+      line-height: 1.35;
+      margin-top: 3px;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .critical-alert-toast-time {
+      font-size: 11px;
+      color: #b89590;
+      margin-top: 4px;
+    }
+
+    .critical-alert-toast-close {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      box-shadow: none;
+      color: #b89590;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0 2px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+
+    .critical-alert-toast-close:hover {
+      color: #784c46;
+      background: rgba(137, 86, 82, 0.08);
+      opacity: 1;
+      transform: none;
+    }
+
     @media (max-width: 560px) {
       .panel-header {
         display: block;

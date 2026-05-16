@@ -572,6 +572,7 @@ def debug_diagnose():
         _diagnose_proactive(),
         _diagnose_candidates(),
         _diagnose_context(),
+        _diagnose_digest(),
     ]
     return {
         "success": True,
@@ -579,3 +580,42 @@ def debug_diagnose():
         "overall": _overall(cards),
         "cards": cards,
     }
+
+
+@router.get("/alerts", dependencies=[Depends(require_admin_token)])
+def debug_alerts(after_id: int = Query(default=0, ge=0)):
+    raw_events = list_debug_events(limit=50, level="critical")
+    events = [_sanitize_debug_event(item) for item in raw_events]
+    new_events = [e for e in events if int(e.get("id", 0)) > after_id]
+    return {
+        "success": True,
+        "events": new_events,
+        "has_new": len(new_events) > 0,
+    }
+
+
+def _diagnose_digest() -> dict:
+    compact_ok = _latest_debug_event({"history_digest_compact_done"}, "history_digest")
+    compact_fail = _latest_debug_event({"compact_total_failure"}, "history_digest")
+    fallback = _latest_debug_event({"compact_fallback_used"}, "history_digest")
+    details: list[str] = []
+    suggestions: list[str] = []
+
+    if compact_ok:
+        details.append(f"最近压缩成功：{compact_ok.get('created_at')}")
+    if fallback:
+        details.append(f"最近使用 fallback 模型：{fallback.get('reason')}")
+        suggestions.append("free 模型可能限流或不可用，检查是否需要切换为付费版。")
+    if compact_fail:
+        details.append(f"压缩完全失败：{compact_fail.get('reason')}")
+        suggestions.append("两个模型都失败，检查 API key、网络、模型可用性。")
+
+    if compact_fail:
+        return _card("digest", "历史压缩", "error", "历史压缩失败，缓存前缀不会更新", details, suggestions)
+    if fallback and not compact_ok:
+        return _card("digest", "历史压缩", "warn", "free 模型失败，已用付费版替补", details, suggestions)
+    if fallback:
+        return _card("digest", "历史压缩", "warn", "free 模型不可用，当前使用付费版", details, suggestions)
+    if compact_ok:
+        return _card("digest", "历史压缩", "ok", "历史压缩正常", details, suggestions)
+    return _card("digest", "历史压缩", "info", "暂无压缩记录（对话量还不够）", details, suggestions)

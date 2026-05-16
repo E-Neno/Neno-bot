@@ -18,10 +18,12 @@ def chat_with_openrouter(
         "Content-Type": "application/json",
     }
 
-    payload = {
+    payload: dict = {
         "model": model_name,
         "messages": messages,
     }
+    if model_name.startswith("anthropic/"):
+        payload["provider"] = {"order": ["Anthropic"]}
 
     started = time.perf_counter()
     log_event(

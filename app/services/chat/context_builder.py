@@ -1,4 +1,5 @@
 from app.config import HISTORY_LIMIT, SYSTEM_PROMPT
+from app.services.chat.history_digest import get_history_digest_text, maybe_update_history_digest
 from app.services.memory_context_service import build_memory_context, build_memory_context_message
 from app.services.relationship_service import (
     build_relationship_context,
@@ -16,17 +17,25 @@ def build_chat_messages(
     relationship_context: str | None = None,
     time_context: dict | None = None,
     memory_context: dict | None = None,
+    history_digest: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system_blocks: list[dict] = [{"type": "text", "text": SYSTEM_PROMPT}]
     if relationship_context:
-        messages.append({"role": "system", "content": relationship_context})
+        system_blocks.append({"type": "text", "text": relationship_context})
     if time_context:
-        messages.append({"role": "system", "content": build_time_context_message(time_context)})
+        system_blocks.append({"type": "text", "text": build_time_context_message(time_context)})
 
     memory_text = build_memory_context_message(memory_context or {})
     if memory_text:
-        messages.append({"role": "system", "content": memory_text})
+        system_blocks.append({"type": "text", "text": memory_text})
 
+    if history_digest:
+        system_blocks.append({"type": "text", "text": history_digest})
+
+    if system_blocks:
+        system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
+
+    messages: list[dict] = [{"role": "system", "content": system_blocks}]
     messages.extend({"role": item["role"], "content": item["content"]} for item in history)
     messages.append({"role": "user", "content": message})
     used_memories = list((memory_context or {}).get("selected_memories") or [])
@@ -59,18 +68,36 @@ def load_chat_contexts(
         )
 
     memory_context = build_memory_context(session_id, message)
+
+    if not readonly:
+        try:
+            maybe_update_history_digest(session_id, trace_id=trace_id)
+        except Exception as exc:
+            log_event(
+                "chat",
+                "history_digest_update_warning",
+                trace_id=trace_id,
+                session_id=session_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
+    history_digest = get_history_digest_text(session_id)
+
     messages, used_memories = build_chat_messages(
         history=history,
         message=message,
         relationship_context=relationship_context,
         time_context=time_context,
         memory_context=memory_context,
+        history_digest=history_digest,
     )
     return {
         "history": history,
         "time_context": time_context,
         "relationship_context": relationship_context,
         "memory_context": memory_context,
+        "history_digest": history_digest,
         "messages": messages,
         "used_memories": used_memories,
     }

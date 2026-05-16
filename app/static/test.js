@@ -39,6 +39,7 @@ import {
   bindStatsEvents,
   loadStatsSummary,
 } from "./js/stats.js";
+import { startAlertPolling } from "./js/alerts.js";
 
 function bindBaseEvents() {
   bindChatEvents({
@@ -80,6 +81,7 @@ function init() {
   loadProactiveCandidates();
   loadProactiveTargets();
   loadProactiveEvents();
+  startAlertPolling();
 }
 
 function finishInitialLoading() {
