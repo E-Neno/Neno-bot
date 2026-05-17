@@ -349,6 +349,29 @@ def get_recent_messages(session_id: str, limit: int = 8):
     return list_messages(session_id, limit, ["role", "content", "created_at"])
 
 
+def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dict]:
+    rows = fetch_all(
+        """
+        SELECT role, content, created_at
+        FROM messages
+        WHERE session_id = ? AND role IN ('user', 'assistant')
+        ORDER BY id DESC
+        LIMIT 200
+        """,
+        (session_id,),
+    )
+    rows.reverse()
+    total = 0
+    result: list[dict] = []
+    for row in rows:
+        content = (row["content"] or "").replace("\n", " ")
+        total += len(content.encode("utf-8")) // 2
+        result.append({"role": row["role"], "content": row["content"], "created_at": row["created_at"]})
+        if total >= token_limit:
+            break
+    return result
+
+
 def get_session_messages(session_id: str, limit: int = 50):
     return list_messages(
         session_id,

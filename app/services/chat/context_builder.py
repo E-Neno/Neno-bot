@@ -1,4 +1,4 @@
-from app.config import HISTORY_LIMIT, SYSTEM_PROMPT
+from app.config import HISTORY_TOKEN_LIMIT, SYSTEM_PROMPT
 from app.services.chat.history_digest import get_history_digest_text, maybe_update_history_digest
 from app.services.memory_context_service import build_memory_context, build_memory_context_message
 from app.services.relationship_service import (
@@ -6,7 +6,7 @@ from app.services.relationship_service import (
     build_relationship_context_readonly,
 )
 from app.services.time_context_service import build_time_context, build_time_context_message
-from app.storage.db import get_recent_messages
+from app.storage.db import get_recent_messages_by_tokens
 from app.storage.relationship import ensure_relationship_state
 from app.utils.logging_utils import log_event
 
@@ -49,7 +49,7 @@ def load_chat_contexts(
     trace_id: str | None = None,
     readonly: bool = False,
 ) -> dict:
-    history = get_recent_messages(session_id, limit=HISTORY_LIMIT)
+    history = get_recent_messages_by_tokens(session_id, token_limit=HISTORY_TOKEN_LIMIT)
     time_context = build_time_context(session_id)
     relationship_context = None
     try:
