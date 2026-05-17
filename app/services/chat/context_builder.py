@@ -20,6 +20,13 @@ def build_chat_messages(
     history_digest: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     system_blocks: list[dict] = [{"type": "text", "text": SYSTEM_PROMPT}]
+
+    if history_digest:
+        system_blocks.append({"type": "text", "text": history_digest})
+
+    if system_blocks:
+        system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
+
     if relationship_context:
         system_blocks.append({"type": "text", "text": relationship_context})
     if time_context:
@@ -28,12 +35,6 @@ def build_chat_messages(
     memory_text = build_memory_context_message(memory_context or {})
     if memory_text:
         system_blocks.append({"type": "text", "text": memory_text})
-
-    if history_digest:
-        system_blocks.append({"type": "text", "text": history_digest})
-
-    if system_blocks:
-        system_blocks[-1]["cache_control"] = {"type": "ephemeral"}
 
     messages: list[dict] = [{"role": "system", "content": system_blocks}]
     messages.extend({"role": item["role"], "content": item["content"]} for item in history)
