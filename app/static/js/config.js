@@ -29,11 +29,11 @@ export async function loadConfig() {
     clearChildren(box);
     appendConfigLine(box, "chat_model", data.chat_model);
     appendConfigLine(box, "memory_model", data.memory_model);
-    appendConfigLine(box, "history_limit", data.history_limit);
+    appendConfigLine(box, "history_token_limit", data.history_token_limit);
     appendConfigLine(box, "memory_limit", data.memory_limit);
     document.getElementById("chatModelInput").value = data.chat_model || "";
     document.getElementById("memoryModelInput").value = data.memory_model || "";
-    document.getElementById("historyLimitInput").value = data.history_limit ?? "";
+    document.getElementById("historyTokenLimitInput").value = data.history_token_limit ?? "";
     document.getElementById("memoryLimitInput").value = data.memory_limit ?? "";
   } catch (err) {
     box.textContent = err.message;
@@ -47,7 +47,7 @@ export async function saveConfig() {
   const payload = {
     chat_model: document.getElementById("chatModelInput").value,
     memory_model: document.getElementById("memoryModelInput").value,
-    history_limit: Number(document.getElementById("historyLimitInput").value),
+    history_token_limit: Number(document.getElementById("historyTokenLimitInput").value),
     memory_limit: Number(document.getElementById("memoryLimitInput").value),
   };
 
@@ -57,8 +57,8 @@ export async function saveConfig() {
   if (!payload.memory_model.trim()) {
     delete payload.memory_model;
   }
-  if (Number.isNaN(payload.history_limit)) {
-    delete payload.history_limit;
+  if (Number.isNaN(payload.history_token_limit)) {
+    delete payload.history_token_limit;
   }
   if (Number.isNaN(payload.memory_limit)) {
     delete payload.memory_limit;

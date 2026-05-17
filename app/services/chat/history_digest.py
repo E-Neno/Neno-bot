@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.config import HISTORY_LIMIT
+from app.config import HISTORY_TOKEN_LIMIT
 from app.services.chat.llm_gateway import request_model_response
 from app.storage.db import add_debug_event, fetch_all
 from app.utils.logging_utils import log_event
@@ -124,10 +124,19 @@ def maybe_update_history_digest(
     if not rows:
         return False
 
-    if len(rows) <= HISTORY_LIMIT:
+    skip_count = 0
+    skip_tokens = 0
+    for row in reversed(rows):
+        content = (row["content"] or "").replace("\n", " ")
+        skip_tokens += _estimate_tokens(content)
+        skip_count += 1
+        if skip_tokens >= HISTORY_TOKEN_LIMIT:
+            break
+
+    if len(rows) <= skip_count:
         return False
 
-    rows = rows[:-HISTORY_LIMIT]
+    rows = rows[:-skip_count]
 
     new_lines = []
     new_chars = 0

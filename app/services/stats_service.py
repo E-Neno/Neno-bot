@@ -1,7 +1,7 @@
 import hashlib
 from typing import Any
 
-from app.config import CHAT_MODEL_NAME, HISTORY_LIMIT, MEMORY_LIMIT, MEMORY_MODEL_NAME
+from app.config import CHAT_MODEL_NAME, HISTORY_TOKEN_LIMIT, MEMORY_LIMIT, MEMORY_MODEL_NAME
 from app.storage.db import execute_write, fetch_all, fetch_one
 from app.utils.logging_utils import log_event
 
@@ -101,7 +101,7 @@ def get_stats_summary() -> dict[str, Any]:
         },
         "current_model": CHAT_MODEL_NAME,
         "memory_model": MEMORY_MODEL_NAME,
-        "history_limit": HISTORY_LIMIT,
+        "history_token_limit": HISTORY_TOKEN_LIMIT,
         "memory_limit": MEMORY_LIMIT,
         "backend_ok": True,
         "openclaw_gateway_maybe_online": bool(counts["recent_qq_messages_10m"] or 0) if counts else False,

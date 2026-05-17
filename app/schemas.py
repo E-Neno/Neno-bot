@@ -21,7 +21,7 @@ class ChatRequest(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     chat_model: str | None = None
     memory_model: str | None = None
-    history_limit: int | None = None
+    history_token_limit: int | None = None
     memory_limit: int | None = None
 
 
