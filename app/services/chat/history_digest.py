@@ -37,7 +37,7 @@ def _save_digest(session_id: str, digest: dict) -> None:
     _digest_path(session_id).write_text(json.dumps(digest, ensure_ascii=False), encoding="utf-8")
 
 
-def _compact_history(baked_text: str, trace_id: str | None = None, session_id: str = "") -> str:
+def _compact_history(baked_text: str, trace_id: str | None = None, session_id: str = "") -> str | None:
     messages = [
         {
             "role": "system",
@@ -95,7 +95,7 @@ def _compact_history(baked_text: str, trace_id: str | None = None, session_id: s
                     ensure_ascii=False,
                 ),
             )
-            return baked_text
+            return None
 
 
 def get_history_digest_text(session_id: str) -> str | None:
@@ -161,7 +161,26 @@ def maybe_update_history_digest(
             session_id=session_id,
             baked_tokens=baked_tokens,
         )
-        baked_text = _compact_history(baked_text, trace_id=trace_id, session_id=session_id)
+        compacted_text = _compact_history(baked_text, trace_id=trace_id, session_id=session_id)
+        if compacted_text is None:
+            log_event(
+                "digest",
+                "history_digest_compact_failed",
+                trace_id=trace_id,
+                session_id=session_id,
+                baked_tokens=baked_tokens,
+            )
+            _save_digest(
+                session_id,
+                {
+                    "baked_text": digest.get("baked_text", ""),
+                    "baked_tokens": digest.get("baked_tokens", 0),
+                    "last_baked_message_id": rows[-1]["id"],
+                    "compacted": False,
+                },
+            )
+            return True
+        baked_text = compacted_text
         baked_tokens = _estimate_tokens(baked_text)
         compacted = True
         log_event(
@@ -173,8 +192,10 @@ def maybe_update_history_digest(
         )
 
     if baked_tokens > COMPACT_THRESHOLD_TOKENS * 2:
-        baked_text = _compact_history(baked_text, trace_id=trace_id, session_id=session_id)
-        baked_tokens = _estimate_tokens(baked_text)
+        compacted_text = _compact_history(baked_text, trace_id=trace_id, session_id=session_id)
+        if compacted_text is not None:
+            baked_text = compacted_text
+            baked_tokens = _estimate_tokens(baked_text)
 
     _save_digest(
         session_id,
