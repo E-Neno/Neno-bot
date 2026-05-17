@@ -352,7 +352,7 @@ def get_recent_messages(session_id: str, limit: int = 8):
 def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dict]:
     rows = fetch_all(
         """
-        SELECT role, content, created_at
+        SELECT id, role, content, created_at
         FROM messages
         WHERE session_id = ? AND role IN ('user', 'assistant')
         ORDER BY id DESC
@@ -366,7 +366,12 @@ def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dic
     for row in rows:
         content = (row["content"] or "").replace("\n", " ")
         total += len(content.encode("utf-8")) // 2
-        result.append({"role": row["role"], "content": row["content"], "created_at": row["created_at"]})
+        result.append({
+            "id": row["id"],
+            "role": row["role"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+        })
         if total >= token_limit:
             break
     return result

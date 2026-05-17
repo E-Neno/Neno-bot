@@ -70,9 +70,11 @@ def load_chat_contexts(
 
     memory_context = build_memory_context(session_id, message)
 
+    raw_history_start_id = history[0]["id"] if history else None
+
     if not readonly:
         try:
-            maybe_update_history_digest(session_id, trace_id=trace_id)
+            maybe_update_history_digest(session_id, trace_id=trace_id, raw_history_start_id=raw_history_start_id)
         except Exception as exc:
             log_event(
                 "chat",

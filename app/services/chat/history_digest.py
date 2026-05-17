@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-from app.config import HISTORY_TOKEN_LIMIT
 from app.services.chat.llm_gateway import request_model_response
 from app.storage.db import add_debug_event, fetch_all
 from app.utils.logging_utils import log_event
@@ -107,6 +106,7 @@ def get_history_digest_text(session_id: str) -> str | None:
 def maybe_update_history_digest(
     session_id: str,
     trace_id: str | None = None,
+    raw_history_start_id: int | None = None,
 ) -> bool:
     digest = _load_digest(session_id)
     last_id = digest.get("last_baked_message_id", 0)
@@ -124,19 +124,10 @@ def maybe_update_history_digest(
     if not rows:
         return False
 
-    skip_count = 0
-    skip_tokens = 0
-    for row in reversed(rows):
-        content = (row["content"] or "").replace("\n", " ")
-        skip_tokens += _estimate_tokens(content)
-        skip_count += 1
-        if skip_tokens >= HISTORY_TOKEN_LIMIT:
-            break
-
-    if len(rows) <= skip_count:
-        return False
-
-    rows = rows[:-skip_count]
+    if raw_history_start_id is not None:
+        rows = [row for row in rows if row["id"] < raw_history_start_id]
+        if not rows:
+            return False
 
     new_lines = []
     new_chars = 0
