@@ -8,7 +8,7 @@ from app.utils.logging_utils import log_event
 DATA_DIR = Path("data/history_digest")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-UPDATE_THRESHOLD_TOKENS = 1000
+UPDATE_THRESHOLD_TOKENS = 200
 COMPACT_THRESHOLD_TOKENS = 10000
 COMPACT_TARGET_TOKENS = 2000
 
