@@ -11,6 +11,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPDATE_THRESHOLD_TOKENS = 200
 COMPACT_THRESHOLD_TOKENS = 10000
 COMPACT_TARGET_TOKENS = 2000
+SKIP_RECENT_COUNT = 12
 
 COMPACT_MODEL_PRIMARY = "deepseek/deepseek-v4-flash:free"
 COMPACT_MODEL_FALLBACK = "deepseek/deepseek-v4-flash"
@@ -122,6 +123,11 @@ def maybe_update_history_digest(
 
     if not rows:
         return False
+
+    if len(rows) <= SKIP_RECENT_COUNT:
+        return False
+
+    rows = rows[:-SKIP_RECENT_COUNT]
 
     new_lines = []
     new_chars = 0
