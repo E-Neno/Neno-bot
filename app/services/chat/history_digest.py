@@ -173,8 +173,8 @@ def maybe_update_history_digest(
             _save_digest(
                 session_id,
                 {
-                    "baked_text": digest.get("baked_text", ""),
-                    "baked_tokens": digest.get("baked_tokens", 0),
+                    "baked_text": baked_text,
+                    "baked_tokens": baked_tokens,
                     "last_baked_message_id": rows[-1]["id"],
                     "compacted": False,
                 },

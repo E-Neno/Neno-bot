@@ -360,7 +360,6 @@ def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dic
         """,
         (session_id,),
     )
-    rows.reverse()
     total = 0
     result: list[dict] = []
     for row in rows:
@@ -374,6 +373,7 @@ def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dic
         })
         if total >= token_limit:
             break
+    result.reverse()
     return result
 
 
