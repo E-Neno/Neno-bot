@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ============================================================
-# build_codegraph.sh
-# ============================================================
-
 : "${CGC_BIN:=cgc}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
@@ -15,32 +11,44 @@ MANIFEST="${BUILD_DIR}/manifest.json"
 BUNDLE_NAME="codegraph-${GITHUB_SHA}.tar.gz"
 BUNDLE_PATH="${REPO_ROOT}/${BUNDLE_NAME}"
 CGCIGNORE="${REPO_ROOT}/.cgcignore"
-CGC_DB="${REPO_ROOT}/.codegraphcontext/kuzudb"
 
 cleanup() { rm -rf "${BUILD_DIR}"; }
 trap cleanup EXIT
 
 echo "=== CodeGraphContext Build ==="
-echo "Commit:    ${GITHUB_SHA}"
-echo "Repo:      ${REPO_ROOT}"
-echo "Build dir: ${BUILD_DIR}"
-echo "Ignore file: ${CGCIGNORE} ($(wc -l < "${CGCIGNORE}") lines)"
+echo "Commit: ${GITHUB_SHA}"
+echo "Repo:   ${REPO_ROOT}"
+echo "Ignore: ${CGCIGNORE} ($(wc -l < "${CGCIGNORE}") lines)"
+
+# --- Set kuzudb as default database ---
+echo ""
+echo "--- Configuring kuzudb ---"
+"${CGC_BIN}" config set DEFAULT_DATABASE kuzudb
 
 # --- Set per-repo mode ---
 echo ""
 echo "--- Setting per-repo mode ---"
-"${CGC_BIN}" --db kuzudb context mode per-repo
+"${CGC_BIN}" context mode per-repo
 
-# --- Run cgc index ---
+# --- Index ---
 echo ""
 echo "--- Running cgc index ---"
-"${CGC_BIN}" --db kuzudb index "${REPO_ROOT}"
+"${CGC_BIN}" index "${REPO_ROOT}"
 
-if [ ! -d "${CGC_DB}" ]; then
-  echo "[ERROR] cgc index did not produce database at ${CGC_DB}"
+# Find the actual database under .codegraphcontext/
+CGC_DB_DIR=""
+for candidate in "${REPO_ROOT}/.codegraphcontext/kuzudb" "${REPO_ROOT}/.codegraphcontext/db/kuzudb"; do
+  if [ -d "${candidate}" ]; then CGC_DB_DIR="${candidate}"; break; fi
+done
+
+if [ -z "${CGC_DB_DIR}" ]; then
+  echo "[ERROR] cgc index did not produce a kuzudb under .codegraphcontext/"
+  echo "Contents of .codegraphcontext:"
+  find "${REPO_ROOT}/.codegraphcontext" -maxdepth 3 -type d 2>/dev/null || echo "(empty)"
   exit 1
 fi
-echo "Index complete. DB size: $(du -sh "${CGC_DB}" | cut -f1)"
+
+echo "Index complete. DB at: ${CGC_DB_DIR} ($(du -sh "${CGC_DB_DIR}" | cut -f1))"
 
 # --- manifest.json ---
 CGC_VERSION="$("${CGC_BIN}" version 2>&1 || true)"
@@ -71,25 +79,21 @@ echo "--- Creating bundle: ${BUNDLE_NAME} ---"
 
 tar -czf "${BUNDLE_PATH}" -C "${REPO_ROOT}" .codegraphcontext .cgcignore
 
-# Append manifest.json to the tar.gz
 cp "${MANIFEST}" "${BUILD_DIR}/manifest_for_bundle.json"
 gunzip < "${BUNDLE_PATH}" > "${BUNDLE_PATH%.gz}"
 tar -rf "${BUNDLE_PATH%.gz}" -C "${BUILD_DIR}" manifest.json
 gzip -c "${BUNDLE_PATH%.gz}" > "${BUNDLE_PATH}"
 rm -f "${BUNDLE_PATH%.gz}"
 
-BUNDLE_SHA256="$(sha256sum "${BUNDLE_PATH}" | awk '{print $1}')"
-BUNDLE_SIZE="$(du -sh "${BUNDLE_PATH}" | cut -f1)"
-
 echo ""
 echo "=== Build Complete ==="
-echo "Bundle:  ${BUNDLE_PATH}"
-echo "Size:    ${BUNDLE_SIZE}"
-echo "SHA256:  ${BUNDLE_SHA256}"
+echo "Bundle: ${BUNDLE_PATH}"
+echo "Size:   $(du -sh "${BUNDLE_PATH}" | cut -f1)"
+echo "SHA256: $(sha256sum "${BUNDLE_PATH}" | awk '{print $1}')"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  { echo "bundle_path=${BUNDLE_PATH}"; echo "bundle_name=${BUNDLE_NAME}"; echo "bundle_sha256=${BUNDLE_SHA256}"; } >> "${GITHUB_OUTPUT}"
+  { echo "bundle_path=${BUNDLE_PATH}"; echo "bundle_name=${BUNDLE_NAME}"; } >> "${GITHUB_OUTPUT}"
 fi
 
-# Clean repo of generated .codegraphcontext
+# Clean repo
 rm -rf "${REPO_ROOT}/.codegraphcontext"
