@@ -1,4 +1,4 @@
-﻿name: CodeGraphContext Index
+name: CodeGraphContext Index
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: "${{ github.event.inputs.ref || github.ref }}"
+          ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 1
 
       - name: Install cgc CLI
@@ -38,15 +38,15 @@ jobs:
           chmod +x scripts/build_codegraph.sh
           bash scripts/build_codegraph.sh
         env:
-          GITHUB_SHA: "${{ github.sha }}"
-          GITHUB_WORKSPACE: "${{ github.workspace }}"
-          GITHUB_REPOSITORY: "${{ github.repository }}"
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codegraph-"${{ github.sha }}"
-          path: codegraph-"${{ github.sha }}".tar.gz
+          name: codegraph-${{ github.sha }}
+          path: codegraph-${{ github.sha }}.tar.gz
           retention-days: 30
           compression-level: 0
 
@@ -54,7 +54,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: cgc-"${{ github.sha }}"
+          tag_name: cgc-${{ github.sha }}
           name: "CodeGraph ${{ github.sha }}"
           body: |
             ## CodeGraphContext Index Bundle
@@ -68,11 +68,11 @@ jobs:
             ```bash
             bash scripts/install_codegraph_bundle.sh codegraph-${{ github.sha }}.tar.gz
             ```
-          files: codegraph-"${{ github.sha }}".tar.gz
+          files: codegraph-${{ github.sha }}.tar.gz
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # =====================================================
       # 自动部署到服务器 (配置 Secrets 后取消注释)
@@ -81,22 +81,22 @@ jobs:
       #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       #   uses: appleboy/scp-action@v0.1.7
       #   with:
-      #     host: "${{ secrets.CGC_SERVER_HOST }}"
-      #     username: "${{ secrets.CGC_SERVER_USER }}"
-      #     key: "${{ secrets.CGC_SERVER_SSH_KEY }}"
-      #     port: "${{ secrets.CGC_SERVER_PORT || 22 }}"
-      #     source: codegraph-"${{ github.sha }}".tar.gz
+      #     host: ${{ secrets.CGC_SERVER_HOST }}
+      #     username: ${{ secrets.CGC_SERVER_USER }}
+      #     key: ${{ secrets.CGC_SERVER_SSH_KEY }}
+      #     port: ${{ secrets.CGC_SERVER_PORT || 22 }}
+      #     source: codegraph-${{ github.sha }}.tar.gz
       #     target: /tmp/codegraph-bundles/
       #
       # - name: Install on server via SSH
       #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       #   uses: appleboy/ssh-action@v1.2.0
       #   with:
-      #     host: "${{ secrets.CGC_SERVER_HOST }}"
-      #     username: "${{ secrets.CGC_SERVER_USER }}"
-      #     key: "${{ secrets.CGC_SERVER_SSH_KEY }}"
-      #     port: "${{ secrets.CGC_SERVER_PORT || 22 }}"
+      #     host: ${{ secrets.CGC_SERVER_HOST }}
+      #     username: ${{ secrets.CGC_SERVER_USER }}
+      #     key: ${{ secrets.CGC_SERVER_SSH_KEY }}
+      #     port: ${{ secrets.CGC_SERVER_PORT || 22 }}
       #     script: |
-      #       cd "${{ secrets.CGC_SERVER_REPO_PATH || '/app/Neno-bot' }}"
+      #       cd ${{ secrets.CGC_SERVER_REPO_PATH || '/app/Neno-bot' }}
       #       bash scripts/install_codegraph_bundle.sh \
-      #         /tmp/codegraph-bundles/codegraph-"${{ github.sha }}".tar.gz
+      #         /tmp/codegraph-bundles/codegraph-${{ github.sha }}.tar.gz
