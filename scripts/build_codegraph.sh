@@ -31,7 +31,7 @@ echo ""
 echo "--- Running cgc index with --db-path ---"
 "${CGC_BIN}" --db kuzudb --db-path "${CGC_DB_PATH}" index "${REPO_ROOT}"
 
-if [ ! -d "${CGC_DB_PATH}" ]; then
+if [ ! -f "${CGC_DB_PATH}" ]; then
   echo "[ERROR] No database at ${CGC_DB_PATH}"
   ls -la "${BUILD_DIR}/.codegraphcontext/" 2>/dev/null || echo "(no .codegraphcontext)"
   exit 1
