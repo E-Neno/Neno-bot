@@ -11,7 +11,8 @@ MANIFEST="${BUILD_DIR}/manifest.json"
 BUNDLE_NAME="codegraph-${GITHUB_SHA}.tar.gz"
 BUNDLE_PATH="${REPO_ROOT}/${BUNDLE_NAME}"
 CGCIGNORE="${REPO_ROOT}/.cgcignore"
-CGC_DB_PATH="${BUILD_DIR}/.codegraphcontext/kuzudb"
+CGC_DB_FILE="${BUILD_DIR}/.codegraphcontext/kuzudb"
+CGC_DB_OUTPUT="${BUILD_DIR}/.codegraphcontext/codegraph.kuzu"
 
 cleanup() { rm -rf "${BUILD_DIR}"; }
 trap cleanup EXIT
@@ -26,18 +27,20 @@ echo ""
 echo "--- Config: set DEFAULT_DATABASE to kuzudb ---"
 "${CGC_BIN}" config set DEFAULT_DATABASE kuzudb
 
-# --- Index with explicit db-path (do NOT create the directory first) ---
+# --- Index ---
 echo ""
-echo "--- Running cgc index with --db-path ---"
-"${CGC_BIN}" --db kuzudb --db-path "${CGC_DB_PATH}" index "${REPO_ROOT}"
+echo "--- Running cgc index ---"
+"${CGC_BIN}" --db kuzudb --db-path "${CGC_DB_FILE}" index "${REPO_ROOT}"
 
-if [ ! -f "${CGC_DB_PATH}" ]; then
-  echo "[ERROR] No database at ${CGC_DB_PATH}"
-  ls -la "${BUILD_DIR}/.codegraphcontext/" 2>/dev/null || echo "(no .codegraphcontext)"
+if [ ! -f "${CGC_DB_FILE}" ]; then
+  echo "[ERROR] No kuzudb file at ${CGC_DB_FILE}"
+  ls -la "${BUILD_DIR}/.codegraphcontext/" 2>/dev/null || echo "(empty)"
   exit 1
 fi
 
-echo "Index complete. DB size: $(du -sh "${CGC_DB_PATH}" | cut -f1)"
+# Rename to codegraph.kuzu
+mv "${CGC_DB_FILE}" "${CGC_DB_OUTPUT}"
+echo "Index complete. DB file: $(du -sh "${CGC_DB_OUTPUT}" | cut -f1)"
 
 # --- manifest.json ---
 CGC_VERSION="$("${CGC_BIN}" version 2>&1 || true)"
@@ -53,6 +56,8 @@ cat > "${MANIFEST}" <<MANEOF
   "build_host": "${BUILD_HOST}",
   "cgc_version": "${CGC_VERSION}",
   "db_engine": "kuzudb",
+  "db_type": "file",
+  "db_file": "codegraph.kuzu",
   "repo": "${GITHUB_REPOSITORY:-unknown}",
   "bundle": "${BUNDLE_NAME}"
 }
@@ -67,7 +72,7 @@ echo ""
 echo "--- Creating bundle: ${BUNDLE_NAME} ---"
 
 tar -czf "${BUNDLE_PATH}" -C "${BUILD_DIR}" .codegraphcontext
-cp "${MANIFEST}" "${BUNDLE_PATH}.manifest"
+cp "${MANIFEST}" "${BUILD_DIR}/manifest_bundle.json"
 gunzip < "${BUNDLE_PATH}" > "${BUNDLE_PATH%.gz}"
 tar -rf "${BUNDLE_PATH%.gz}" -C "${BUILD_DIR}" manifest.json
 cp "${CGCIGNORE}" "${BUILD_DIR}/.cgcignore"
@@ -80,6 +85,11 @@ echo "=== Build Complete ==="
 echo "Bundle: ${BUNDLE_PATH}"
 echo "Size:   $(du -sh "${BUNDLE_PATH}" | cut -f1)"
 echo "SHA256: $(sha256sum "${BUNDLE_PATH}" | awk '{print $1}')"
+
+# List bundle contents for verification
+echo ""
+echo "--- Bundle contents ---"
+tar -tzf "${BUNDLE_PATH}"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "bundle_path=${BUNDLE_PATH}"; echo "bundle_name=${BUNDLE_NAME}"; } >> "${GITHUB_OUTPUT}"
