@@ -11,6 +11,7 @@ MANIFEST="${BUILD_DIR}/manifest.json"
 BUNDLE_NAME="codegraph-${GITHUB_SHA}.tar.gz"
 BUNDLE_PATH="${REPO_ROOT}/${BUNDLE_NAME}"
 CGCIGNORE="${REPO_ROOT}/.cgcignore"
+CGC_DB_PATH="${BUILD_DIR}/.codegraphcontext/kuzudb"
 
 cleanup() { rm -rf "${BUILD_DIR}"; }
 trap cleanup EXIT
@@ -20,35 +21,23 @@ echo "Commit: ${GITHUB_SHA}"
 echo "Repo:   ${REPO_ROOT}"
 echo "Ignore: ${CGCIGNORE} ($(wc -l < "${CGCIGNORE}") lines)"
 
-# --- Set kuzudb as default database ---
+# --- Config kuzudb ---
 echo ""
-echo "--- Configuring kuzudb ---"
+echo "--- Config: set DEFAULT_DATABASE to kuzudb ---"
 "${CGC_BIN}" config set DEFAULT_DATABASE kuzudb
 
-# --- Set per-repo mode ---
+# --- Index with explicit db-path (do NOT create the directory first) ---
 echo ""
-echo "--- Setting per-repo mode ---"
-"${CGC_BIN}" context mode per-repo
+echo "--- Running cgc index with --db-path ---"
+"${CGC_BIN}" --db kuzudb --db-path "${CGC_DB_PATH}" index "${REPO_ROOT}"
 
-# --- Index ---
-echo ""
-echo "--- Running cgc index ---"
-"${CGC_BIN}" index "${REPO_ROOT}"
-
-# Find the actual database under .codegraphcontext/
-CGC_DB_DIR=""
-for candidate in "${REPO_ROOT}/.codegraphcontext/kuzudb" "${REPO_ROOT}/.codegraphcontext/db/kuzudb"; do
-  if [ -d "${candidate}" ]; then CGC_DB_DIR="${candidate}"; break; fi
-done
-
-if [ -z "${CGC_DB_DIR}" ]; then
-  echo "[ERROR] cgc index did not produce a kuzudb under .codegraphcontext/"
-  echo "Contents of .codegraphcontext:"
-  find "${REPO_ROOT}/.codegraphcontext" -maxdepth 3 -type d 2>/dev/null || echo "(empty)"
+if [ ! -d "${CGC_DB_PATH}" ]; then
+  echo "[ERROR] No database at ${CGC_DB_PATH}"
+  ls -la "${BUILD_DIR}/.codegraphcontext/" 2>/dev/null || echo "(no .codegraphcontext)"
   exit 1
 fi
 
-echo "Index complete. DB at: ${CGC_DB_DIR} ($(du -sh "${CGC_DB_DIR}" | cut -f1))"
+echo "Index complete. DB size: $(du -sh "${CGC_DB_PATH}" | cut -f1)"
 
 # --- manifest.json ---
 CGC_VERSION="$("${CGC_BIN}" version 2>&1 || true)"
@@ -77,11 +66,12 @@ cat "${MANIFEST}"
 echo ""
 echo "--- Creating bundle: ${BUNDLE_NAME} ---"
 
-tar -czf "${BUNDLE_PATH}" -C "${REPO_ROOT}" .codegraphcontext .cgcignore
-
-cp "${MANIFEST}" "${BUILD_DIR}/manifest_for_bundle.json"
+tar -czf "${BUNDLE_PATH}" -C "${BUILD_DIR}" .codegraphcontext
+cp "${MANIFEST}" "${BUNDLE_PATH}.manifest"
 gunzip < "${BUNDLE_PATH}" > "${BUNDLE_PATH%.gz}"
 tar -rf "${BUNDLE_PATH%.gz}" -C "${BUILD_DIR}" manifest.json
+cp "${CGCIGNORE}" "${BUILD_DIR}/.cgcignore"
+tar -rf "${BUNDLE_PATH%.gz}" -C "${BUILD_DIR}" .cgcignore
 gzip -c "${BUNDLE_PATH%.gz}" > "${BUNDLE_PATH}"
 rm -f "${BUNDLE_PATH%.gz}"
 
@@ -94,6 +84,3 @@ echo "SHA256: $(sha256sum "${BUNDLE_PATH}" | awk '{print $1}')"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "bundle_path=${BUNDLE_PATH}"; echo "bundle_name=${BUNDLE_NAME}"; } >> "${GITHUB_OUTPUT}"
 fi
-
-# Clean repo
-rm -rf "${REPO_ROOT}/.codegraphcontext"
