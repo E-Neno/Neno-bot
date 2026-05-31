@@ -2,7 +2,14 @@ import time
 
 import requests
 
+from app.config import OPENROUTER_PROXY
 from app.utils.logging_utils import log_event
+
+
+def _proxies() -> dict | None:
+    if OPENROUTER_PROXY:
+        return {"http": OPENROUTER_PROXY, "https": OPENROUTER_PROXY}
+    return None
 
 
 def chat_with_openrouter(
@@ -35,7 +42,7 @@ def chat_with_openrouter(
     )
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout, proxies=_proxies())
     except requests.RequestException as e:
         log_event(
             "openrouter",

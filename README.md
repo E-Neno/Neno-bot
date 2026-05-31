@@ -59,13 +59,17 @@ app/
 │   ├── memory_context_service.py    # 记忆检索
 │   ├── memory_candidate_decision_service.py
 │   ├── time_context_service.py      # 时间上下文
-│   ├── consciousness/               # 意识层（状态机引擎）
+│   ├── consciousness/               # 意识层（状态机 + 世界引擎）
 │   │   ├── __init__.py               #    ConsciousnessEngine 门面
 │   │   ├── config.py                 #    魔法数字集中管理
-│   │   ├── models.py                 #    NenoState / StateMutation
+│   │   ├── models.py                 #    NenoState / StateMutation / Event
 │   │   ├── desire.py                 #    表达欲推算模型
 │   │   ├── mood.py                   #    二维情绪模型
-│   │   └── state_store.py            #    单写者 + 乐观锁持久化
+│   │   ├── state_store.py            #    单写者 + 乐观锁持久化
+│   │   ├── perception.py             #    天气 / 热搜 / 时间感知（TTL 缓存 + 降级）
+│   │   ├── event_pool.py             #    事件池：双重去重 + 优先级出队 + 24h 过期
+│   │   ├── random_events.py          #    虚拟随机事件库（20 条，按时间段概率）
+│   │   └── world_engine.py           #    APScheduler 心跳调度
 │   ├── proactive/                   # 主动消息子系统
 │   ├── proactive_service.py
 │   ├── proactive_scheduler.py       # 后台定时调度
@@ -149,6 +153,7 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 |------|------|
 | `OPENROUTER_API_KEY` | OpenRouter API 密钥 |
 | `OPENROUTER_BASE_URL` | OpenRouter 地址 |
+| `OPENROUTER_PROXY` | OpenRouter 请求代理（可选，仅受限地区需要） |
 | `OPENROUTER_CHAT_MODEL` | 聊天模型 |
 | `OPENROUTER_VISION_MODEL` | 视觉模型 |
 | `OPENROUTER_MEMORY_MODEL` | 记忆提取模型 |

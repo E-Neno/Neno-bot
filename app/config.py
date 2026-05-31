@@ -45,6 +45,7 @@ DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "").strip()
 DASHSCOPE_ASR_MODEL = os.getenv("DASHSCOPE_ASR_MODEL", "qwen3-asr-flash").strip()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_PROXY = os.getenv("OPENROUTER_PROXY", "").strip() or None
 CHAT_MODEL_NAME = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
 VISION_MODEL_NAME = os.getenv("OPENROUTER_VISION_MODEL", CHAT_MODEL_NAME)
 MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")

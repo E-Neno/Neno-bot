@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 load_dotenv()
 
 from app.routers import chat, context, debug, memory, platform, proactive, relationship, session, stats, system
+from app.services.consciousness import ConsciousnessEngine
 from app.services.proactive_scheduler import start_proactive_scheduler, stop_proactive_scheduler
 from app.storage.db import init_db
 from app.storage.relationship import init_relationship_tables
@@ -37,14 +39,28 @@ app.include_router(proactive.router)
 app.include_router(debug.router)
 app.include_router(chat.router)
 
+_scheduler: AsyncIOScheduler | None = None
+_consciousness: ConsciousnessEngine | None = None
+
 
 @app.on_event("startup")
 async def startup_event():
+    global _scheduler, _consciousness
     init_db()
     init_relationship_tables()
     start_proactive_scheduler()
 
+    _scheduler = AsyncIOScheduler()
+    _consciousness = ConsciousnessEngine(db=None, scheduler=_scheduler)
+    await _consciousness.start()
+    _scheduler.start()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    global _scheduler, _consciousness
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+    if _consciousness:
+        await _consciousness.stop()
     await stop_proactive_scheduler()

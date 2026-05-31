@@ -199,6 +199,19 @@ class StateStore:
         if mutation.today_experiences_clear:
             state.today_experiences.clear()
 
+        if mutation.mood_valence_delta != 0.0:
+            new_valence, new_arousal = self._mood.apply_event(
+                state.mood, mutation.mood_valence_delta, 0.0, now
+            )
+            state.mood.valence = new_valence
+            state.mood.arousal = new_arousal
+            state.mood.label, state.mood.description = self._mood.to_label(
+                new_valence, new_arousal
+            )
+
+        if mutation.desire_pulse > 0.0:
+            state.desire.value = max(0.0, min(100.0, state.desire.value + mutation.desire_pulse))
+
         return state
 
     async def _ensure_row_exists(self) -> None:

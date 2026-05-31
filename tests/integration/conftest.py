@@ -47,5 +47,18 @@ def client(
 
     monkeypatch.setattr(main_module, "stop_proactive_scheduler", fake_stop_proactive_scheduler)
 
+    # Suppress ConsciousnessEngine to avoid APScheduler during integration tests
+    class FakeConsciousnessEngine:
+        def __init__(self, *args, **kwargs):
+            self.state_store = None
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    monkeypatch.setattr(main_module, "ConsciousnessEngine", FakeConsciousnessEngine)
+
     with TestClient(main_module.app) as test_client:
         yield test_client

@@ -1,14 +1,14 @@
 # Neno-bot 代码库分析报告
 
 > 本地复刻版，基于 GitHub E-Neno/Neno-bot（commit 1d09042）
-> 分析日期：2026-06-01
+> 分析日期：2026-06-01，Phase 2 后更新
 
 ---
 
 ## 一、项目概览
 
 - **技术栈**：FastAPI + SQLite（无ORM） + APScheduler + OpenRouter API
-- **代码量**：71 个 Python 文件，1.1MB
+- **代码量**：71 个 Python 文件 → Phase 2 新增 4 个 consciousness 文件 + 1 个测试，76 个
 - **核心定位**：情感聊天机器人，通过 QQ/微信跟用户聊天
 
 ---
@@ -22,11 +22,17 @@ load_dotenv() → configure_safe_logging() → FastAPI()
 注册 10 个路由模块
 
 startup:
-  1. init_db() → 创建/迁移 SQLite 表（7+ 张表）
+  1. init_db() → 创建/迁移 SQLite 表
   2. init_relationship_tables()
-  3. start_proactive_scheduler() → APScheduler
+  3. start_proactive_scheduler() → APScheduler（主动消息）
+  4. ConsciousnessEngine(db, scheduler).start()
+     ├─ StateStore.start() → 单写者协程
+     └─ WorldEngine.register_jobs() → 心跳 / 每日梦境 / 过期清理
+  5. scheduler.start() → APScheduler 启动（world_engine + proactive 共用）
 
 shutdown:
+  scheduler.shutdown()
+  ConsciousnessEngine.stop() → StateStore 队列排空
   stop_proactive_scheduler()
 ```
 
@@ -233,13 +239,23 @@ FastAPI (uvicorn)
 
 ---
 
-## 十四、新增 consciousness 模块的集成点
+## 十四、consciousness 模块集成状态（Phase 2 后）
 
-基于架构分析，新模块需要对接的现有接口：
+| # | 集成点 | 状态 |
+|---|--------|------|
+| 1 | llm_gateway.py → 新增模型 key 映射 | Phase 3（brain.py 需要） |
+| 2 | proactive/engine → 替换模板为意图消费 | Phase 3+ |
+| 3 | memory_service.py → 复用记忆 CRUD | Phase 3+ |
+| 4 | context_builder.py → 注入动态状态段 | Phase 3+（禁止随意改动） |
+| 5 | chat_service.py → 用户交互作为 P0 事件 | Phase 3+ |
+| 6 | main.py → lifespan 启停 ConsciousnessEngine | ✅ Phase 2 完成 |
 
-1. **llm_gateway.py** → `request_model_response()`，新增模型 key 映射
-2. **proactive/engine** → `check_and_send_once()`，替换模板为意图消费
-3. **memory_service.py** → 复用记忆 CRUD，新增结构化条目
-4. **context_builder.py** → 在 SYSTEM_PROMPT 后注入动态状态段
-5. **chat_service.py** → 回复后把用户交互作为 P0 事件
-6. **main.py** → lifespan 启停 ConsciousnessEngine
+### Phase 2 已交付模块
+
+| 模块 | 文件 | 验收 |
+|------|------|------|
+| 感知层 | perception.py | wttr.in + 热搜降级链 + TTL 缓存 |
+| 事件池 | event_pool.py | 双层 topic_hash 去重 + 优先级出队 + 24h 过期 |
+| 随机事件 | random_events.py | 20 条事件库，深夜概率 0，下午 0.7 |
+| 世界引擎 | world_engine.py | APScheduler 心跳，睡眠跳过，极端天气 P0 |
+| 测试 | test_world_engine.py | 44 个用例，全绿 |

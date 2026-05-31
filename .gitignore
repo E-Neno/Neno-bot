@@ -42,3 +42,6 @@ sessions/
 
 openclaw-plugins/neno-bridge/allowed_qq_users.json
 openclaw-plugins/neno-bridge/allowed_wx_users.json
+
+.codegraphcontext/
+

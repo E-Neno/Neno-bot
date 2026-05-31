@@ -91,3 +91,6 @@ class StateMutation(BaseModel):
     world: Optional[WorldState] = None
     today_experiences_append: Optional[Experience] = None
     today_experiences_clear: bool = False
+    reason: str = ""
+    mood_valence_delta: float = 0.0
+    desire_pulse: float = 0.0
