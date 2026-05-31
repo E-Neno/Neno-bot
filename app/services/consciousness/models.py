@@ -44,6 +44,14 @@ class WorldState(BaseModel):
     last_perception_at: Optional[str] = None
 
 
+# ── Last interaction snapshot ──────────────────────────
+class LastInteraction(BaseModel):
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    summary: Optional[str] = None
+    at_time: Optional[str] = None
+
+
 # ── Today's experience ─────────────────────────────────
 class Experience(BaseModel):
     time: str                     # HH:MM
@@ -61,6 +69,7 @@ class NenoState(BaseModel):
     mood: MoodState = Field(default_factory=MoodState)
     desire: DesireState = Field(default_factory=DesireState)
     world: WorldState = Field(default_factory=WorldState)
+    last_interaction: LastInteraction = Field(default_factory=LastInteraction)
     today_experiences: list[Experience] = Field(default_factory=list)
 
 
@@ -91,6 +100,10 @@ class StateMutation(BaseModel):
     world: Optional[WorldState] = None
     today_experiences_append: Optional[Experience] = None
     today_experiences_clear: bool = False
+    desire_clear: bool = False
+    experience: Optional[Experience] = None
+    clear_experiences: bool = False
+    trace_id: str = ""
     reason: str = ""
     mood_valence_delta: float = 0.0
     desire_pulse: float = 0.0

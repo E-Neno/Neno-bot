@@ -69,7 +69,11 @@ app/
 │   │   ├── perception.py             #    天气 / 热搜 / 时间感知（TTL 缓存 + 降级）
 │   │   ├── event_pool.py             #    事件池：双重去重 + 优先级出队 + 24h 过期
 │   │   ├── random_events.py          #    虚拟随机事件库（20 条，按时间段概率）
-│   │   └── world_engine.py           #    APScheduler 心跳调度
+│   │   ├── world_engine.py           #    APScheduler 心跳调度
+│   │   ├── brain.py                  #    NenoBrain 三步决策 (规则→判断→生成)
+│   │   ├── fragmenter.py             #    文案碎片化 + 打字延迟 + 频控
+│   │   ├── interrupt.py              #    三态打断状态机
+│   │   └── memory_recall.py          #    关键词记忆召回
 │   ├── proactive/                   # 主动消息子系统
 │   ├── proactive_service.py
 │   ├── proactive_scheduler.py       # 后台定时调度
@@ -161,6 +165,9 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 | `MEMORY_LIMIT` | 记忆检索上限（条数） |
 | `ADMIN_TOKEN` | 调试台/管理接口鉴权 |
 | `PLATFORM_TOKEN` | 平台消息转发鉴权 |
+| `CONSCIOUSNESS_JUDGE_MODEL` | 意识层判断模型（Step2） |
+| `CONSCIOUSNESS_GENERATE_MODEL` | 意识层生成模型（Step3） |
+| `CONSCIOUSNESS_DREAM_MODEL` | 意识层梦境模型（Phase 4 占位） |
 
 ## 平台接入
 

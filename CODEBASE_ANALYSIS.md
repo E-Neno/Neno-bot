@@ -1,14 +1,14 @@
 # Neno-bot 代码库分析报告
 
 > 本地复刻版，基于 GitHub E-Neno/Neno-bot（commit 1d09042）
-> 分析日期：2026-06-01，Phase 2 后更新
+> 分析日期：2026-06-01，Phase 3a 后更新
 
 ---
 
 ## 一、项目概览
 
 - **技术栈**：FastAPI + SQLite（无ORM） + APScheduler + OpenRouter API
-- **代码量**：71 个 Python 文件 → Phase 2 新增 4 个 consciousness 文件 + 1 个测试，76 个
+- **代码量**：71 个 Python 文件 → Phase 2 新增 4 个 consciousness 文件 + 1 个测试，80 个
 - **核心定位**：情感聊天机器人，通过 QQ/微信跟用户聊天
 
 ---
@@ -27,7 +27,8 @@ startup:
   3. start_proactive_scheduler() → APScheduler（主动消息）
   4. ConsciousnessEngine(db, scheduler).start()
      ├─ StateStore.start() → 单写者协程
-     └─ WorldEngine.register_jobs() → 心跳 / 每日梦境 / 过期清理
+     ├─ WorldEngine.register_jobs() → 心跳 / 每日梦境 / 过期清理
+     └─ scheduler.add_job(brain.run_cycle) → 三步决策（规则→判断→生成）
   5. scheduler.start() → APScheduler 启动（world_engine + proactive 共用）
 
 shutdown:
@@ -201,7 +202,7 @@ fastapi, uvicorn, requests, python-dotenv, pydantic, httpx, pytest, pilk, dashsc
 ## 十一、存储层
 
 - **SQLite**，路径 `data/bot.db`，无 ORM，纯 SQL + `sqlite3.Row`
-- **7+ 张表**：messages, memories, chat_stats, proactive_candidates/targets/events, debug_events, platform_routing_overrides, relationship_state
+- **11+ 张表**：messages, memories, chat_stats, proactive_candidates/targets/events, debug_events, platform_routing_overrides, relationship_state, agent_state, event_log, long_term_memory, proactive_intent
 - **增量迁移**：`PRAGMA table_info` 检测列是否存在，缺失则 ALTER TABLE
 - **连接管理**：每次操作独立连接 + 自动 commit
 
@@ -239,7 +240,7 @@ FastAPI (uvicorn)
 
 ---
 
-## 十四、consciousness 模块集成状态（Phase 2 后）
+## 十四、consciousness 模块集成状态（Phase 3a 后）
 
 | # | 集成点 | 状态 |
 |---|--------|------|
@@ -259,3 +260,50 @@ FastAPI (uvicorn)
 | 随机事件 | random_events.py | 20 条事件库，深夜概率 0，下午 0.7 |
 | 世界引擎 | world_engine.py | APScheduler 心跳，睡眠跳过，极端天气 P0 |
 | 测试 | test_world_engine.py | 44 个用例，全绿 |
+
+### Phase 3a 已交付模块
+
+| 模块 | 文件 | 验收 |
+|------|------|------|
+| 大脑决策 | brain.py | 三步决策：规则过滤 → DeepSeek 判断(JSON) → Gemini 生成 fragments |
+| 文案碎片化 | fragmenter.py | \| 切分 + 精力适配 + 打字延迟 + 小时频控 |
+| 打断控制器 | interrupt.py | 三态状态机（idle/judging/generating/sending） |
+| 记忆召回 | memory_recall.py | 关键词匹配 + subject 优先 + salience 排序 Top-K |
+| 测试 | test_brain.py | 27 个用例，全绿 |
+
+### consciousness 决策链路（Phase 3a 新增）
+
+
+
+### 模型配置（Phase 3a 后新增 env）
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| CONSCIOUSNESS_JUDGE_MODEL | deepseek/deepseek-v4-pro | Step2 判断层模型 |
+| CONSCIOUSNESS_GENERATE_MODEL | anthropic/claude-opus-4.8 | Step3 生成层模型 |
+| CONSCIOUSNESS_DREAM_MODEL | mimo-v2.5-pro | Phase 4 梦境模型（占位） |
+---
+
+## §新增 — Proactive 链路考古结论（Phase 3 前置）
+
+### 核心结论
+- **SessionSubmitController 与 proactive/brain 链路完全无关**
+  - 它只用于 platform.py -> submit_platform_chat_turn（用户聊天串行化）
+  - proactive 是独立线程内的同步函数，直接 HTTP POST 到 neno-bridge
+  - Brain 链路是 asyncio 协程，通过 proactive_intent 表与 proactive runner 解耦
+
+### 真实发送链路
+runner.check_and_send_once() -> rules.py 漏斗 -> send_executor._send_qq_candidate()
+-> _post_neno_bridge_send_qq() + _save_proactive_context()
+
+### Brain 意图发送链路（Phase 3b 新增）
+brain.run_cycle() -> proactive_intent 表 -> runner.consume_brain_intents()
+-> rules.py 同一套漏斗 -> send_executor.send_brain_intent()
+-> _post_neno_bridge_send_qq() + _save_proactive_context()
+
+### rules.py 漏斗函数
+hard_cooldown_active() / failure_pause_active() / within_active_window() /
+today_sent_count() / has_recent_user_message() / evaluate_proactive_rules()
+
+### Phase 3 并发风险
+无 asyncio<->threading 死锁风险。唯一并发场景是 brain 内部的 asyncio 打断（InterruptController），全程在同一事件循环内。

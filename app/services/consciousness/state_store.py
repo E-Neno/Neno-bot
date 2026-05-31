@@ -212,6 +212,18 @@ class StateStore:
         if mutation.desire_pulse > 0.0:
             state.desire.value = max(0.0, min(100.0, state.desire.value + mutation.desire_pulse))
 
+        if mutation.desire_clear:
+            state.desire.value = 0.0
+            state.desire.last_express_at = now.isoformat()
+
+        if mutation.experience is not None:
+            state.today_experiences.append(mutation.experience)
+            if len(state.today_experiences) > self._cfg.today_experiences_max:
+                state.today_experiences = state.today_experiences[-self._cfg.today_experiences_max:]
+
+        if mutation.clear_experiences:
+            state.today_experiences.clear()
+
         return state
 
     async def _ensure_row_exists(self) -> None:

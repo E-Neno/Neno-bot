@@ -1,3 +1,5 @@
+import os
+
 from pydantic import BaseModel
 
 
@@ -31,3 +33,21 @@ class ConsciousnessConfig(BaseModel):
     # 记忆
     today_experiences_max: int = 10
     memory_recall_top_k: int = 5
+
+    # Brain 决策
+    brain_cycle_interval_seconds: int = 60
+    judge_llm_timeout_seconds: float = 8.0
+    generate_llm_timeout_seconds: float = 15.0
+    generate_llm_fallback: str = "mimo-v2.5-pro"
+
+    # LLM 模型（从 env 读取，兼容现有 OPENROUTER 风格）
+    judge_model: str = os.getenv("CONSCIOUSNESS_JUDGE_MODEL", "deepseek/deepseek-v4-pro")
+    generate_model: str = os.getenv("CONSCIOUSNESS_GENERATE_MODEL", "anthropic/claude-opus-4.8")
+    dream_model: str = os.getenv("CONSCIOUSNESS_DREAM_MODEL", "mimo-v2.5-pro")
+
+    # Fragmenter
+    max_fragments_per_burst: int = 5
+    max_proactive_per_hour: int = 6
+    typing_chars_per_second: float = 8.0
+    typing_min_delay: float = 0.8
+    typing_max_delay: float = 4.0
