@@ -59,6 +59,13 @@ app/
 │   ├── memory_context_service.py    # 记忆检索
 │   ├── memory_candidate_decision_service.py
 │   ├── time_context_service.py      # 时间上下文
+│   ├── consciousness/               # 意识层（状态机引擎）
+│   │   ├── __init__.py               #    ConsciousnessEngine 门面
+│   │   ├── config.py                 #    魔法数字集中管理
+│   │   ├── models.py                 #    NenoState / StateMutation
+│   │   ├── desire.py                 #    表达欲推算模型
+│   │   ├── mood.py                   #    二维情绪模型
+│   │   └── state_store.py            #    单写者 + 乐观锁持久化
 │   ├── proactive/                   # 主动消息子系统
 │   ├── proactive_service.py
 │   ├── proactive_scheduler.py       # 后台定时调度

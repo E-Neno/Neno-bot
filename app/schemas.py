@@ -2,6 +2,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, StrictBool, validator
 
+from app.services.consciousness.models import NenoState  # noqa: F401
+
 
 class MediaAttachment(BaseModel):
     kind: str = Field(..., max_length=32)

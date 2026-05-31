@@ -220,6 +220,58 @@ def init_db():
                 "ALTER TABLE platform_routing_overrides ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP"
             )
 
+        # --- consciousness module tables (Phase 1) ---
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_state (
+                id          INTEGER PRIMARY KEY CHECK (id = 1),
+                revision    INTEGER NOT NULL DEFAULT 0,
+                state_json  TEXT    NOT NULL,
+                updated_at  TEXT    NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS event_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_hash  TEXT    NOT NULL,
+                priority    INTEGER NOT NULL,
+                content     TEXT    NOT NULL,
+                tags        TEXT,
+                mood_impact REAL    DEFAULT 0.0,
+                status      TEXT    DEFAULT 'pending',
+                created_at  TEXT    NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_event_topic ON event_log(topic_hash, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_event_status ON event_log(status, priority)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS long_term_memory (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                content    TEXT NOT NULL,
+                tags       TEXT,
+                subject    TEXT,
+                salience   REAL DEFAULT 0.5,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_subject ON long_term_memory(subject, salience)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proactive_intent (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    TEXT NOT NULL,
+                fragments  TEXT NOT NULL,
+                status     TEXT DEFAULT 'queued',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
 
 def add_message(
     session_id: str,

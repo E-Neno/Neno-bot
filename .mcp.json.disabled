@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codegraphcontext": {
+      "command": "/home/admin/emotion-bot/scripts/cgc-mcp-wrapper.sh",
+      "args": ["mcp", "start"]
+    }
+  }
+}

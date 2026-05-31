@@ -1,0 +1,16 @@
+# 🚨 CRITICAL INITIALIZATION INSTRUCTION FOR ALL AI AGENTS 🚨
+
+Welcome to the Neno-bot repository. This is a highly constrained, state-driven, and concurrent agent engine. 
+
+Before you start any task, planning, coding, or answering questions, **YOU MUST MANDATORILY READ AND ASSIMILATE** the following two core architecture documents located in the root of this repository:
+
+1. `NENO.md` (AI Collaboration & Modification Guidelines and State Contract)
+2. `NENO_ARCHITECTURE.md` (Runtime Architecture Topology and Hazard Map)
+
+### 🛑 REQUIRED ACTION NOW:
+If you have not yet read these files in your current session, you must immediately use your file-reading tools (e.g., `view_file`, `read_file`) to load `NENO.md` and `NENO_ARCHITECTURE.md`.
+
+### ⚠️ WHY THIS IS NON-NEGOTIABLE:
+Neno relies on extremely fragile memory locks, exact prompt appending orders for API cache economics, and monotonic digest cursors. Applying generic software engineering principles (like making things async, reordering logic, or delaying snapshot writes) without understanding the architecture **WILL silently break the system**. 
+
+**DO NOT PROCEED with any code modifications until you have read both documents.**
