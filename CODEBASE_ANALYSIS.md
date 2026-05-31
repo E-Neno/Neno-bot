@@ -185,7 +185,7 @@ SAFE_TEMPLATES = [
 **Relationship**: state/reset/update
 **Session**: messages/list/clear/delete-message
 **Context**: time
-**Debug**: 7 个端点（chat-preview/session-submit/aggregation/memory-preview/events/health）
+**Debug**: 12 个端点（chat-preview/session-submit/aggregation/memory-preview/events/health + consciousness/state/events/world/inject/think）
 **Stats**: summary
 **System**: / /config /config/update /test
 
@@ -250,6 +250,7 @@ FastAPI (uvicorn)
 | 4 | context_builder.py → 注入动态状态段 | Phase 3+（禁止随意改动） |
 | 5 | chat_service.py → 用户交互作为 P0 事件 | Phase 3+ |
 | 6 | main.py → lifespan 启停 ConsciousnessEngine | ✅ Phase 2 完成 |
+| 7 | debug.py → 意识面板 5 个只读接口 + 前端面板 | ✅ 2026-06-01 完成 |
 
 ### Phase 2 已交付模块
 

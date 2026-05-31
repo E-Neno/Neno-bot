@@ -1,4 +1,4 @@
-import { buildConsoleLayout } from "./js/layout.js";
+import { buildConsoleLayout, onPanelActivate } from "./js/layout.js";
 import {
   bindDebugEvents,
   loadDebugEvents,
@@ -40,6 +40,11 @@ import {
   loadStatsSummary,
 } from "./js/stats.js";
 import { startAlertPolling } from "./js/alerts.js";
+import {
+  bindConsciousnessEvents,
+  onConsciousnessPanelActive,
+  onConsciousnessPanelInactive,
+} from "./js/consciousness.js";
 
 function bindBaseEvents() {
   bindChatEvents({
@@ -67,6 +72,9 @@ function init() {
   bindBaseEvents();
   bindProactiveEvents();
   bindDebugEvents();
+  bindConsciousnessEvents();
+  onPanelActivate("consciousnessPanel:activate", onConsciousnessPanelActive);
+  onPanelActivate("consciousnessPanel:deactivate", onConsciousnessPanelInactive);
   loadConfig();
   loadSessions();
   loadMemories();

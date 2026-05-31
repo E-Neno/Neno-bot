@@ -3,6 +3,7 @@ import { createElement, setOptionalText } from "./dom.js";
 export const panelDefinitions = [
   ["overviewPanel", "总览"],
   ["chatPanel", "聊天测试"],
+  ["consciousnessPanel", "意识面板"],
   ["proactivePanel", "主动消息"],
   ["memoryPanel", "记忆库"],
   ["configPanel", "配置"],
@@ -29,7 +30,16 @@ export function createPanel(id, title, subtitle) {
   return { panel, header };
 }
 
+let _panelActivateCallbacks = {};
+
+export function onPanelActivate(panelId, callback) {
+  _panelActivateCallbacks[panelId] = callback;
+}
+
 export function setActivePanel(panelId) {
+  const prev = document.querySelector(".console-panel.active");
+  const prevId = prev?.id;
+
   for (const panel of document.querySelectorAll(".console-panel")) {
     panel.classList.toggle("active", panel.id === panelId);
   }
@@ -39,6 +49,13 @@ export function setActivePanel(panelId) {
   const isChatPanel = panelId === "chatPanel";
   document.body.classList.toggle("chat-panel-active", isChatPanel);
   document.querySelector(".app")?.classList.toggle("chat-panel-active", isChatPanel);
+
+  if (prevId && prevId !== panelId && _panelActivateCallbacks[`${prevId}:deactivate`]) {
+    _panelActivateCallbacks[`${prevId}:deactivate`]();
+  }
+  if (_panelActivateCallbacks[`${panelId}:activate`]) {
+    _panelActivateCallbacks[`${panelId}:activate`]();
+  }
 }
 
 export function appendStatusMetric(grid, label, id) {
@@ -287,6 +304,241 @@ export function buildProactivePanel(panel, header) {
   proactiveCard?.remove();
 }
 
+export function buildConsciousnessPanel(panel, header) {
+  const grid = createElement("div", "console-grid");
+  panel.appendChild(grid);
+
+  // ── Phase 1: Body State Card ──
+  const bodyCard = createElement("div", "card");
+  bodyCard.appendChild(createElement("h3", "", "身体状态 (Phase 1)"));
+  bodyCard.appendChild(createElement("div", "config-help", "energy/mood/desire 实时值，desire 每秒自动刷新。"));
+  const refreshRow = createElement("div", "row");
+  const refreshBtn = createElement("button", "secondary auxiliary", "刷新状态");
+  refreshBtn.id = "cRefreshStateBtn";
+  refreshRow.appendChild(refreshBtn);
+  bodyCard.appendChild(refreshRow);
+
+  const stateGrid = createElement("div", "status-grid");
+  stateGrid.style.gridTemplateColumns = "1fr";
+  stateGrid.style.gap = "12px";
+
+  // Energy
+  const energySection = createElement("div");
+  energySection.style.border = "1px solid var(--milk-border-soft)";
+  energySection.style.borderRadius = "14px";
+  energySection.style.padding = "12px";
+  energySection.style.background = "#fffbf7";
+  const energyHead = createElement("div");
+  energyHead.style.display = "flex";
+  energyHead.style.justifyContent = "space-between";
+  energyHead.style.alignItems = "center";
+  energyHead.style.marginBottom = "6px";
+  energyHead.append(
+    createElement("div", "status-label", "精力 Energy"),
+    createElement("div", "status-value", "-")
+  );
+  energyHead.lastChild.id = "cEnergyValue";
+  const energyMeta = createElement("div");
+  energyMeta.style.fontSize = "12px";
+  energyMeta.style.color = "var(--milk-muted)";
+  energyMeta.style.marginBottom = "6px";
+  energyMeta.append(
+    createElement("span", "", "状态: "),
+    createElement("span", "", "-")
+  );
+  energyMeta.lastChild.id = "cEnergyStatus";
+  const energyDesc = createElement("div");
+  energyDesc.style.fontSize = "12px";
+  energyDesc.style.color = "var(--milk-muted)";
+  energyDesc.id = "cEnergyDesc";
+  const energyBar = createElement("div");
+  energyBar.id = "cEnergyBar";
+  energySection.append(energyHead, energyMeta, energyDesc, energyBar);
+  stateGrid.appendChild(energySection);
+
+  // Mood
+  const moodSection = createElement("div");
+  moodSection.style.border = "1px solid var(--milk-border-soft)";
+  moodSection.style.borderRadius = "14px";
+  moodSection.style.padding = "12px";
+  moodSection.style.background = "#fffbf7";
+  const moodHead = createElement("div");
+  moodHead.style.display = "flex";
+  moodHead.style.justifyContent = "space-between";
+  moodHead.style.alignItems = "center";
+  moodHead.style.marginBottom = "6px";
+  moodHead.append(
+    createElement("div", "status-label", "情绪 Mood"),
+    createElement("div", "status-value", "-")
+  );
+  moodHead.lastChild.id = "cMoodValue";
+  const moodDetail = createElement("div");
+  moodDetail.style.fontSize = "12px";
+  moodDetail.style.color = "var(--milk-muted)";
+  moodDetail.style.marginBottom = "6px";
+  moodDetail.id = "cMoodDetail";
+  const moodDesc = createElement("div");
+  moodDesc.style.fontSize = "12px";
+  moodDesc.style.color = "var(--milk-muted)";
+  moodDesc.id = "cMoodDesc";
+  const moodBar = createElement("div");
+  moodBar.id = "cMoodBar";
+  moodSection.append(moodHead, moodDetail, moodDesc, moodBar);
+  stateGrid.appendChild(moodSection);
+
+  // Desire
+  const desireSection = createElement("div");
+  desireSection.style.border = "1px solid var(--milk-border-soft)";
+  desireSection.style.borderRadius = "14px";
+  desireSection.style.padding = "12px";
+  desireSection.style.background = "#fffbf7";
+  const desireHead = createElement("div");
+  desireHead.style.display = "flex";
+  desireHead.style.justifyContent = "space-between";
+  desireHead.style.alignItems = "center";
+  desireHead.style.marginBottom = "6px";
+  desireHead.append(
+    createElement("div", "status-label", "表达欲 Desire"),
+    createElement("div", "status-value", "-")
+  );
+  desireHead.lastChild.id = "cDesireValue";
+  const desireExpress = createElement("div");
+  desireExpress.style.fontSize = "12px";
+  desireExpress.style.color = "var(--milk-muted)";
+  desireExpress.style.marginBottom = "6px";
+  desireExpress.append(
+    createElement("span", "", "上次表达: "),
+    createElement("span", "", "-")
+  );
+  desireExpress.lastChild.id = "cDesireExpress";
+  const desireBar = createElement("div");
+  desireBar.id = "cDesireBar";
+  desireSection.append(desireHead, desireExpress, desireBar);
+  stateGrid.appendChild(desireSection);
+
+  bodyCard.appendChild(stateGrid);
+
+  // Interaction info
+  const interactGrid = createElement("div", "status-grid");
+  interactGrid.style.marginTop = "10px";
+  appendStatusMetric(interactGrid, "上次互动用户", "cLastUser");
+  appendStatusMetric(interactGrid, "互动摘要", "cLastSummary");
+  appendStatusMetric(interactGrid, "revision", "cRevision");
+  appendStatusMetric(interactGrid, "updated_at", "cUpdatedAt");
+  bodyCard.appendChild(interactGrid);
+
+  bodyCard.appendChild(createElement("div", "status", ""));
+  bodyCard.lastChild.id = "consciousnessStateStatus";
+
+  // Experiences
+  const expCard = createElement("div", "card");
+  expCard.appendChild(createElement("h3", "", "今日经历"));
+  const expBox = createElement("div", "small panel-list");
+  expBox.id = "cExperiences";
+  expBox.textContent = "暂无";
+  expCard.appendChild(expBox);
+
+  grid.append(bodyCard, expCard);
+
+  // ── Phase 2: World & Events Card ──
+  const worldCard = createElement("div", "card");
+  worldCard.appendChild(createElement("h3", "", "世界感知 (Phase 2)"));
+  worldCard.appendChild(createElement("div", "config-help", "当前天气、热搜和事件池状态。"));
+
+  const weatherGrid = createElement("div", "status-grid");
+  weatherGrid.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
+  appendStatusMetric(weatherGrid, "天气", "cWeatherText");
+  appendStatusMetric(weatherGrid, "温度", "cWeatherTemp");
+  appendStatusMetric(weatherGrid, "降雨", "cWeatherRain");
+  worldCard.appendChild(weatherGrid);
+
+  const topicsLabel = createElement("div", "status-label");
+  topicsLabel.style.marginTop = "10px";
+  topicsLabel.textContent = "热搜";
+  worldCard.appendChild(topicsLabel);
+  const topicsBox = createElement("div");
+  topicsBox.id = "cHotTopics";
+  topicsBox.style.marginTop = "4px";
+  topicsBox.textContent = "暂无";
+  worldCard.appendChild(topicsBox);
+
+  const worldMetaGrid = createElement("div", "status-grid");
+  worldMetaGrid.style.marginTop = "10px";
+  worldMetaGrid.style.gridTemplateColumns = "1fr 1fr";
+  appendStatusMetric(worldMetaGrid, "时间感知", "cWorldTime");
+  appendStatusMetric(worldMetaGrid, "感知时间", "cWorldPerception");
+  worldCard.appendChild(worldMetaGrid);
+
+  const eventsCard = createElement("div", "card");
+  eventsCard.appendChild(createElement("h3", "", "事件池"));
+  eventsCard.appendChild(createElement("div", "config-help", "event_log 中的 pending/consumed/expressed 事件。"));
+  const eventListBox = createElement("div", "small panel-list");
+  eventListBox.id = "cEventList";
+  eventListBox.textContent = "暂无事件";
+  eventsCard.appendChild(eventListBox);
+  eventsCard.appendChild(createElement("div", "status", ""));
+  eventsCard.lastChild.id = "cEventStatus";
+
+  grid.append(worldCard, eventsCard);
+
+  // ── Phase 3a: Think Card ──
+  const thinkCard = createElement("div", "card");
+  thinkCard.appendChild(createElement("h3", "", "思考过程 (Phase 3a)"));
+  thinkCard.appendChild(createElement("div", "config-help", "手动注入测试事件，触发 Neno 三步决策（规则过滤 → 判断 → 生成），结果仅预览不发送。"));
+
+  // Inject form
+  const injectGroup = createElement("div");
+  injectGroup.style.marginBottom = "12px";
+  injectGroup.appendChild(createElement("div", "status-label", "注入测试事件"));
+  const injectRow = createElement("div", "row");
+  injectRow.style.gap = "6px";
+  injectRow.style.alignItems = "center";
+
+  const contentInput = createElement("input");
+  contentInput.id = "cInjectContent";
+  contentInput.type = "text";
+  contentInput.placeholder = "输入测试事件内容，如：南宁突降暴雨";
+  contentInput.style.flex = "1";
+  contentInput.style.minWidth = "0";
+  injectRow.appendChild(contentInput);
+
+  const prioritySelect = createElement("select");
+  prioritySelect.id = "cInjectPriority";
+  for (const [val, label] of [["0", "P0 紧急"], ["1", "P1 高"], ["2", "P2 普通"], ["3", "P3 低"]]) {
+    const opt = createElement("option", "", label);
+    opt.value = val;
+    prioritySelect.appendChild(opt);
+  }
+  prioritySelect.value = "2";
+  injectRow.appendChild(prioritySelect);
+
+  const injectBtn = createElement("button", "secondary", "注入");
+  injectBtn.id = "cInjectBtn";
+  injectRow.appendChild(injectBtn);
+  injectGroup.appendChild(injectRow);
+  injectGroup.appendChild(createElement("div", "status", ""));
+  injectGroup.lastChild.id = "cInjectStatus";
+  thinkCard.appendChild(injectGroup);
+
+  // Think button
+  const thinkRow = createElement("div", "row");
+  const thinkBtn = createElement("button", "", "触发思考");
+  thinkBtn.id = "cThinkBtn";
+  thinkRow.appendChild(thinkBtn);
+  thinkCard.appendChild(thinkRow);
+  thinkCard.appendChild(createElement("div", "status", ""));
+  thinkCard.lastChild.id = "cThinkStatus";
+
+  // Result area
+  const thinkResult = createElement("div");
+  thinkResult.id = "cThinkResult";
+  thinkResult.style.marginTop = "12px";
+  thinkResult.textContent = "点击「触发思考」查看三步决策过程";
+  thinkCard.appendChild(thinkResult);
+
+  grid.appendChild(thinkCard);
+}
+
 export function buildConsoleLayout() {
   const app = document.querySelector(".app");
   const chat = document.querySelector(".chat");
@@ -334,6 +586,7 @@ export function buildConsoleLayout() {
   const quickActions = createElement("div", "overview-actions");
   for (const [panelId, label] of [
     ["chatPanel", "打开聊天测试"],
+    ["consciousnessPanel", "打开意识面板"],
     ["proactivePanel", "打开主动消息"],
     ["memoryPanel", "打开记忆库"],
     ["debugPanel", "打开日志 / 调试"],
@@ -452,6 +705,9 @@ export function buildConsoleLayout() {
     buildProactivePanel(proactivePanel.panel, proactivePanel.header);
   }
 
+  const consciousnessPanel = createPanel("consciousnessPanel", "意识面板", "意识引擎实时状态、世界感知与思考过程预览。");
+  buildConsciousnessPanel(consciousnessPanel.panel, consciousnessPanel.header);
+
   const memoryPanel = createPanel("memoryPanel", "记忆库", "查看、编辑、启用和停用记忆。");
   if (memoryCard) {
     memoryPanel.panel.appendChild(memoryCard);
@@ -553,6 +809,7 @@ export function buildConsoleLayout() {
   main.append(
     overview.panel,
     chatPanel.panel,
+    consciousnessPanel.panel,
     proactivePanel.panel,
     memoryPanel.panel,
     configPanel.panel,

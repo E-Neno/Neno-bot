@@ -1,9 +1,14 @@
+import asyncio
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
+from app.config import OPENROUTER_API_KEY, OPENROUTER_URL
+from app.llm.openrouter_client import chat_with_openrouter
 from app.routers import platform as platform_router
 from app.schemas import ChatRequest
 from app.security import require_admin_token
@@ -14,11 +19,15 @@ from app.services.chat_service import (
     mask_session_id,
     request_memory_candidate,
 )
+from app.services.consciousness.brain import GENERATE_SYSTEM, JUDGE_SYSTEM
+from app.services.consciousness.config import ConsciousnessConfig
+from app.services.consciousness.event_pool import EventPool
 from app.services.memory_candidate_decision_service import decide_memory_candidate
 from app.services.proactive_scheduler import get_proactive_scheduler_status
 from app.storage.db import (
     fetch_all,
     fetch_one,
+    get_conn,
     get_message_by_id,
     get_session_messages,
     list_debug_events,
@@ -619,3 +628,275 @@ def _diagnose_digest() -> dict:
     if compact_ok:
         return _card("digest", "历史压缩", "ok", "历史压缩正常", details, suggestions)
     return _card("digest", "历史压缩", "info", "暂无压缩记录（对话量还不够）", details, suggestions)
+
+
+# ── Consciousness Panel Routes ────────────────────────────
+
+
+def _get_state_json() -> dict | None:
+    row = fetch_one(
+        "SELECT state_json, revision, updated_at FROM agent_state WHERE id = 1 LIMIT 1"
+    )
+    if row is None:
+        return None
+    try:
+        state = json.loads(row["state_json"])
+    except Exception:
+        return None
+    state["revision"] = int(row["revision"])
+    state["updated_at"] = row["updated_at"]
+    return state
+
+
+@router.get("/consciousness/state", dependencies=[Depends(require_admin_token)])
+def consciousness_state():
+    state = _get_state_json()
+    if state is None:
+        return {"success": True, "state": None, "message": "agent_state 表为空，consciousness 未初始化"}
+    return {"success": True, "state": state}
+
+
+@router.get("/consciousness/events", dependencies=[Depends(require_admin_token)])
+def consciousness_events():
+    rows = fetch_all(
+        """SELECT id, topic_hash, priority, content, tags, mood_impact, status, created_at
+           FROM event_log
+           WHERE status IN ('pending', 'consumed', 'expressed')
+           ORDER BY priority ASC, created_at DESC
+           LIMIT 50"""
+    )
+    events = []
+    for row in rows:
+        events.append({
+            "id": row["id"],
+            "topic_hash": row["topic_hash"],
+            "priority": int(row["priority"]),
+            "content": row["content"],
+            "tags": json.loads(row["tags"]) if row["tags"] else [],
+            "mood_impact": float(row["mood_impact"]),
+            "status": row["status"],
+            "created_at": row["created_at"],
+        })
+    return {"success": True, "events": events}
+
+
+@router.get("/consciousness/world", dependencies=[Depends(require_admin_token)])
+def consciousness_world():
+    state = _get_state_json()
+    if state is None:
+        return {"success": True, "weather": None, "hot_topics": [], "time_context": "", "last_perception_at": None}
+    world = state.get("world") or {}
+    return {
+        "success": True,
+        "weather": world.get("weather"),
+        "hot_topics": world.get("hot_topics", []),
+        "time_context": world.get("time_context", ""),
+        "last_perception_at": world.get("last_perception_at"),
+    }
+
+
+class InjectEventRequest(BaseModel):
+    content: str
+    priority: int = 2
+    tags: list[str] = []
+    mood_impact: float = 0.0
+
+
+@router.post("/consciousness/inject", dependencies=[Depends(require_admin_token)])
+def consciousness_inject(req: InjectEventRequest):
+    topic_hash = EventPool.make_hash_unstructured(req.content)
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO event_log (topic_hash, priority, content, tags, mood_impact, status, created_at)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
+            (
+                topic_hash,
+                req.priority,
+                req.content,
+                json.dumps(req.tags, ensure_ascii=False),
+                req.mood_impact,
+                now,
+            ),
+        )
+    return {
+        "success": True,
+        "event": {
+            "topic_hash": topic_hash,
+            "priority": req.priority,
+            "content": req.content,
+            "status": "pending",
+        },
+    }
+
+
+def _llm_call_sync(model: str, messages: list[dict], max_tokens: int, timeout: int, trace_id: str) -> str:
+    return chat_with_openrouter(
+        api_key=OPENROUTER_API_KEY,
+        url=OPENROUTER_URL,
+        model_name=model,
+        messages=messages,
+        timeout=timeout,
+        trace_id=trace_id,
+    )
+
+
+@router.post("/consciousness/think", dependencies=[Depends(require_admin_token)])
+async def consciousness_think():
+    trace_id = f"debug_{uuid.uuid4().hex[:8]}"
+    cfg = ConsciousnessConfig()
+
+    # ── Read state ──
+    state = _get_state_json()
+    if state is None:
+        return {"success": False, "error": "agent_state 未初始化", "trace_id": trace_id}
+
+    energy = state.get("energy", {})
+    mood = state.get("mood", {})
+    desire = state.get("desire", {})
+    last_interaction = state.get("last_interaction", {})
+
+    # ── Read pending events (do NOT consume) ──
+    rows = fetch_all(
+        """SELECT topic_hash, priority, content, tags, mood_impact
+           FROM event_log
+           WHERE status = 'pending' AND priority <= 2
+           ORDER BY priority ASC, created_at ASC
+           LIMIT 10"""
+    )
+    events = []
+    for row in rows:
+        events.append({
+            "topic_hash": row["topic_hash"],
+            "priority": int(row["priority"]),
+            "content": row["content"],
+            "tags": json.loads(row["tags"]) if row["tags"] else [],
+            "mood_impact": float(row["mood_impact"]),
+        })
+
+    # ── Step 1: Rule filter ──
+    step1_result = "skip"
+    step1_reason = ""
+    if energy.get("status") == "sleeping":
+        step1_reason = "energy.status=sleeping"
+    elif not events:
+        step1_reason = "没有 pending 事件"
+    elif all(ev["priority"] == 3 for ev in events):
+        step1_reason = "所有事件都是 P3，跳过"
+    else:
+        step1_result = "proceed"
+        p0_count = sum(1 for ev in events if ev["priority"] == 0)
+        step1_reason = f"energy={energy.get('value', 0):.0f} ({energy.get('status', '?')}), {len(events)} 个事件 (P0: {p0_count})"
+
+    result = {
+        "success": True,
+        "trace_id": trace_id,
+        "steps": {
+            "step1_rule_filter": {"result": step1_result, "reason": step1_reason},
+            "step2_judge": None,
+            "step3_generate": None,
+        },
+        "state_snapshot": state,
+        "events_used": events,
+    }
+
+    if step1_result == "skip":
+        return result
+
+    # ── Step 2: LLM Judge ──
+    events_text = "\n".join(
+        f"- [P{ev['priority']}] {ev['content']}" for ev in events
+    )
+    state_text = (
+        f"精力: {energy.get('value', 0):.0f}/100 ({energy.get('description', '')})\n"
+        f"情绪: {mood.get('label', '?')}（{mood.get('description', '')}）\n"
+        f"表达欲: {desire.get('value', 0):.0f}/100\n"
+        f"上次互动: {last_interaction.get('summary') or '无'}\n"
+        f"互动对象: {last_interaction.get('user_id') or '无'}"
+    )
+    user_prompt = f"当前状态：\n{state_text}\n\n待处理事件：\n{events_text}"
+
+    judge_result = {"success": False, "result": None, "model": cfg.judge_model, "raw_response": ""}
+    try:
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(
+                _llm_call_sync,
+                model=cfg.judge_model,
+                messages=[
+                    {"role": "system", "content": JUDGE_SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=200,
+                timeout=int(cfg.judge_llm_timeout_seconds),
+                trace_id=trace_id,
+            ),
+            timeout=cfg.judge_llm_timeout_seconds,
+        )
+        raw = raw.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = json.loads(raw.strip())
+        judge_result["success"] = True
+        judge_result["result"] = parsed
+        judge_result["raw_response"] = raw.strip()
+    except (asyncio.TimeoutError, Exception) as e:
+        judge_result["raw_response"] = str(e)
+
+    result["steps"]["step2_judge"] = judge_result
+
+    if not judge_result["success"] or not judge_result["result"] or not judge_result["result"].get("should_share"):
+        return result
+
+    # ── Step 3: LLM Generate ──
+    events_text_gen = "\n".join(f"- {ev['content']}" for ev in events)
+    user_prompt_gen = (
+        f"精力：{energy.get('value', 0):.0f}/100\n"
+        f"情绪：{mood.get('label', '?')}\n"
+        f"关于对方你记得：\n（无相关记忆，调试模式）\n\n"
+        f"触发你想说话的事：\n{events_text_gen}\n\n"
+        f"现在用 | 分隔多条消息，自然地说："
+    )
+
+    generate_result = {"success": False, "raw_text": "", "fragments_after_split": [], "model": cfg.generate_model, "will_not_send": True}
+    models = [cfg.generate_model, cfg.generate_llm_fallback]
+    for model in models:
+        try:
+            gen_raw = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _llm_call_sync,
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": GENERATE_SYSTEM},
+                        {"role": "user", "content": user_prompt_gen},
+                    ],
+                    max_tokens=300,
+                    timeout=int(cfg.generate_llm_timeout_seconds),
+                    trace_id=trace_id,
+                ),
+                timeout=cfg.generate_llm_timeout_seconds,
+            )
+            if gen_raw and gen_raw.strip():
+                generate_result["success"] = True
+                generate_result["raw_text"] = gen_raw.strip()
+                generate_result["model"] = model
+                parts = [p.strip() for p in gen_raw.strip().split("|") if p.strip()]
+                if energy.get("value", 100) < 30:
+                    parts = parts[:1]
+                    if parts:
+                        parts[0] = parts[0][:10]
+                elif energy.get("value", 100) < 60:
+                    parts = parts[:3]
+                else:
+                    parts = parts[:cfg.max_fragments_per_burst]
+                generate_result["fragments_after_split"] = parts
+                break
+        except (asyncio.TimeoutError, Exception) as e:
+            generate_result["raw_text"] = str(e)
+            generate_result["model"] = model
+            continue
+
+    result["steps"]["step3_generate"] = generate_result
+    return result

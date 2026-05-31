@@ -2220,6 +2220,44 @@
         grid-template-columns: 1fr;
       }
     }
+
+    /* Consciousness panel progress bars */
+    .consciousness-progress-track {
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+    }
+
+    .consciousness-progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 400ms ease;
+    }
+
+    .consciousness-progress-fill.energy {
+      background: linear-gradient(90deg, #86aa8d, #4f8a58);
+    }
+
+    .consciousness-progress-fill.mood {
+      background: linear-gradient(90deg, #8daac4, #4a7fb5);
+    }
+
+    .consciousness-progress-fill.desire {
+      background: linear-gradient(90deg, #d4b88a, #c49b79);
+    }
+
+    .consciousness-exp-item {
+      padding: 6px 0;
+      border-top: 1px solid var(--milk-border-soft);
+      font-size: 13px;
+      color: var(--milk-text);
+      line-height: 1.35;
+    }
+
+    .consciousness-exp-item:first-child {
+      border-top: none;
+    }
   </style>
 </head>
 <body class="app-loading">
@@ -2584,5 +2622,6 @@
   </div>
 
   <script type="module" src="/static/test.js"></script>
+  <script type="module" src="/static/js/consciousness.js"></script>
 </body>
 </html>
