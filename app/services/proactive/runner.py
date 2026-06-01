@@ -906,14 +906,15 @@ def enqueue_test_intent(
     }
 
 
-def drop_queued_test_intents() -> dict:
+def drop_all_queued_brain_intents() -> dict:
     """
     Debug-only：将所有 status='queued' 的 proactive_intent 标记为 'dropped'。
     不发送、不创建 candidate、不调用 send_proactive_candidate。
-    用于灰度前清理测试 intent，避免消费旧测试数据。
+    用于灰度前清理 queued intent，避免消费旧数据。
+    注意：会 drop 所有 queued intent，不仅是测试数据。
     """
     affected = execute_write(
         "UPDATE proactive_intent SET status='dropped' WHERE status='queued'",
     )
-    _brain_logger.info("drop_queued_test_intents: dropped %d queued intents", affected)
+    _brain_logger.info("drop_all_queued_brain_intents: dropped %d queued intents", affected)
     return {"success": True, "dropped_count": affected}

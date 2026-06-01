@@ -492,12 +492,12 @@ async function enqueueTestIntent(btn) {
   }
 }
 
-async function dropQueuedTestIntents(btn) {
+async function dropAllQueuedBrainIntents(btn) {
   const status = document.getElementById("cPreflightStatus");
   if (status) status.textContent = "清理中...";
   try {
     const data = await requestJson(
-      "/debug/consciousness/phase3b/drop_queued_test_intents",
+      "/debug/consciousness/phase3b/drop_all_queued_brain_intents",
       {
         method: "POST",
         headers: getAdminHeaders(),
@@ -572,7 +572,7 @@ export function bindConsciousnessEvents() {
 
   const dropBtn = document.getElementById("cDropQueuedBtn");
   if (dropBtn) {
-    dropBtn.addEventListener("click", () => dropQueuedTestIntents(dropBtn));
+    dropBtn.addEventListener("click", () => dropAllQueuedBrainIntents(dropBtn));
   }
 
   const refreshBtn = document.getElementById("cRefreshStateBtn");

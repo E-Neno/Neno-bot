@@ -933,12 +933,12 @@ def enqueue_test_intent(req: EnqueueTestIntentRequest | None = None):
     )
 
 
-@router.post("/consciousness/phase3b/drop_queued_test_intents", dependencies=[Depends(require_admin_token)])
-def drop_queued_test_intents():
+@router.post("/consciousness/phase3b/drop_all_queued_brain_intents", dependencies=[Depends(require_admin_token)])
+def drop_all_queued_brain_intents():
     """
     Debug-only：将所有 queued intent 标记为 dropped。
     不发送、不创建 candidate、不调用 send_proactive_candidate。
-    用于灰度前清理测试 intent。
+    用于灰度前清理 queued intent。
     """
-    from app.services.proactive.runner import drop_queued_test_intents as _drop
+    from app.services.proactive.runner import drop_all_queued_brain_intents as _drop
     return _drop()

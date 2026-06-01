@@ -648,15 +648,15 @@ class TestEnqueueTestIntent:
 
 
 class TestDropQueuedTestIntents:
-    """drop_queued_test_intents 功能测试"""
+    """drop_all_queued_brain_intents 功能测试"""
 
     @patch("app.services.proactive.runner.execute_write")
     def test_drop_queued(self, mock_write):
-        """drop_queued_test_intents 执行 UPDATE 并返回 dropped_count"""
+        """drop_all_queued_brain_intents 执行 UPDATE 并返回 dropped_count"""
         mock_write.return_value = 3
 
-        from app.services.proactive.runner import drop_queued_test_intents
-        result = drop_queued_test_intents()
+        from app.services.proactive.runner import drop_all_queued_brain_intents
+        result = drop_all_queued_brain_intents()
 
         assert result["success"] is True
         assert result["dropped_count"] == 3
@@ -670,8 +670,8 @@ class TestDropQueuedTestIntents:
         """drop 不调用 send，不创建 candidate"""
         mock_write.return_value = 0
 
-        from app.services.proactive.runner import drop_queued_test_intents
-        result = drop_queued_test_intents()
+        from app.services.proactive.runner import drop_all_queued_brain_intents
+        result = drop_all_queued_brain_intents()
 
         assert result["success"] is True
         assert result["dropped_count"] == 0

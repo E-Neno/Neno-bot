@@ -551,9 +551,9 @@ export function buildConsciousnessPanel(panel, header) {
   enqueueBtn.id = "cEnqueueTestBtn";
   enqueueBtn.title = "往 proactive_intent 写入一条 queued 测试意图，不发送";
   preflightRow.append(preflightBtn, enqueueBtn);
-  const dropBtn = createElement("button", "secondary", "清理测试 intent");
+  const dropBtn = createElement("button", "secondary", "清理所有 queued");
   dropBtn.id = "cDropQueuedBtn";
-  dropBtn.title = "将所有 queued intent 标记为 dropped，避免灰度时消费旧测试数据";
+  dropBtn.title = "将所有 queued intent 标记为 dropped（不仅是测试数据）";
   preflightRow.appendChild(dropBtn);
   preflightCard.appendChild(preflightRow);
 
