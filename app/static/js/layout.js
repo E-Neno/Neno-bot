@@ -537,6 +537,35 @@ export function buildConsciousnessPanel(panel, header) {
   thinkCard.appendChild(thinkResult);
 
   grid.appendChild(thinkCard);
+
+  // ── Phase 3b: Preflight Card ──
+  const preflightCard = createElement("div", "card");
+  preflightCard.appendChild(createElement("h3", "", "Phase 3b 预检"));
+  preflightCard.appendChild(createElement("div", "config-help", "只读检查 brain intent 发送链路就绪状态。不发送、不创建候选、不改状态。"));
+
+  const preflightRow = createElement("div", "row");
+  preflightRow.style.gap = "6px";
+  const preflightBtn = createElement("button", "secondary", "刷新预检");
+  preflightBtn.id = "cPreflightBtn";
+  const enqueueBtn = createElement("button", "secondary", "插入测试 intent");
+  enqueueBtn.id = "cEnqueueTestBtn";
+  enqueueBtn.title = "往 proactive_intent 写入一条 queued 测试意图，不发送";
+  preflightRow.append(preflightBtn, enqueueBtn);
+  const dropBtn = createElement("button", "secondary", "清理测试 intent");
+  dropBtn.id = "cDropQueuedBtn";
+  dropBtn.title = "将所有 queued intent 标记为 dropped，避免灰度时消费旧测试数据";
+  preflightRow.appendChild(dropBtn);
+  preflightCard.appendChild(preflightRow);
+
+  const preflightResult = createElement("div");
+  preflightResult.id = "cPreflightResult";
+  preflightResult.style.marginTop = "12px";
+  preflightResult.textContent = "点击「刷新预检」查看当前发送链路状态";
+  preflightCard.appendChild(preflightResult);
+  preflightCard.appendChild(createElement("div", "status", ""));
+  preflightCard.lastChild.id = "cPreflightStatus";
+
+  grid.appendChild(preflightCard);
 }
 
 export function buildConsoleLayout() {

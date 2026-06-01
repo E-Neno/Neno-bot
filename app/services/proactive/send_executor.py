@@ -1,3 +1,5 @@
+import json as _json
+import logging as _logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,11 +15,19 @@ from app.services.proactive.result_helpers import (
 )
 from app.services.proactive.rules import today_auto_sent_count
 from app.services.proactive_service import (
+    _mask_identifier,
+    _target_hash_for_session,
     is_allowed_qq_target,
     record_proactive_event,
     send_proactive_candidate,
 )
-from app.storage.db import update_proactive_candidate_status
+from app.storage.db import (
+    add_debug_event,
+    add_proactive_candidate,
+    execute_write,
+    get_proactive_target_by_session,
+    update_proactive_candidate_status,
+)
 from app.utils.logging_utils import log_event
 
 
@@ -292,4 +302,182 @@ def auto_send_real(
         "candidate_id": candidate["id"],
         "platform": platform,
         "target_label": candidate.get("target_label"),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Phase 3b: Brain Intent 发送（不改上方现有函数）
+# ──────────────────────────────────────────────────────────────────────
+
+_logger = _logging.getLogger(__name__)
+
+
+def send_brain_intent(
+    user_id: str,
+    fragments: list[str],
+    trace_id: str,
+    intent_id: int,
+) -> dict:
+    """
+    将 brain 生成的 fragments 逐条转写为 proactive_candidates（source='brain'），
+    调用现有 send_proactive_candidate() 复用微信发送链路。
+
+    每条 fragment 独立创建一个 candidate → 独立发送 → 独立落库。
+    一旦开始发送，完成全部 fragments（原子发送，不腰斩）。
+
+    target 通过 get_proactive_target_by_session 精确查找，
+    禁止用 get_latest_proactive_target 取"最新目标"，避免发错人。
+
+    返回: {"success": bool, "sent_count": int, "total": int, "error": str|None}
+    """
+    # ── 提取 platform 和 session_id ──
+    parts = (user_id or "").split(":")
+    platform = parts[0] if parts else ""
+    session_id = user_id  # user_id 本身就是 session_id 格式
+
+    if not platform or not session_id:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        add_debug_event(
+            trace_id=trace_id,
+            module="send_brain_intent",
+            event="invalid_user_id",
+            level="error",
+            reason=f"user_id format invalid: {user_id}",
+            action="dropped",
+        )
+        return {"success": False, "sent_count": 0, "total": len(fragments), "error": "invalid user_id"}
+
+    # ── 精确查 proactive_targets ──
+    target_row = get_proactive_target_by_session(platform, session_id)
+    if not target_row:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        add_debug_event(
+            trace_id=trace_id,
+            module="send_brain_intent",
+            event="no_target",
+            level="warning",
+            reason=f"no {platform} target for session {session_id}",
+            action="dropped",
+        )
+        _logger.warning(
+            "[%s] brain intent dropped: no %s target for session %s",
+            trace_id, platform, session_id,
+        )
+        return {"success": False, "sent_count": 0, "total": len(fragments), "error": "no target for session"}
+
+    # ── 从 target_row 提取发送所需字段 ──
+    real_user_id = str(target_row.get("real_user_id") or "").strip()
+    target_hash = _target_hash_for_session(session_id)
+    target_label = _mask_identifier(real_user_id or "")
+    permission_uid = parts[2] if len(parts) >= 3 else ""
+
+    # ── 构造 candidate metadata（_resolve_wx_candidate_target 需要） ──
+    base_metadata = {
+        "session_id": session_id,
+        "wx_real_user_id": real_user_id or None,
+        "wx_permission_user_id": permission_uid,
+        "source": "brain",
+        "brain_intent_id": intent_id,
+        "brain_trace_id": trace_id,
+    }
+
+    # ── 逐条 fragment 发送（原子，不腰斩） ──
+    sent_count = 0
+    error_msg = None
+
+    for idx, fragment in enumerate(fragments):
+        fragment = (fragment or "").strip()
+        if not fragment:
+            continue
+
+        meta = {
+            **base_metadata,
+            "brain_fragment_index": idx,
+            "brain_fragment_count": len(fragments),
+        }
+
+        try:
+            candidate = add_proactive_candidate(
+                platform=platform,
+                target_hash=target_hash,
+                target_label=target_label,
+                message=fragment,
+                reason=f"brain intent #{intent_id} frag {idx}",
+                status="pending",
+                source="brain",
+                metadata_json=_json.dumps(meta, ensure_ascii=False),
+            )
+        except Exception as e:
+            error_msg = f"candidate_create_failed: {e}"[:200]
+            add_debug_event(
+                trace_id=trace_id,
+                module="send_brain_intent",
+                event="candidate_create_failed",
+                level="error",
+                reason=error_msg,
+                action="send_failed",
+            )
+            _logger.error(
+                "[%s] brain intent fragment %d candidate create failed: %s",
+                trace_id, idx, e,
+            )
+            break
+
+        try:
+            send_proactive_candidate(
+                candidate_id=candidate["id"],
+                dry_run=False,
+                event_source="brain",
+                trace_id=trace_id,
+            )
+            sent_count += 1
+            _logger.info(
+                "[%s] brain intent #%d frag %d/%d sent (candidate %d)",
+                trace_id, intent_id, idx + 1, len(fragments), candidate["id"],
+            )
+        except Exception as e:
+            error_msg = str(e)[:200]
+            add_debug_event(
+                trace_id=trace_id,
+                module="send_brain_intent",
+                event="fragment_send_failed",
+                level="error",
+                reason=error_msg,
+                action="send_failed",
+            )
+            _logger.error(
+                "[%s] brain intent #%d frag %d send failed: %s",
+                trace_id, intent_id, idx, e,
+            )
+            break
+
+    # ── 更新 proactive_intent status ──
+    if sent_count == len(fragments):
+        status = "sent"
+    elif sent_count > 0:
+        status = "partial"
+    else:
+        status = "dropped"
+
+    execute_write(
+        "UPDATE proactive_intent SET status=? WHERE id=?",
+        (status, intent_id),
+    )
+
+    _logger.info(
+        "[%s] brain intent #%d result: status=%s sent=%d/%d error=%s",
+        trace_id, intent_id, status, sent_count, len(fragments), error_msg,
+    )
+
+    return {
+        "success": sent_count > 0,
+        "sent_count": sent_count,
+        "total": len(fragments),
+        "error": error_msg,
     }

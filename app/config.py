@@ -86,3 +86,15 @@ NENO_BRIDGE_SEND_WX_URL = os.getenv(
     "NENO_BRIDGE_SEND_WX_URL",
     "http://127.0.0.1:18793/proactive/send-wx",
 ).strip()
+
+# Phase 3b: Brain intent 消费器总开关。
+# false = consume_brain_intents no-op，不创建 candidate，不发送，不改 status。
+BRAIN_INTENT_CONSUMER_ENABLED = _env_bool("BRAIN_INTENT_CONSUMER_ENABLED", False)
+
+# Phase 3b: Brain intent 发送白名单。
+# 空列表 = brain send 子系统关闭（queued intent 保持积压，设计意图）。
+BRAIN_WHITELIST_USERS: list[str] = [
+    uid.strip()
+    for uid in os.getenv("BRAIN_WHITELIST_USERS", "").split(",")
+    if uid.strip()
+]

@@ -900,3 +900,45 @@ async def consciousness_think():
 
     result["steps"]["step3_generate"] = generate_result
     return result
+
+
+@router.get("/consciousness/phase3b/preflight", dependencies=[Depends(require_admin_token)])
+def phase3b_preflight():
+    """
+    Phase 3b 只读预检：评估"能不能安全发送"。
+    不发送、不创建 candidate、不改 status、不写 debug_events。
+    """
+    from app.services.proactive.runner import preflight_brain_intent
+    return {
+        "success": True,
+        **preflight_brain_intent(),
+    }
+
+
+class EnqueueTestIntentRequest(BaseModel):
+    user_id: str | None = None
+    fragments: list[str] | None = None
+
+
+@router.post("/consciousness/phase3b/enqueue_test_intent", dependencies=[Depends(require_admin_token)])
+def enqueue_test_intent(req: EnqueueTestIntentRequest | None = None):
+    """
+    Debug-only：往 proactive_intent 写入一条 queued 测试意图。
+    不发送、不创建 candidate、不调用 send_proactive_candidate。
+    """
+    from app.services.proactive.runner import enqueue_test_intent as _enqueue
+    return _enqueue(
+        user_id=req.user_id if req else None,
+        fragments=req.fragments if req else None,
+    )
+
+
+@router.post("/consciousness/phase3b/drop_queued_test_intents", dependencies=[Depends(require_admin_token)])
+def drop_queued_test_intents():
+    """
+    Debug-only：将所有 queued intent 标记为 dropped。
+    不发送、不创建 candidate、不调用 send_proactive_candidate。
+    用于灰度前清理测试 intent。
+    """
+    from app.services.proactive.runner import drop_queued_test_intents as _drop
+    return _drop()

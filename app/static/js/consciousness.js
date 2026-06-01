@@ -354,6 +354,168 @@ async function submitThinkCycle(triggerButton) {
   }
 }
 
+// ── Phase 3b Preflight ────────────────────────────────────
+
+function renderPreflightResult(data) {
+  const box = document.getElementById("cPreflightResult");
+  if (!box) return;
+  box.innerHTML = "";
+
+  if (!data?.success) {
+    box.textContent = "预检请求失败";
+    return;
+  }
+
+  const d = data.decision || {};
+  const rules = data.rules || {};
+  const intent = data.next_queued_intent;
+  const target = data.target_lookup;
+
+  // Decision header
+  const statusColor = d.ready_to_send ? "var(--green)" :
+    d.status === "disabled" || d.status === "whitelist_empty" ? "var(--milk-muted)" :
+    "var(--red)";
+
+  const header = document.createElement("div");
+  header.style.fontWeight = "600";
+  header.style.color = statusColor;
+  header.style.marginBottom = "8px";
+  header.textContent = d.ready_to_send
+    ? `✓ 就绪 — ${d.reason}`
+    : `✗ ${d.status} — ${d.reason}`;
+  box.appendChild(header);
+
+  // Config summary
+  const configGrid = document.createElement("div");
+  configGrid.className = "status-grid";
+  configGrid.style.gridTemplateColumns = "1fr 1fr";
+  const addMetric = (label, value) => {
+    const item = document.createElement("div");
+    item.className = "status-item";
+    item.innerHTML = `<div class="status-label">${label}</div><div class="status-value">${value}</div>`;
+    configGrid.appendChild(item);
+  };
+  addMetric("consumer_enabled", data.consumer_enabled ? "true" : "false");
+  addMetric("whitelist", data.whitelist_users.length > 0 ? data.whitelist_users.join(", ") : "空（子系统关闭）");
+  addMetric("whitelist_match", data.whitelist_match ? "✓ 匹配" : "✗ 不匹配");
+  addMetric("expected_candidates", d.expected_candidates || 0);
+  box.appendChild(configGrid);
+
+  // Intent info
+  if (intent) {
+    const intentBox = document.createElement("div");
+    intentBox.style.marginTop = "8px";
+    intentBox.innerHTML = `<div class="status-label">下一条待消费 intent</div>` +
+      `<div class="small">id=${intent.id} | user=${intent.user_id} | fragments=${intent.fragments_count} | ${intent.created_at}</div>`;
+    box.appendChild(intentBox);
+
+    // fragments preview
+    const preview = data.fragments_preview || [];
+    if (preview.length > 0) {
+      const previewBox = document.createElement("div");
+      previewBox.style.marginTop = "4px";
+      previewBox.style.paddingLeft = "8px";
+      previewBox.style.borderLeft = "2px solid var(--milk-muted)";
+      for (const frag of preview) {
+        const line = document.createElement("div");
+        line.className = "small";
+        line.style.color = "var(--milk-muted)";
+        line.textContent = `「${frag}」`;
+        previewBox.appendChild(line);
+      }
+      box.appendChild(previewBox);
+    }
+  }
+
+  // Target info
+  if (target) {
+    const targetBox = document.createElement("div");
+    targetBox.style.marginTop = "6px";
+    targetBox.innerHTML = `<div class="status-label">Target 查找</div>` +
+      `<div class="small">platform=${target.platform} | session=${target.session_id} | found=${target.found} | real_user_id=${target.real_user_id_masked || "无"}</div>`;
+    box.appendChild(targetBox);
+  }
+
+  // Rules
+  if (Object.keys(rules).length > 0) {
+    const rulesBox = document.createElement("div");
+    rulesBox.style.marginTop = "6px";
+    rulesBox.innerHTML = `<div class="status-label">漏斗规则</div>` +
+      `<div class="small">` +
+      `cooldown=${rules.hard_cooldown_active} | ` +
+      `failure_pause=${rules.failure_pause_active} | ` +
+      `active_window=${rules.within_active_window} | ` +
+      `sent_today=${rules.today_sent_count}/${rules.daily_limit} | ` +
+      `recent_chat=${rules.has_recent_user_message}` +
+      `</div>`;
+    box.appendChild(rulesBox);
+  }
+}
+
+async function loadPreflight(btn) {
+  const status = document.getElementById("cPreflightStatus");
+  if (status) status.textContent = "加载中...";
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/phase3b/preflight",
+      { headers: getAdminHeaders() },
+      "预检失败："
+    );
+    renderPreflightResult(data);
+    if (status) status.textContent = "预检完成";
+  } catch (err) {
+    if (status) status.textContent = err.message;
+  }
+}
+
+async function enqueueTestIntent(btn) {
+  const status = document.getElementById("cPreflightStatus");
+  if (status) status.textContent = "插入中...";
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/phase3b/enqueue_test_intent",
+      {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({}),
+      },
+      "插入失败："
+    );
+    if (data.success && data.intent) {
+      if (status) status.textContent = `已插入 intent #${data.intent.id} (${data.intent.fragments.length} fragments)`;
+      await loadPreflight();
+    } else {
+      if (status) status.textContent = data.error || "插入失败";
+    }
+  } catch (err) {
+    if (status) status.textContent = err.message;
+  }
+}
+
+async function dropQueuedTestIntents(btn) {
+  const status = document.getElementById("cPreflightStatus");
+  if (status) status.textContent = "清理中...";
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/phase3b/drop_queued_test_intents",
+      {
+        method: "POST",
+        headers: getAdminHeaders(),
+        body: JSON.stringify({}),
+      },
+      "清理失败："
+    );
+    if (data.success) {
+      if (status) status.textContent = `已清理 ${data.dropped_count} 条 queued intent`;
+      await loadPreflight();
+    } else {
+      if (status) status.textContent = "清理失败";
+    }
+  } catch (err) {
+    if (status) status.textContent = err.message;
+  }
+}
+
 // ── Auto-refresh ──────────────────────────────────────────
 
 function startDesireRefresh() {
@@ -396,6 +558,21 @@ export function bindConsciousnessEvents() {
   const thinkBtn = document.getElementById("cThinkBtn");
   if (thinkBtn) {
     thinkBtn.addEventListener("click", () => submitThinkCycle(thinkBtn));
+  }
+
+  const preflightBtn = document.getElementById("cPreflightBtn");
+  if (preflightBtn) {
+    preflightBtn.addEventListener("click", () => loadPreflight(preflightBtn));
+  }
+
+  const enqueueBtn = document.getElementById("cEnqueueTestBtn");
+  if (enqueueBtn) {
+    enqueueBtn.addEventListener("click", () => enqueueTestIntent(enqueueBtn));
+  }
+
+  const dropBtn = document.getElementById("cDropQueuedBtn");
+  if (dropBtn) {
+    dropBtn.addEventListener("click", () => dropQueuedTestIntents(dropBtn));
   }
 
   const refreshBtn = document.getElementById("cRefreshStateBtn");

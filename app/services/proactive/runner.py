@@ -1,9 +1,13 @@
 import asyncio
+import json as _json
+import logging
 import random
 from datetime import datetime, timedelta
 from typing import Any
 
 from app.config import (
+    BRAIN_INTENT_CONSUMER_ENABLED,
+    BRAIN_WHITELIST_USERS,
     PROACTIVE_ACTIVE_END,
     PROACTIVE_ACTIVE_START,
     PROACTIVE_AUTO_SEND,
@@ -53,8 +57,9 @@ from app.services.proactive.rules import (
     today_sent_count,
     within_active_window,
 )
-from app.services.proactive.send_executor import auto_send_dry_run, auto_send_real
+from app.services.proactive.send_executor import auto_send_dry_run, auto_send_real, send_brain_intent
 from app.services.proactive_service import _mask_hash, is_allowed_qq_target, record_proactive_event
+from app.storage.db import execute_write, fetch_one, get_latest_proactive_target, get_proactive_target_by_session
 from app.utils.logging_utils import log_event, new_trace_id
 
 
@@ -512,3 +517,403 @@ def check_proactive_now(trace_id: str | None = None) -> dict[str, Any]:
         "checks": evaluation["checks"],
         **proactive_capability_boundary(),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Phase 3b: Brain Intent 消费（不改上方现有函数）
+# ──────────────────────────────────────────────────────────────────────
+
+_brain_logger = logging.getLogger(__name__)
+
+
+def consume_brain_intents() -> dict:
+    """
+    消费 proactive_intent 表中 status='queued' 的意图。
+    每次只消费一条（FIFO），经漏斗检查后调用 send_brain_intent()。
+
+    ⚠️ 漏斗检查复用 rules.py 现有函数，逻辑完全不变。
+    ⚠️ 不改 check_and_send_once()，两条路径完全独立。
+    ⚠️ 白名单为空 = brain send 子系统关闭，intent 保持 queued 积压（设计意图）。
+
+    同步函数，由 async wrapper 通过 asyncio.to_thread 调用。
+    """
+    trace_id = new_trace_id()
+
+    # ── 总开关检查 ──
+    if not BRAIN_INTENT_CONSUMER_ENABLED:
+        _brain_logger.debug("[%s] consume_brain_intents: consumer disabled", trace_id)
+        return {"action": "consumer_disabled", "sent": False}
+
+    # ── 取第一条 queued 意图 ──
+    row = fetch_one(
+        "SELECT id, user_id, fragments FROM proactive_intent "
+        "WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
+    )
+    if not row:
+        return {"action": "no_intent", "sent": False}
+
+    intent_id = int(row["id"])
+    user_id = str(row["user_id"] or "")
+    fragments_json = str(row["fragments"] or "[]")
+
+    # ── 白名单检查（硬性前置，漏斗之前）──
+    # 空列表 = brain send 子系统关闭，queued intent 保持积压。
+    # 这是设计意图：brain 生成照常运行，发送端按白名单控制开关。
+    if not BRAIN_WHITELIST_USERS:
+        _brain_logger.debug("[%s] brain intent skipped: whitelist empty (subsystem off)", trace_id)
+        return {"action": "whitelist_empty", "sent": False}
+
+    if user_id not in BRAIN_WHITELIST_USERS:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.info("[%s] brain intent dropped: user %s not in whitelist", trace_id, user_id)
+        return {"action": "whitelist_skip", "sent": False}
+
+    # ── 漏斗检查（复用 rules.py，只调用不改）──
+    if hard_cooldown_active():
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.info("[%s] brain intent dropped: hard_cooldown", trace_id)
+        return {"action": "hard_cooldown", "sent": False}
+
+    if failure_pause_active():
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.info("[%s] brain intent dropped: failure_pause", trace_id)
+        return {"action": "failure_pause", "sent": False}
+
+    if not within_active_window(datetime.now()):
+        # 不发但不丢弃，等进入活跃窗口再发
+        _brain_logger.debug("[%s] brain intent deferred: outside active window", trace_id)
+        return {"action": "outside_window", "sent": False}
+
+    if today_sent_count() >= PROACTIVE_DAILY_LIMIT:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.info("[%s] brain intent dropped: daily_limit reached", trace_id)
+        return {"action": "daily_limit", "sent": False}
+
+    # ── recent chat 检查 ──
+    platform = user_id.split(":")[0] if user_id else ""
+    if platform and has_recent_user_message(platform):
+        # 不发但不丢弃，等用户安静后再发
+        _brain_logger.debug(
+            "[%s] brain intent deferred: recent %s chat", trace_id, platform,
+        )
+        return {"action": "recent_chat_defer", "sent": False}
+
+    # ── 解析 fragments 并发送 ──
+    try:
+        fragments = _json.loads(fragments_json)
+    except (ValueError, TypeError) as e:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.error("[%s] brain intent dropped: invalid fragments JSON: %s", trace_id, e)
+        return {"action": "invalid_fragments", "sent": False}
+
+    if not isinstance(fragments, list) or not fragments:
+        execute_write(
+            "UPDATE proactive_intent SET status='dropped' WHERE id=?",
+            (intent_id,),
+        )
+        _brain_logger.error("[%s] brain intent dropped: empty fragments", trace_id)
+        return {"action": "empty_fragments", "sent": False}
+
+    result = send_brain_intent(user_id, fragments, trace_id, intent_id)
+
+    # ── 记录 proactive_events ──
+    try:
+        record_proactive_event(
+            event_type="brain_intent_consumed",
+            platform=platform or None,
+            action="sent" if result["success"] else "failed",
+            success=result["success"],
+            reason=result.get("error"),
+            metadata={
+                "intent_id": intent_id,
+                "sent_count": result.get("sent_count", 0),
+                "total": result.get("total", 0),
+            },
+        )
+    except Exception:
+        pass
+
+    return {
+        "action": "sent" if result["success"] else "send_failed",
+        "sent": result["success"],
+        **result,
+    }
+
+
+async def run_consume_brain_intents(trace_id: str | None = None) -> dict:
+    """async 入口，供 APScheduler 调用。内部通过 asyncio.to_thread 执行同步函数。"""
+    return await asyncio.to_thread(consume_brain_intents)
+
+
+def preflight_brain_intent() -> dict:
+    """
+    Phase 3b 只读预检：评估"能不能安全发送"，不触发任何副作用。
+    不创建 proactive_candidates，不调用 send_proactive_candidate，
+    不更新 proactive_intent.status，不写 debug_events。
+
+    供 GET /debug/consciousness/phase3b/preflight 调用。
+    """
+    result = {
+        "consumer_enabled": BRAIN_INTENT_CONSUMER_ENABLED,
+        "whitelist_users": list(BRAIN_WHITELIST_USERS),
+        "next_queued_intent": None,
+        "whitelist_match": False,
+        "target_lookup": None,
+        "rules": {},
+        "decision": {},
+    }
+
+    # ── 读取最新 queued intent ──
+    row = fetch_one(
+        "SELECT id, user_id, status, fragments, created_at "
+        "FROM proactive_intent "
+        "WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
+    )
+    if not row:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "no_intent",
+            "reason": "proactive_intent 表中没有 queued 意图",
+            "expected_candidates": 0,
+        }
+        return result
+
+    intent_id = int(row["id"])
+    user_id = str(row["user_id"] or "")
+    fragments_json = str(row["fragments"] or "[]")
+    try:
+        fragments = _json.loads(fragments_json)
+        fragments_count = len(fragments) if isinstance(fragments, list) else 0
+    except (ValueError, TypeError):
+        fragments_count = 0
+
+    result["next_queued_intent"] = {
+        "id": intent_id,
+        "user_id": user_id,
+        "status": str(row["status"] or ""),
+        "fragments_count": fragments_count,
+        "created_at": str(row["created_at"] or ""),
+    }
+
+    # ── fragments_preview：前 3 条，每条最多 30 字 ──
+    preview_list = []
+    if isinstance(fragments, list):
+        for frag in fragments[:3]:
+            s = str(frag or "")
+            preview_list.append(s[:30] + ("…" if len(s) > 30 else ""))
+    result["fragments_preview"] = preview_list
+
+    # ── debug 字段：始终写入，方便排查 whitelist_match=false 的字符差异 ──
+    result["intent_user_id_raw"] = user_id
+    result["whitelist_users_raw"] = list(BRAIN_WHITELIST_USERS)
+    result["intent_user_id_repr"] = repr(user_id)
+    result["whitelist_users_repr"] = [repr(u) for u in BRAIN_WHITELIST_USERS]
+    result["whitelist_match"] = user_id in BRAIN_WHITELIST_USERS
+    result["whitelist_contains"] = {
+        u: (user_id == u) for u in BRAIN_WHITELIST_USERS
+    }
+
+    # ── consumer 开关 ──
+    if not BRAIN_INTENT_CONSUMER_ENABLED:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "disabled",
+            "reason": "BRAIN_INTENT_CONSUMER_ENABLED=false，消费器未启动",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    # ── 白名单检查 ──
+    if not BRAIN_WHITELIST_USERS:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "whitelist_empty",
+            "reason": "BRAIN_WHITELIST_USERS 为空，brain send 子系统关闭，intent 保持积压",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    if not result["whitelist_match"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "whitelist_skip",
+            "reason": f"user_id '{user_id}' 不在白名单中",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    # ── Target 查找（只读，精确查）──
+    parts = (user_id or "").split(":")
+    platform = parts[0] if parts else ""
+    session_id = user_id
+    target_row = get_proactive_target_by_session(platform, session_id) if platform else None
+
+    if target_row:
+        real_uid = str(target_row.get("real_user_id") or "").strip()
+        result["target_lookup"] = {
+            "platform": platform,
+            "session_id": session_id,
+            "found": True,
+            "real_user_id_masked": _mask_hash(real_uid) if real_uid else None,
+        }
+    else:
+        result["target_lookup"] = {
+            "platform": platform,
+            "session_id": session_id,
+            "found": False,
+            "real_user_id_masked": None,
+        }
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "no_target",
+            "reason": f"proactive_targets 中无 platform='{platform}' session_id='{session_id}' 对应记录",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    # ── 漏斗规则检查（只读）──
+    rules = {}
+    rules["hard_cooldown_active"] = hard_cooldown_active()
+    rules["failure_pause_active"] = failure_pause_active()
+    rules["within_active_window"] = within_active_window(datetime.now())
+    rules["today_sent_count"] = today_sent_count()
+    rules["daily_limit"] = PROACTIVE_DAILY_LIMIT
+    rules["has_recent_user_message"] = has_recent_user_message(platform) if platform else False
+    result["rules"] = rules
+
+    # ── 决策 ──
+    if rules["hard_cooldown_active"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "hard_cooldown",
+            "reason": f"硬冷却中，intent 将被 dropped",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    if rules["failure_pause_active"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "failure_pause",
+            "reason": f"连续失败达阈值，intent 将被 dropped",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    if not rules["within_active_window"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "outside_window",
+            "reason": f"不在活跃窗口内，intent 保持 queued 等待",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    if rules["today_sent_count"] >= rules["daily_limit"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "daily_limit",
+            "reason": f"今日已发送 {rules['today_sent_count']}/{rules['daily_limit']}，intent 将被 dropped",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    if rules["has_recent_user_message"]:
+        result["decision"] = {
+            "ready_to_send": False,
+            "status": "recent_chat_defer",
+            "reason": f"最近有 {platform} 用户消息，intent 保持 queued 等待",
+            "expected_candidates": fragments_count,
+        }
+        return result
+
+    # ── 全部通过 ──
+    result["decision"] = {
+        "ready_to_send": True,
+        "status": "ready",
+        "reason": "所有检查通过，consume_brain_intents 下次调度将发送此 intent",
+        "expected_candidates": fragments_count,
+    }
+    return result
+
+
+def enqueue_test_intent(
+    user_id: str | None = None,
+    fragments: list[str] | None = None,
+) -> dict:
+    """
+    Debug-only：往 proactive_intent 写入一条 queued 测试意图。
+    不发送、不创建 proactive_candidates、不调用 send_proactive_candidate。
+    供 POST /debug/consciousness/phase3b/enqueue_test_intent 调用。
+    """
+    from app.storage.db import get_conn
+
+    # ── 确定 user_id ──
+    if not user_id:
+        target = get_latest_proactive_target("wx")
+        if target:
+            user_id = str(target.get("session_id") or "")
+        if not user_id:
+            return {"success": False, "error": "no wx target found and no user_id provided"}
+
+    # ── 确定 fragments ──
+    if not fragments:
+        fragments = ["测试一下，别紧张"]
+    fragments = [f.strip() for f in fragments if f.strip()]
+    if not fragments:
+        return {"success": False, "error": "fragments must not be empty"}
+
+    now = datetime.now().isoformat(timespec="seconds")
+    fragments_json = _json.dumps(fragments, ensure_ascii=False)
+
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO proactive_intent (user_id, fragments, status, created_at) "
+            "VALUES (?, ?, 'queued', ?)",
+            (user_id, fragments_json, now),
+        )
+        new_id = int(cursor.lastrowid)
+
+    _brain_logger.info(
+        "enqueue_test_intent: id=%d user=%s fragments=%d",
+        new_id, user_id, len(fragments),
+    )
+
+    return {
+        "success": True,
+        "intent": {
+            "id": new_id,
+            "user_id": user_id,
+            "fragments": fragments,
+            "status": "queued",
+            "created_at": now,
+        },
+    }
+
+
+def drop_queued_test_intents() -> dict:
+    """
+    Debug-only：将所有 status='queued' 的 proactive_intent 标记为 'dropped'。
+    不发送、不创建 candidate、不调用 send_proactive_candidate。
+    用于灰度前清理测试 intent，避免消费旧测试数据。
+    """
+    affected = execute_write(
+        "UPDATE proactive_intent SET status='dropped' WHERE status='queued'",
+    )
+    _brain_logger.info("drop_queued_test_intents: dropped %d queued intents", affected)
+    return {"success": True, "dropped_count": affected}

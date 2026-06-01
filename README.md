@@ -168,6 +168,8 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 | `CONSCIOUSNESS_JUDGE_MODEL` | 意识层判断模型（Step2） |
 | `CONSCIOUSNESS_GENERATE_MODEL` | 意识层生成模型（Step3） |
 | `CONSCIOUSNESS_DREAM_MODEL` | 意识层梦境模型（Phase 4 占位） |
+| `BRAIN_INTENT_CONSUMER_ENABLED` | brain intent 消费器总开关（默认 false，灰度前关闭） |
+| `BRAIN_WHITELIST_USERS` | brain intent 发送白名单（逗号分隔 user_id，空=全量关闭） |
 
 ## 平台接入
 

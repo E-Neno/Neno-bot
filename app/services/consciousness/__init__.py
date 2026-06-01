@@ -60,5 +60,15 @@ class ConsciousnessEngine:
             replace_existing=True,
         )
 
+        # Phase 3b: Register brain intent consumer (every 30s)
+        from app.services.proactive.runner import run_consume_brain_intents
+        self._scheduler.add_job(
+            run_consume_brain_intents,
+            "interval",
+            seconds=30,
+            id="consume_brain_intents",
+            replace_existing=True,
+        )
+
     async def stop(self) -> None:
         await self.state_store.stop()
