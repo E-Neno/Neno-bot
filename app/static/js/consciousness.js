@@ -518,6 +518,119 @@ async function dropAllQueuedBrainIntents(btn) {
 
 // ── Auto-refresh ──────────────────────────────────────────
 
+// Phase 4 Living World
+
+function shortTime(value) {
+  return value ? String(value).substring(0, 16) : "-";
+}
+
+function formatNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return value.toFixed(2);
+}
+
+function formatNeeds(need) {
+  if (!need || typeof need !== "object") return "-";
+  return Object.entries(need)
+    .slice(0, 6)
+    .map(([key, value]) => `${key}:${formatNumber(value)}`)
+    .join(" / ") || "-";
+}
+
+function formatJsonInline(value) {
+  if (value == null) return "-";
+  if (typeof value === "string") return value || "-";
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    return "-";
+  }
+}
+
+function renderLivingList(boxId, items, renderItem, emptyText) {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  clearChildren(box);
+  if (!items || items.length === 0) {
+    box.textContent = emptyText;
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "check-item";
+    renderItem(row, item);
+    box.appendChild(row);
+  }
+}
+
+export function renderLivingWorld(data) {
+  const state = data?.state;
+  const life = state?.life || {};
+  setOptionalText("cLivingLifeMode", life.mode || "-");
+  setOptionalText("cLivingLifeActivity", life.current_activity || "-");
+  setOptionalText("cLivingLifeAttention", life.attention || "-");
+  setOptionalText("cLivingLifeNeeds", formatNeeds(life.need));
+  setOptionalText("cLivingLifeResidue", formatJsonInline(life.residue));
+
+  renderLivingList("cLivingExperiences", data?.experiences || [], (row, item) => {
+    const head = document.createElement("div");
+    head.className = "check-name";
+    head.textContent = `${item.kind || "-"} / ${item.expression_status || "-"} / salience ${formatNumber(item.salience)}`;
+    const body = document.createElement("div");
+    body.className = "check-detail";
+    body.textContent = item.content || "";
+    const meta = document.createElement("div");
+    meta.className = "check-detail";
+    meta.textContent = `${shortTime(item.created_at)} | source=${item.source || "-"} | trace=${item.trace_id || "-"}`;
+    row.append(head, body, meta);
+  }, "No experiences");
+
+  renderLivingList("cLivingReflections", data?.reflection_runs || [], (row, item) => {
+    const head = document.createElement("div");
+    head.className = "check-name";
+    head.textContent = `${item.status || "-"} / ${item.model_name || "-"}`;
+    const body = document.createElement("div");
+    body.className = "check-detail";
+    body.textContent = item.input_summary || "";
+    const meta = document.createElement("div");
+    meta.className = "check-detail";
+    meta.textContent = `${shortTime(item.created_at)} | output=${formatJsonInline(item.output)}`;
+    row.append(head, body, meta);
+  }, "No reflection runs");
+
+  renderLivingList("cLivingMemories", data?.long_term_memory || [], (row, item) => {
+    const head = document.createElement("div");
+    head.className = "check-name";
+    head.textContent = `${item.subject || "-"} / salience ${formatNumber(item.salience)}`;
+    const body = document.createElement("div");
+    body.className = "check-detail";
+    body.textContent = item.content || "";
+    const meta = document.createElement("div");
+    meta.className = "check-detail";
+    meta.textContent = `${shortTime(item.created_at)} | tags=${(item.tags || []).join(", ")}`;
+    row.append(head, body, meta);
+  }, "No long-term memory");
+
+  setOptionalText("cLivingWorldStatus", data?.success ? "Loaded" : "Load failed");
+}
+
+export async function loadLivingWorld() {
+  const token = getAdminHeaders()["X-Admin-Token"];
+  if (!token) return;
+
+  try {
+    setOptionalText("cLivingWorldStatus", "Loading...");
+    const data = await requestJson(
+      "/debug/consciousness/living-world",
+      { method: "GET", headers: getAdminHeaders() },
+      "Load living world failed: "
+    );
+    renderLivingWorld(data);
+  } catch (err) {
+    setOptionalText("cLivingWorldStatus", err.message);
+  }
+}
+
 function startDesireRefresh() {
   stopDesireRefresh();
   _desireInterval = setInterval(() => {
@@ -540,6 +653,7 @@ function stopDesireRefresh() {
 export function onConsciousnessPanelActive() {
   loadConsciousnessState();
   loadConsciousnessEvents();
+  loadLivingWorld();
   startDesireRefresh();
 }
 
@@ -580,6 +694,12 @@ export function bindConsciousnessEvents() {
     refreshBtn.addEventListener("click", () => {
       loadConsciousnessState();
       loadConsciousnessEvents();
+      loadLivingWorld();
     });
+  }
+
+  const livingRefreshBtn = document.getElementById("cLivingWorldRefreshBtn");
+  if (livingRefreshBtn) {
+    livingRefreshBtn.addEventListener("click", () => loadLivingWorld());
   }
 }

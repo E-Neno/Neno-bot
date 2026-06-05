@@ -566,6 +566,41 @@ export function buildConsciousnessPanel(panel, header) {
   preflightCard.lastChild.id = "cPreflightStatus";
 
   grid.appendChild(preflightCard);
+
+  // Phase 4: Living World read-only debug view
+  const livingCard = createElement("div", "card");
+  livingCard.appendChild(createElement("h3", "", "Phase 4 / Living World"));
+  livingCard.appendChild(createElement("div", "config-help", "Read-only SQLite view of LifeState, inner experiences, reflection runs, and long-term memories."));
+  const livingRow = createElement("div", "row");
+  const livingRefreshBtn = createElement("button", "secondary auxiliary", "Refresh Living World");
+  livingRefreshBtn.id = "cLivingWorldRefreshBtn";
+  livingRow.appendChild(livingRefreshBtn);
+  livingCard.appendChild(livingRow);
+
+  const livingStateGrid = createElement("div", "status-grid");
+  livingStateGrid.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+  appendStatusMetric(livingStateGrid, "mode", "cLivingLifeMode");
+  appendStatusMetric(livingStateGrid, "activity", "cLivingLifeActivity");
+  appendStatusMetric(livingStateGrid, "attention", "cLivingLifeAttention");
+  appendStatusMetric(livingStateGrid, "needs", "cLivingLifeNeeds");
+  livingCard.appendChild(livingStateGrid);
+
+  livingCard.appendChild(createElement("div", "status-label", "life residue"));
+  livingCard.appendChild(createElement("div", "small panel-list", "-"));
+  livingCard.lastChild.id = "cLivingLifeResidue";
+  livingCard.appendChild(createElement("div", "status-label", "recent experiences"));
+  livingCard.appendChild(createElement("div", "small panel-list", "Not loaded"));
+  livingCard.lastChild.id = "cLivingExperiences";
+  livingCard.appendChild(createElement("div", "status-label", "recent reflection runs"));
+  livingCard.appendChild(createElement("div", "small panel-list", "Not loaded"));
+  livingCard.lastChild.id = "cLivingReflections";
+  livingCard.appendChild(createElement("div", "status-label", "recent long-term memory"));
+  livingCard.appendChild(createElement("div", "small panel-list", "Not loaded"));
+  livingCard.lastChild.id = "cLivingMemories";
+  livingCard.appendChild(createElement("div", "status", ""));
+  livingCard.lastChild.id = "cLivingWorldStatus";
+
+  grid.appendChild(livingCard);
 }
 
 export function buildConsoleLayout() {

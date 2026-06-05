@@ -648,12 +648,140 @@ def _get_state_json() -> dict | None:
     return state
 
 
+def _json_dict_or_empty(raw: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _json_list_or_empty(raw: str | None) -> list[Any]:
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _living_world_experiences(limit: int, expression_status: str | None) -> list[dict[str, Any]]:
+    clauses = []
+    params: list[Any] = []
+    if expression_status:
+        clauses.append("expression_status = ?")
+        params.append(expression_status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    rows = fetch_all(
+        f"""
+        SELECT id, trace_id, source, kind, content,
+               mood_impact, desire_impact, salience,
+               expression_status, related_event_hash,
+               related_message_ids, related_intent_id,
+               metadata_json, created_at
+        FROM inner_experience_log
+        {where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        tuple(params),
+    )
+    return [
+        {
+            "id": int(row["id"]),
+            "trace_id": row["trace_id"],
+            "source": row["source"],
+            "kind": row["kind"],
+            "content": row["content"],
+            "mood_impact": float(row["mood_impact"] or 0.0),
+            "desire_impact": float(row["desire_impact"] or 0.0),
+            "salience": float(row["salience"] or 0.0),
+            "expression_status": row["expression_status"],
+            "related_event_hash": row["related_event_hash"],
+            "related_message_ids": _json_list_or_empty(row["related_message_ids"]),
+            "related_intent_id": row["related_intent_id"],
+            "metadata": _json_dict_or_empty(row["metadata_json"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def _living_world_reflection_runs(limit: int) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT id, trace_id, status, input_summary, output_json,
+               model_name, error, created_at, completed_at
+        FROM dream_reflection_runs
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "id": int(row["id"]),
+            "trace_id": row["trace_id"],
+            "status": row["status"],
+            "input_summary": row["input_summary"],
+            "output": _json_dict_or_empty(row["output_json"]),
+            "model_name": row["model_name"],
+            "error": row["error"],
+            "created_at": row["created_at"],
+            "completed_at": row["completed_at"],
+        }
+        for row in rows
+    ]
+
+
+def _living_world_memories(limit: int) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT id, content, tags, subject, salience, created_at
+        FROM long_term_memory
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "id": int(row["id"]),
+            "content": row["content"],
+            "tags": _json_list_or_empty(row["tags"]),
+            "subject": row["subject"],
+            "salience": float(row["salience"] or 0.0),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
 @router.get("/consciousness/state", dependencies=[Depends(require_admin_token)])
 def consciousness_state():
     state = _get_state_json()
     if state is None:
         return {"success": True, "state": None, "message": "agent_state 表为空，consciousness 未初始化"}
     return {"success": True, "state": state}
+
+
+@router.get("/consciousness/living-world", dependencies=[Depends(require_admin_token)])
+def consciousness_living_world(
+    experience_limit: int = Query(30, ge=1, le=200),
+    reflection_limit: int = Query(10, ge=1, le=50),
+    memory_limit: int = Query(10, ge=1, le=50),
+    experience_status: str | None = Query(None, max_length=64),
+):
+    return {
+        "success": True,
+        "state": _get_state_json(),
+        "experiences": _living_world_experiences(
+            experience_limit,
+            (experience_status or "").strip() or None,
+        ),
+        "reflection_runs": _living_world_reflection_runs(reflection_limit),
+        "long_term_memory": _living_world_memories(memory_limit),
+    }
 
 
 @router.get("/consciousness/events", dependencies=[Depends(require_admin_token)])
