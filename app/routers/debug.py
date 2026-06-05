@@ -765,16 +765,66 @@ def consciousness_state():
     return {"success": True, "state": state}
 
 
+def _living_world_life(state: dict[str, Any] | None) -> dict[str, Any]:
+    """把 state.life 归一化为 Phase 4b 富字段视图：缺失字段用 LifeState 默认补齐。
+
+    始终包含 6 个富字段 + residue，旧 / 部分 state 也能在 debug 面板清楚展示。容错，不抛。
+    """
+    from app.services.consciousness.models import LifeState
+
+    raw = state.get("life") if isinstance(state, dict) else None
+    try:
+        life = LifeState.model_validate(raw if isinstance(raw, dict) else {})
+    except Exception:
+        life = LifeState()
+    return {
+        "mode": life.mode,
+        "attention": life.attention,
+        "current_activity": life.current_activity,
+        "place": life.place,
+        "time_phase": life.time_phase,
+        "environment": {"summary": life.environment.summary},
+        "activity_label": life.activity_label,
+        "activity_reason": life.activity_reason,
+        "continuity_note": life.continuity_note,
+        "residue": life.residue.model_dump(),
+    }
+
+
+async def _living_world_loop_preview() -> dict[str, Any]:
+    """只读预览：临时构造 LifeLoop 跑 dry_run。
+
+    不调用 start()（无写者协程）、不写库、不接 scheduler、不调用真实模型。
+    任何异常降级为 success=false，绝不 500。
+    """
+    try:
+        from app.services.consciousness.config import ConsciousnessConfig
+        from app.services.consciousness.experience_recorder import ExperienceRecorder
+        from app.services.consciousness.life_loop import LifeLoop
+        from app.services.consciousness.state_store import StateStore
+
+        cfg = ConsciousnessConfig()
+        loop = LifeLoop(StateStore(db=None, config=cfg), ExperienceRecorder(), cfg)
+        return await loop.dry_run("debug_living_world")
+    except Exception as exc:  # debug 只读预览不允许 500
+        return {"success": False, "reason": str(exc)}
+
+
 @router.get("/consciousness/living-world", dependencies=[Depends(require_admin_token)])
-def consciousness_living_world(
+async def consciousness_living_world(
     experience_limit: int = Query(30, ge=1, le=200),
     reflection_limit: int = Query(10, ge=1, le=50),
     memory_limit: int = Query(10, ge=1, le=50),
     experience_status: str | None = Query(None, max_length=64),
+    dry_run: bool = Query(False),
 ):
-    return {
+    state = _get_state_json()
+    life = _living_world_life(state)
+    payload: dict[str, Any] = {
         "success": True,
-        "state": _get_state_json(),
+        "state": state,
+        "life": life,
+        "life_residue": life["residue"],
         "experiences": _living_world_experiences(
             experience_limit,
             (experience_status or "").strip() or None,
@@ -782,6 +832,9 @@ def consciousness_living_world(
         "reflection_runs": _living_world_reflection_runs(reflection_limit),
         "long_term_memory": _living_world_memories(memory_limit),
     }
+    if dry_run:
+        payload["loop_preview"] = await _living_world_loop_preview()
+    return payload
 
 
 @router.get("/consciousness/events", dependencies=[Depends(require_admin_token)])

@@ -537,3 +537,114 @@ class TestStateStoreExperiences:
             assert len(state.today_experiences) == 0
         finally:
             await fs.store.stop()
+
+
+# ── B1.1 Living World Model 富字段 ───────────────────────────
+
+
+class TestLivingWorldModelB11:
+    """Phase 4b 任务 B1.1：LifeState Living World 富字段 + 旧 JSON 兼容 + roundtrip。"""
+
+    def test_default_life_has_living_world_semantics(self):
+        """默认 LifeState 必须带人能理解的生活语义默认值，而非占位。"""
+        life = NenoState().life
+        assert life.place == "quiet_room"
+        assert life.time_phase == "unknown"
+        assert life.environment.summary == "安静的房间"
+        assert life.activity_label == "安静观察"
+        assert life.activity_reason == "没有新的外部刺激，维持低强度观察"
+        assert life.continuity_note == ""
+
+    def test_old_life_json_without_rich_fields_gets_defaults(self):
+        """旧 life JSON（只有 4a 字段，无富字段）读取时自动补 B1.1 默认值。"""
+        old = {
+            "version": 2,
+            "revision": 5,
+            "updated_at": None,
+            "energy": {"value": 80.0, "status": "awake", "description": "ok"},
+            "mood": {
+                "valence": 0.3, "arousal": 0.5, "label": "平静", "description": "ok",
+                "baseline_valence": 0.3, "baseline_arousal": 0.5,
+            },
+            "desire": {"value": 0.0, "last_express_at": None, "decay_duration_minutes": 120},
+            "world": {"weather": None, "hot_topics": [], "time_context": "", "last_perception_at": None},
+            "last_interaction": {"user_id": None, "user_name": None, "summary": None, "at_time": None},
+            "life": {
+                "mode": "absorbed",
+                "attention": "memory",
+                "need": {"connection": 0.0, "novelty": 0.0, "quiet": 0.0, "order": 0.0},
+                "current_activity": "carrying_unspoken_thought",
+                "last_transition_at": None,
+                "residue": {"topic": "旧事", "mood": "soft", "intensity": 0.4},
+            },
+            "today_experiences": [],
+        }
+
+        state = NenoState.model_validate(old)
+
+        # 旧字段必须保留
+        assert state.life.mode == "absorbed"
+        assert state.life.current_activity == "carrying_unspoken_thought"
+        assert state.life.residue.topic == "旧事"
+        # 富字段必须自动补默认
+        assert state.life.place == "quiet_room"
+        assert state.life.time_phase == "unknown"
+        assert state.life.environment.summary == "安静的房间"
+        assert state.life.activity_label == "安静观察"
+        assert state.life.activity_reason == "没有新的外部刺激，维持低强度观察"
+        assert state.life.continuity_note == ""
+
+    def test_life_rich_fields_json_roundtrip(self):
+        """富字段经 model_dump_json / model_validate_json 完整 roundtrip。"""
+        from app.services.consciousness.models import LifeEnvironment
+
+        state = NenoState()
+        state.life.place = "out"
+        state.life.time_phase = "afternoon"
+        state.life.environment = LifeEnvironment(summary="外面有点吵")
+        state.life.activity_label = "出门买奶茶"
+        state.life.activity_reason = "想换个心情"
+        state.life.continuity_note = "上午写代码写累了"
+
+        restored = NenoState.model_validate_json(state.model_dump_json())
+
+        assert restored.life.place == "out"
+        assert restored.life.time_phase == "afternoon"
+        assert restored.life.environment.summary == "外面有点吵"
+        assert restored.life.activity_label == "出门买奶茶"
+        assert restored.life.activity_reason == "想换个心情"
+        assert restored.life.continuity_note == "上午写代码写累了"
+
+    @pytest.mark.asyncio
+    async def test_life_rich_fields_roundtrip_through_store(self, tmp_path: Path):
+        """StateMutation(life=...) 持久化后富字段必须 roundtrip。"""
+        from app.services.consciousness.models import LifeEnvironment
+
+        data_dir = _make_test_db_dir(tmp_path)
+        fs = _fresh_state_store(data_dir)
+
+        await fs.store.start()
+        try:
+            await fs.store.submit_mutation(
+                StateMutation(
+                    life=LifeState(
+                        place="home_desk",
+                        time_phase="late_night",
+                        environment=LifeEnvironment(summary="安静，窗外有雨"),
+                        activity_label="整理今天的心情",
+                        activity_reason="白天那条暴雨预警一直没说出口",
+                        continuity_note="接着下午没说完的那件事",
+                    )
+                )
+            )
+            await asyncio.sleep(0.2)
+
+            state = await fs.store.read()
+            assert state.life.place == "home_desk"
+            assert state.life.time_phase == "late_night"
+            assert state.life.environment.summary == "安静，窗外有雨"
+            assert state.life.activity_label == "整理今天的心情"
+            assert state.life.activity_reason == "白天那条暴雨预警一直没说出口"
+            assert state.life.continuity_note == "接着下午没说完的那件事"
+        finally:
+            await fs.store.stop()

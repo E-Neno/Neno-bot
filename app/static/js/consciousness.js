@@ -529,14 +529,6 @@ function formatNumber(value) {
   return value.toFixed(2);
 }
 
-function formatNeeds(need) {
-  if (!need || typeof need !== "object") return "-";
-  return Object.entries(need)
-    .slice(0, 6)
-    .map(([key, value]) => `${key}:${formatNumber(value)}`)
-    .join(" / ") || "-";
-}
-
 function formatJsonInline(value) {
   if (value == null) return "-";
   if (typeof value === "string") return value || "-";
@@ -545,6 +537,72 @@ function formatJsonInline(value) {
   } catch (err) {
     return "-";
   }
+}
+
+function textOrDash(value) {
+  if (value == null) return "-";
+  const text = String(value).trim();
+  return text || "-";
+}
+
+function formatTimePhase(value) {
+  const labels = {
+    early_morning: "清晨",
+    forenoon: "上午",
+    noon: "中午",
+    afternoon: "下午",
+    evening: "傍晚",
+    night: "晚上",
+    late_night: "深夜",
+    unknown: "未知",
+  };
+  return labels[value] || textOrDash(value);
+}
+
+function formatPlace(place, environment) {
+  const placeLabels = {
+    quiet_room: "安静房间",
+    home_desk: "桌前",
+    bed: "床边",
+  };
+  const placeText = placeLabels[place] || textOrDash(place);
+  const envText = environment?.summary ? ` · ${environment.summary}` : "";
+  return `${placeText}${envText}`;
+}
+
+function formatResidue(residue) {
+  if (!residue || typeof residue !== "object") return "没有明显余波";
+  const topic = textOrDash(residue.topic);
+  const mood = textOrDash(residue.mood);
+  const intensity = formatNumber(residue.intensity);
+  if (topic === "-" && mood === "-" && intensity === "0.00") {
+    return "没有明显余波";
+  }
+  return `话题：${topic} · 情绪：${mood} · 强度：${intensity}`;
+}
+
+function firstLine(...values) {
+  for (const value of values) {
+    const text = textOrDash(value);
+    if (text !== "-") return text;
+  }
+  return "-";
+}
+
+function formatActivity(label, rawActivity) {
+  const labelText = textOrDash(label);
+  const rawText = textOrDash(rawActivity);
+  if (labelText === "-" && rawText === "-") return "-";
+  if (labelText === rawText || rawText === "-") return labelText;
+  if (labelText === "-") return rawText;
+  return `${labelText} · ${rawText}`;
+}
+
+function appendDetail(row, label, value) {
+  const detail = document.createElement("div");
+  detail.className = "check-detail";
+  detail.textContent = `${label}：${textOrDash(value)}`;
+  row.appendChild(detail);
 }
 
 function renderLivingList(boxId, items, renderItem, emptyText) {
@@ -564,54 +622,74 @@ function renderLivingList(boxId, items, renderItem, emptyText) {
 }
 
 export function renderLivingWorld(data) {
-  const state = data?.state;
-  const life = state?.life || {};
-  setOptionalText("cLivingLifeMode", life.mode || "-");
-  setOptionalText("cLivingLifeActivity", life.current_activity || "-");
+  const life = data?.life || data?.state?.life || {};
+  const residue = data?.life_residue || life.residue || {};
+  const previewLife = data?.loop_preview?.would_update_life || null;
+
+  setOptionalText("cLivingWhere", formatPlace(life.place, life.environment));
+  setOptionalText("cLivingActivityLabel", formatActivity(life.activity_label, life.current_activity));
+  setOptionalText("cLivingActivityReason", life.activity_reason || "没有新的外部刺激，维持低强度观察");
+  setOptionalText("cLivingTimePhase", formatTimePhase(life.time_phase));
+  setOptionalText("cLivingLifeMode", `${textOrDash(life.mode)} · ${textOrDash(life.current_activity)}`);
   setOptionalText("cLivingLifeAttention", life.attention || "-");
-  setOptionalText("cLivingLifeNeeds", formatNeeds(life.need));
-  setOptionalText("cLivingLifeResidue", formatJsonInline(life.residue));
+  setOptionalText("cLivingContinuity", life.continuity_note || "还没有形成连续生活片段");
+  setOptionalText("cLivingLifeResidue", formatResidue(residue));
+
+  const previewBox = document.getElementById("cLivingLoopPreview");
+  if (previewBox) {
+    clearChildren(previewBox);
+    if (!data?.loop_preview) {
+      previewBox.textContent = "没有请求 dry-run 预览";
+    } else if (!data.loop_preview.success) {
+      previewBox.textContent = `预览失败：${data.loop_preview.reason || "未知原因"}`;
+    } else if (!previewLife) {
+      previewBox.textContent = "预览没有返回下一轮生活状态";
+    } else {
+      const row = document.createElement("div");
+      row.className = "check-item";
+      const head = document.createElement("div");
+      head.className = "check-name";
+      head.textContent = `下一轮可能会：${firstLine(previewLife.activity_label, previewLife.current_activity)}`;
+      row.appendChild(head);
+      appendDetail(row, "地点", formatPlace(previewLife.place, previewLife.environment));
+      appendDetail(row, "原因", previewLife.activity_reason);
+      appendDetail(row, "连续性", previewLife.continuity_note);
+      appendDetail(row, "动作", data.loop_preview.action || "would_update");
+      previewBox.appendChild(row);
+    }
+  }
 
   renderLivingList("cLivingExperiences", data?.experiences || [], (row, item) => {
     const head = document.createElement("div");
     head.className = "check-name";
-    head.textContent = `${item.kind || "-"} / ${item.expression_status || "-"} / salience ${formatNumber(item.salience)}`;
-    const body = document.createElement("div");
-    body.className = "check-detail";
-    body.textContent = item.content || "";
-    const meta = document.createElement("div");
-    meta.className = "check-detail";
-    meta.textContent = `${shortTime(item.created_at)} | source=${item.source || "-"} | trace=${item.trace_id || "-"}`;
-    row.append(head, body, meta);
-  }, "No experiences");
+    head.textContent = item.content || "(空经历)";
+    row.appendChild(head);
+    appendDetail(row, "类型", `${item.kind || "-"} / ${item.expression_status || "-"}`);
+    appendDetail(row, "来源", `${item.source || "-"} · ${shortTime(item.created_at)}`);
+    appendDetail(row, "显著性", formatNumber(item.salience));
+  }, "还没有沉淀经历");
 
   renderLivingList("cLivingReflections", data?.reflection_runs || [], (row, item) => {
     const head = document.createElement("div");
     head.className = "check-name";
-    head.textContent = `${item.status || "-"} / ${item.model_name || "-"}`;
-    const body = document.createElement("div");
-    body.className = "check-detail";
-    body.textContent = item.input_summary || "";
-    const meta = document.createElement("div");
-    meta.className = "check-detail";
-    meta.textContent = `${shortTime(item.created_at)} | output=${formatJsonInline(item.output)}`;
-    row.append(head, body, meta);
-  }, "No reflection runs");
+    head.textContent = `${item.status || "-"} · ${shortTime(item.created_at)}`;
+    row.appendChild(head);
+    appendDetail(row, "输入", item.input_summary || "没有输入摘要");
+    appendDetail(row, "模型", item.model_name || "deterministic");
+    appendDetail(row, "输出", formatJsonInline(item.output));
+  }, "还没有梦境总结");
 
   renderLivingList("cLivingMemories", data?.long_term_memory || [], (row, item) => {
     const head = document.createElement("div");
     head.className = "check-name";
-    head.textContent = `${item.subject || "-"} / salience ${formatNumber(item.salience)}`;
-    const body = document.createElement("div");
-    body.className = "check-detail";
-    body.textContent = item.content || "";
-    const meta = document.createElement("div");
-    meta.className = "check-detail";
-    meta.textContent = `${shortTime(item.created_at)} | tags=${(item.tags || []).join(", ")}`;
-    row.append(head, body, meta);
-  }, "No long-term memory");
+    head.textContent = item.content || "(空记忆)";
+    row.appendChild(head);
+    appendDetail(row, "主题", item.subject || "-");
+    appendDetail(row, "显著性", formatNumber(item.salience));
+    appendDetail(row, "标签", (item.tags || []).join(", ") || "-");
+  }, "还没有长期记忆影响");
 
-  setOptionalText("cLivingWorldStatus", data?.success ? "Loaded" : "Load failed");
+  setOptionalText("cLivingWorldStatus", data?.success ? "已加载（只读）" : "加载失败");
 }
 
 export async function loadLivingWorld() {
@@ -619,11 +697,11 @@ export async function loadLivingWorld() {
   if (!token) return;
 
   try {
-    setOptionalText("cLivingWorldStatus", "Loading...");
+    setOptionalText("cLivingWorldStatus", "加载中...");
     const data = await requestJson(
-      "/debug/consciousness/living-world",
+      "/debug/consciousness/living-world?dry_run=true",
       { method: "GET", headers: getAdminHeaders() },
-      "Load living world failed: "
+      "加载 Living World 失败："
     );
     renderLivingWorld(data);
   } catch (err) {

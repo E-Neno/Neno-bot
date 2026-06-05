@@ -80,6 +80,11 @@ class LifeResidue(BaseModel):
         return _clamp(value, 0.0, 1.0)
 
 
+class LifeEnvironment(BaseModel):
+    """Neno 当前所处环境的一句话氛围摘要（Phase 4b B1.1）。"""
+    summary: str = "安静的房间"
+
+
 class LifeState(BaseModel):
     mode: str = "idle"
     attention: str = "ambient"
@@ -87,6 +92,14 @@ class LifeState(BaseModel):
     current_activity: str = "quiet_observing"
     last_transition_at: Optional[str] = None
     residue: LifeResidue = Field(default_factory=LifeResidue)
+    # ── Living World Model 富字段（Phase 4b B1.1）──
+    # 默认值带人能理解的生活语义，旧 state JSON 缺失这些字段时自动补默认。
+    place: str = "quiet_room"
+    time_phase: str = "unknown"
+    environment: LifeEnvironment = Field(default_factory=LifeEnvironment)
+    activity_label: str = "安静观察"
+    activity_reason: str = "没有新的外部刺激，维持低强度观察"
+    continuity_note: str = ""
 
 
 # ── Today's experience ─────────────────────────────────
