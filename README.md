@@ -63,6 +63,9 @@ app/
 │   │   ├── __init__.py               #    ConsciousnessEngine 门面
 │   │   ├── config.py                 #    魔法数字集中管理
 │   │   ├── models.py                 #    NenoState / StateMutation / Event
+│   │   ├── experience_recorder.py     #    内在经历沉淀：写入 / 查询 / 去重 / 状态标记
+│   │   ├── life_loop.py               #    Living World 生活循环与 dry-run 预览
+│   │   ├── reflection_engine.py        #    梦境总结、长期记忆写入与状态回注
 │   │   ├── desire.py                 #    表达欲推算模型
 │   │   ├── mood.py                   #    二维情绪模型
 │   │   ├── state_store.py            #    单写者 + 乐观锁持久化
@@ -167,7 +170,14 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 | `PLATFORM_TOKEN` | 平台消息转发鉴权 |
 | `CONSCIOUSNESS_JUDGE_MODEL` | 意识层判断模型（Step2） |
 | `CONSCIOUSNESS_GENERATE_MODEL` | 意识层生成模型（Step3） |
-| `CONSCIOUSNESS_DREAM_MODEL` | 意识层梦境模型（Phase 4 占位） |
+| `CONSCIOUSNESS_DREAM_MODEL` | ReflectionEngine 反思模型（仅在 `CONSCIOUSNESS_REFLECTION_MODEL_ENABLED=true` 时允许真实调用） |
+| `CONSCIOUSNESS_LIFE_LOOP_ENABLED` | Living World 生活循环开关（默认 false） |
+| `CONSCIOUSNESS_LIFE_LOOP_INTERVAL_SECONDS` | 生活循环间隔秒数（默认 1200） |
+| `CONSCIOUSNESS_REFLECTION_ENABLED` | 梦境总结 / 反思引擎开关（默认 false） |
+| `CONSCIOUSNESS_REFLECTION_MODEL_ENABLED` | 反思是否允许真实模型调用（默认 false） |
+| `CONSCIOUSNESS_REFLECTION_HOUR` | 每日反思小时（默认 5） |
+| `CONSCIOUSNESS_REFLECTION_MINUTE` | 每日反思分钟（默认 0） |
+| `CONSCIOUSNESS_EXPRESSION_GATE_ENABLED` | ExpressionGate 预留开关（默认 false，当前未实现） |
 | `BRAIN_INTENT_CONSUMER_ENABLED` | brain intent 消费器总开关（默认 false，灰度前关闭） |
 | `BRAIN_WHITELIST_USERS` | brain intent 发送白名单（逗号分隔 user_id，空=全量关闭） |
 

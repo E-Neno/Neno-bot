@@ -1,4 +1,27 @@
-# PHASE_4 — 梦境与长期记忆闭环
+# ⛔ PHASE_4.md 已废弃（OBSOLETE）— 仅作历史归档，不可作为执行依据
+
+> **状态：OBSOLETE / DO NOT IMPLEMENT**（2026-06-06 校正）
+>
+> 本文件是 Phase 4 的**上一代设计**（"梦境 + 主聊天 prompt 注入"路线）。其中多处设计与**当前红线**及新版规格**直接冲突**，禁止再据此实现：
+>
+> | 本文中的旧设计 | 冲突点 | 结论 |
+> |---|---|---|
+> | 改 `chat_service.py` 注入动态状态（§1 改动表 / §3 `_inject_consciousness_state`） | 红线：**禁改 `chat_service.py`** | ❌ 作废 |
+> | `state_prompt.py` 把状态文本写入 system message 末尾（§2.1 / §3） | 红线：**禁止把 Living World 注入主聊天 prompt** | ❌ 作废 |
+> | 召回 Top-5 记忆注入最后一条 user message（§3 `_inject_consciousness_state`） | 同上：禁 prompt 注入 | ❌ 作废 |
+> | 把 Phase 4 当作单块"梦境闭环"一次验收 | 导致"地基完成"被误读为"世界引擎完成" | ❌ 作废 |
+>
+> **唯一执行依据**：`PHASE_4_LIVING_WORLD_SPEC.md`（规格，§0 为权威阶段划分）+ `PHASE_4_IMPL_PLAN.md`（实现计划，§0.0 为权威任务映射）+ `PHASE_4C_LIVING_SIMULATION_PLAN.md`（完整世界引擎核心计划）。
+>
+> **文档组约束（必须共同保留 / 共同提交）**：本文件与 `PHASE_4_LIVING_WORLD_SPEC.md`、`PHASE_4_IMPL_PLAN.md`、`PHASE_4C_LIVING_SIMULATION_PLAN.md` 构成**一个不可分割的文档组**。后续若提交，四份必须进**同一个 commit**；**禁止只提交 PHASE_4.md** 而让规格 / 实现计划掉队，否则本文件指向的"唯一执行依据"会悬空。
+>
+> **幸存的思想**：每日梦境总结 + 长期记忆沉淀的**目标**仍然成立，但已**重生为 `ReflectionEngine`**——它只通过 `MemoryRecall.add_memory()` 写 `long_term_memory`、通过 `StateStore.submit_mutation()` 回注状态，**绝不注入主聊天 prompt、绝不碰 `chat_service.py`**。
+>
+> 以下原文整体保留仅供历史参考，**不要复制其中任何代码片段或文件改动清单**。
+
+---
+
+# PHASE_4（原文 · 历史归档）— 梦境与长期记忆闭环
 
 > **前置**：Phase 1-3 已完成并通过全部验收标准。完整决策链路可用，消息能正常发出，desire 清零正常。
 >
