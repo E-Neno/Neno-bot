@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.consciousness.config import ConsciousnessConfig
+from app.services.consciousness.experience_recorder import ExperienceRecorder
 from app.services.consciousness.fragmenter import Fragmenter
 from app.services.consciousness.interrupt import InterruptController
 from app.services.consciousness.memory_recall import MemoryRecall
@@ -553,8 +554,10 @@ class TestNenoBrainRunCycle:
         mock_fragmenter.record_sent.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_judge_should_not_share_no_intent(self):
+    async def test_judge_should_not_share_no_intent(self, tmp_path):
         from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
 
         state = _make_awake_state()
         state.desire.value = 80.0
@@ -591,3 +594,227 @@ class TestNenoBrainRunCycle:
             await brain.run_cycle()
 
         mock_fragmenter.split.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_judge_should_not_share_records_unspoken_experience(self, tmp_path):
+        from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
+        recorder = ExperienceRecorder()
+
+        state = _make_awake_state()
+        state.desire.value = 80.0
+        mock_state_store = AsyncMock()
+        mock_state_store.read.return_value = state
+
+        event = EventIn(topic_hash="test_unspoken", priority=0, content="一件暂时不说的事")
+        mock_pool = AsyncMock()
+        mock_pool.pop_pending.side_effect = [[event], []]
+
+        brain = NenoBrain(
+            state_store=mock_state_store,
+            pool=mock_pool,
+            recall=AsyncMock(),
+            fragmenter=MagicMock(),
+            interrupt=InterruptController(),
+            config=ConsciousnessConfig(),
+            recorder=recorder,
+        )
+
+        judge_json = json.dumps({
+            "should_share": False,
+            "reason": "现在不适合说",
+            "target_user_id": None,
+            "urgency": "low",
+        })
+
+        with patch("app.services.consciousness.brain._llm_call", new=AsyncMock(return_value=judge_json)):
+            await brain.run_cycle()
+
+        rows = await recorder.list_recent(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["source"] == "brain_judge"
+        assert rows[0]["kind"] == "unspoken_thought"
+        assert rows[0]["expression_status"] == "unspoken"
+        assert rows[0]["related_event_hash"] == "test_unspoken"
+
+    @pytest.mark.asyncio
+    async def test_judge_true_no_target_records_suppressed(self, tmp_path):
+        from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
+        recorder = ExperienceRecorder()
+
+        state = _make_awake_state()
+        state.desire.value = 80.0
+        state.last_interaction.user_id = None
+        mock_state_store = AsyncMock()
+        mock_state_store.read.return_value = state
+
+        event = EventIn(topic_hash="test_suppressed", priority=0, content="想说但没有对象")
+        mock_pool = AsyncMock()
+        mock_pool.pop_pending.side_effect = [[event], []]
+
+        mock_fragmenter = MagicMock()
+        mock_fragmenter.check_rate_limit.return_value = True
+        mock_fragmenter.split.return_value = ["想说点什么"]
+
+        brain = NenoBrain(
+            state_store=mock_state_store,
+            pool=mock_pool,
+            recall=AsyncMock(),
+            fragmenter=mock_fragmenter,
+            interrupt=InterruptController(),
+            config=ConsciousnessConfig(),
+            recorder=recorder,
+        )
+
+        judge_json = json.dumps({
+            "should_share": True,
+            "reason": "想说但没有对象",
+            "target_user_id": None,
+            "urgency": "normal",
+        })
+
+        with patch(
+            "app.services.consciousness.brain._llm_call",
+            new=AsyncMock(side_effect=[judge_json, "想说点什么"]),
+        ):
+            await brain.run_cycle()
+
+        rows = await recorder.list_recent(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["expression_status"] == "suppressed"
+        assert rows[0]["related_event_hash"] == "test_suppressed"
+
+    @pytest.mark.asyncio
+    async def test_successful_intent_records_pending_expression(self, tmp_path):
+        from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
+        recorder = ExperienceRecorder()
+
+        state = _make_awake_state()
+        state.desire.value = 80.0
+        mock_state_store = AsyncMock()
+        mock_state_store.read.return_value = state
+
+        event = EventIn(topic_hash="test_pending", priority=0, content="一件想表达的事")
+        mock_pool = AsyncMock()
+        mock_pool.pop_pending.side_effect = [[event], []]
+
+        mock_fragmenter = MagicMock()
+        mock_fragmenter.check_rate_limit.return_value = True
+        mock_fragmenter.split.return_value = ["想说点什么"]
+
+        brain = NenoBrain(
+            state_store=mock_state_store,
+            pool=mock_pool,
+            recall=AsyncMock(),
+            fragmenter=mock_fragmenter,
+            interrupt=InterruptController(),
+            config=ConsciousnessConfig(),
+            recorder=recorder,
+        )
+
+        judge_json = json.dumps({
+            "should_share": True,
+            "reason": "想表达",
+            "target_user_id": "qq:private:test123",
+            "urgency": "normal",
+        })
+
+        with patch(
+            "app.services.consciousness.brain._llm_call",
+            new=AsyncMock(side_effect=[judge_json, "想说点什么"]),
+        ):
+            await brain.run_cycle()
+
+        rows = await recorder.list_recent(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["expression_status"] == "pending_expression"
+        assert rows[0]["related_event_hash"] == "test_pending"
+        assert rows[0]["related_intent_id"] is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("judge_return", ["not valid json {{{", None])
+    async def test_judge_none_or_bad_json_records_no_experience(self, tmp_path, judge_return):
+        """判断层返回 None / 坏 JSON 降级时，不写 inner_experience_log。"""
+        from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
+        recorder = ExperienceRecorder()
+
+        state = _make_awake_state()
+        state.desire.value = 80.0
+        mock_state_store = AsyncMock()
+        mock_state_store.read.return_value = state
+
+        event = EventIn(topic_hash="test_judge_none", priority=0, content="判断层失败的事")
+        mock_pool = AsyncMock()
+        mock_pool.pop_pending.side_effect = [[event], []]
+
+        mock_fragmenter = MagicMock()
+
+        brain = NenoBrain(
+            state_store=mock_state_store,
+            pool=mock_pool,
+            recall=AsyncMock(),
+            fragmenter=mock_fragmenter,
+            interrupt=InterruptController(),
+            config=ConsciousnessConfig(),
+            recorder=recorder,
+        )
+
+        # 坏 JSON 与 None 都会让 _llm_judge() 降级为 None
+        with patch("app.services.consciousness.brain._llm_call",
+                   new=AsyncMock(return_value=judge_return)):
+            await brain.run_cycle()
+
+        rows = await recorder.list_recent(limit=10)
+        assert rows == []
+        mock_fragmenter.split.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_recorder_failure_does_not_break_cycle(self, tmp_path):
+        """recorder.record 抛异常时，brain cycle 不应崩溃。"""
+        from app.services.consciousness.brain import NenoBrain
+
+        _init_db(_make_test_db_dir(tmp_path))
+
+        state = _make_awake_state()
+        state.desire.value = 80.0
+        mock_state_store = AsyncMock()
+        mock_state_store.read.return_value = state
+
+        event = EventIn(topic_hash="test_rec_fail", priority=0, content="录入会抛异常的事")
+        mock_pool = AsyncMock()
+        mock_pool.pop_pending.side_effect = [[event], []]
+
+        failing_recorder = MagicMock()
+        failing_recorder.record = AsyncMock(side_effect=RuntimeError("db boom"))
+
+        brain = NenoBrain(
+            state_store=mock_state_store,
+            pool=mock_pool,
+            recall=AsyncMock(),
+            fragmenter=MagicMock(),
+            interrupt=InterruptController(),
+            config=ConsciousnessConfig(),
+            recorder=failing_recorder,
+        )
+
+        # should_share=False → 进入 _record_experiences，record 抛异常被吞掉
+        judge_json = json.dumps({
+            "should_share": False,
+            "reason": "不说",
+            "target_user_id": None,
+            "urgency": "low",
+        })
+
+        with patch("app.services.consciousness.brain._llm_call",
+                   new=AsyncMock(return_value=judge_json)):
+            # 不应抛异常逃逸出 run_cycle
+            await brain.run_cycle()
+
+        failing_recorder.record.assert_awaited()

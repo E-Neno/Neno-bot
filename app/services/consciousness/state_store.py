@@ -189,6 +189,12 @@ class StateStore:
             state.world = mutation.world
             state.world.last_perception_at = now.isoformat()
 
+        if mutation.life is not None:
+            state.life = mutation.life
+
+        if mutation.life_residue is not None:
+            state.life.residue = mutation.life_residue
+
         if mutation.today_experiences_append is not None:
             state.today_experiences.append(mutation.today_experiences_append)
             if len(state.today_experiences) > self._cfg.today_experiences_max:

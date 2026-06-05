@@ -1,8 +1,12 @@
 # app/services/consciousness/models.py
 """Pydantic models for the consciousness layer."""
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, float(value)))
 
 
 # ── Energy ──────────────────────────────────────────────
@@ -52,6 +56,39 @@ class LastInteraction(BaseModel):
     at_time: Optional[str] = None
 
 
+# ── Living World state ─────────────────────────────────
+class NeedState(BaseModel):
+    connection: float = 0.0
+    novelty: float = 0.0
+    quiet: float = 0.0
+    order: float = 0.0
+
+    @field_validator("connection", "novelty", "quiet", "order", mode="after")
+    @classmethod
+    def _clamp_need(cls, value: float) -> float:
+        return _clamp(value, 0.0, 100.0)
+
+
+class LifeResidue(BaseModel):
+    topic: str = ""
+    mood: str = ""
+    intensity: float = 0.0
+
+    @field_validator("intensity", mode="after")
+    @classmethod
+    def _clamp_intensity(cls, value: float) -> float:
+        return _clamp(value, 0.0, 1.0)
+
+
+class LifeState(BaseModel):
+    mode: str = "idle"
+    attention: str = "ambient"
+    need: NeedState = Field(default_factory=NeedState)
+    current_activity: str = "quiet_observing"
+    last_transition_at: Optional[str] = None
+    residue: LifeResidue = Field(default_factory=LifeResidue)
+
+
 # ── Today's experience ─────────────────────────────────
 class Experience(BaseModel):
     time: str                     # HH:MM
@@ -70,6 +107,7 @@ class NenoState(BaseModel):
     desire: DesireState = Field(default_factory=DesireState)
     world: WorldState = Field(default_factory=WorldState)
     last_interaction: LastInteraction = Field(default_factory=LastInteraction)
+    life: LifeState = Field(default_factory=LifeState)
     today_experiences: list[Experience] = Field(default_factory=list)
 
 
@@ -98,6 +136,8 @@ class StateMutation(BaseModel):
     mood: Optional[MoodState] = None
     desire: Optional[DesireState] = None
     world: Optional[WorldState] = None
+    life: Optional[LifeState] = None
+    life_residue: Optional[LifeResidue] = None
     today_experiences_append: Optional[Experience] = None
     today_experiences_clear: bool = False
     desire_clear: bool = False

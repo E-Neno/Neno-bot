@@ -271,6 +271,78 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inner_experience_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                mood_impact REAL DEFAULT 0.0,
+                desire_impact REAL DEFAULT 0.0,
+                salience REAL DEFAULT 0.5,
+                expression_status TEXT DEFAULT 'unspoken',
+                related_event_hash TEXT,
+                related_message_ids TEXT,
+                related_intent_id INTEGER,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inner_exp_created
+            ON inner_experience_log(created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inner_exp_status
+            ON inner_experience_log(expression_status, created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inner_exp_source
+            ON inner_experience_log(source, kind)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_inner_exp_dedupe
+            ON inner_experience_log(source, kind, related_event_hash, date(created_at))
+            WHERE related_event_hash IS NOT NULL
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dream_reflection_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'created',
+                input_summary TEXT NOT NULL,
+                output_json TEXT,
+                model_name TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reflection_created
+            ON dream_reflection_runs(created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reflection_status
+            ON dream_reflection_runs(status, created_at)
+            """
+        )
 
 
 def add_message(

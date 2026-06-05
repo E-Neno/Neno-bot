@@ -10,11 +10,12 @@ from typing import Optional
 
 from app.config import OPENROUTER_API_KEY, OPENROUTER_URL
 from app.llm.openrouter_client import chat_with_openrouter
-from app.storage.db import add_debug_event, execute_write
+from app.storage.db import add_debug_event, get_conn
 
 from .config import ConsciousnessConfig
 from .desire import DesireModel
 from .event_pool import EventPool
+from .experience_recorder import ExperienceRecorder, InnerExperienceIn
 from .fragmenter import Fragmenter
 from .interrupt import InterruptController
 from .memory_recall import MemoryRecall
@@ -103,6 +104,7 @@ class NenoBrain:
         fragmenter: Fragmenter,
         interrupt: InterruptController,
         config: ConsciousnessConfig,
+        recorder: ExperienceRecorder | None = None,
     ) -> None:
         self._state = state_store
         self._pool = pool
@@ -111,6 +113,7 @@ class NenoBrain:
         self._interrupt = interrupt
         self._cfg = config
         self._desire_model = DesireModel(config)
+        self._recorder = recorder or ExperienceRecorder()
 
     async def run_cycle(self) -> None:
         """一次决策周期，由 APScheduler 定期调用（brain_cycle_interval_seconds）。"""
@@ -152,7 +155,38 @@ class NenoBrain:
             return
         self._interrupt.enter("idle")
 
-        if not decision or not decision.get("should_share"):
+        # decision is None 表示判断层超时 / 坏 JSON / 调用失败的降级。
+        # _llm_judge() 已写过 debug warning，这里直接返回，不沉淀 unspoken experience，
+        # 避免把"判断失败"误记成"想说但没说"。
+        if decision is None:
+            return
+
+        if not decision.get("should_share"):
+            await self._record_experiences(
+                all_events,
+                trace_id,
+                status="unspoken",
+                reason="judge false",
+                decision=decision,
+            )
+            return
+
+        # 确定目标用户。没有 target 时只沉淀为 suppressed，不生成、不发送。
+        target_user_id = (
+            decision.get("target_user_id")
+            or state.last_interaction.user_id
+        )
+
+        if not target_user_id:
+            logger.info("[%s] no target user, dropping", trace_id)
+            await self._record_experiences(
+                all_events,
+                trace_id,
+                status="suppressed",
+                reason="no target user",
+                decision=decision,
+            )
+            self._interrupt.enter("idle")
             return
 
         # Step 3: 生成层
@@ -177,19 +211,16 @@ class NenoBrain:
         if self._interrupt.should_stop_after_current:
             fragments = fragments[:1]
 
-        # 确定目标用户
-        target_user_id = (
-            decision.get("target_user_id")
-            or state.last_interaction.user_id
-        )
-
-        if not target_user_id:
-            logger.info("[%s] no target user, dropping", trace_id)
-            self._interrupt.enter("idle")
-            return
-
         # 写入 proactive_intent 表
-        await self._write_intent(target_user_id, fragments, trace_id)
+        intent_id = await self._write_intent(target_user_id, fragments, trace_id)
+        await self._record_experiences(
+            all_events,
+            trace_id,
+            status="pending_expression",
+            reason="intent queued",
+            decision=decision,
+            intent_id=intent_id,
+        )
         self._fragmenter.record_sent()
 
         # 清零表达欲
@@ -324,17 +355,65 @@ class NenoBrain:
 
     async def _write_intent(
         self, user_id: str, fragments: list[str], trace_id: str,
-    ) -> None:
+    ) -> int:
         """将碎片化消息写入 proactive_intent 表。Phase 3b 消费。"""
-        await asyncio.to_thread(
-            execute_write,
-            "INSERT INTO proactive_intent (user_id, fragments, status, created_at) "
-            "VALUES (?, ?, 'queued', ?)",
-            (user_id, json.dumps(fragments, ensure_ascii=False), _utcnow().isoformat()),
+        intent_id = await asyncio.to_thread(
+            self._write_intent_sync,
+            user_id,
+            fragments,
         )
         logger.debug(
             "[%s] wrote %d fragments to proactive_intent", trace_id, len(fragments),
         )
+        return intent_id
+
+    def _write_intent_sync(self, user_id: str, fragments: list[str]) -> int:
+        with get_conn() as conn:
+            cursor = conn.execute(
+                "INSERT INTO proactive_intent (user_id, fragments, status, created_at) "
+                "VALUES (?, ?, 'queued', ?)",
+                (user_id, json.dumps(fragments, ensure_ascii=False), _utcnow().isoformat()),
+            )
+            return int(cursor.lastrowid)
+
+    async def _record_experiences(
+        self,
+        events: list,
+        trace_id: str,
+        *,
+        status: str,
+        reason: str,
+        decision: dict | None = None,
+        intent_id: int | None = None,
+    ) -> None:
+        """沉淀 Brain 消费过的事件。失败只写 debug warning，不阻断主流程。"""
+        for ev in events[:3]:
+            try:
+                await self._recorder.record(
+                    InnerExperienceIn(
+                        trace_id=trace_id,
+                        source="brain_judge",
+                        kind="unspoken_thought",
+                        content=getattr(ev, "content", ""),
+                        mood_impact=float(getattr(ev, "mood_impact", 0.0) or 0.0),
+                        expression_status=status,
+                        related_event_hash=getattr(ev, "topic_hash", None),
+                        related_intent_id=intent_id,
+                        metadata={
+                            "reason": reason,
+                            "decision": decision or {},
+                            "priority": getattr(ev, "priority", None),
+                            "tags": getattr(ev, "tags", []),
+                        },
+                    )
+                )
+            except Exception as exc:
+                logger.warning("[%s] record brain experience failed: %s", trace_id, exc)
+                await self._write_debug_event(
+                    trace_id,
+                    "experience_record_failed",
+                    str(exc),
+                )
 
     async def _write_debug_event(
         self, trace_id: str, event_type: str, detail: str,

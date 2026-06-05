@@ -26,6 +26,8 @@ from app.services.consciousness.models import (
     DesireState,
     EnergyState,
     Experience,
+    LifeResidue,
+    LifeState,
     MoodState,
     NenoState,
     StateMutation,
@@ -111,6 +113,32 @@ class TestNenoStateSerialization:
         assert restored.energy.value == 50.0
         assert restored.mood.valence == -0.5
         assert restored.desire.value == 30.0
+
+
+def test_old_state_json_gets_default_life():
+    old = {
+        "version": 2,
+        "revision": 0,
+        "updated_at": None,
+        "energy": {"value": 80.0, "status": "awake", "description": "ok"},
+        "mood": {
+            "valence": 0.3,
+            "arousal": 0.5,
+            "label": "平静",
+            "description": "ok",
+            "baseline_valence": 0.3,
+            "baseline_arousal": 0.5,
+        },
+        "desire": {"value": 0.0, "last_express_at": None, "decay_duration_minutes": 120},
+        "world": {"weather": None, "hot_topics": [], "time_context": "", "last_perception_at": None},
+        "last_interaction": {"user_id": None, "user_name": None, "summary": None, "at_time": None},
+        "today_experiences": [],
+    }
+
+    state = NenoState.model_validate(old)
+
+    assert state.life.mode == "idle"
+    assert state.life.current_activity == "quiet_observing"
 
 
 # ── 数据库建表 ───────────────────────────────────────────────
@@ -224,6 +252,35 @@ class TestStateStoreBasic:
             assert 0.7 <= state.mood.valence <= 0.8
             assert 0.65 <= state.mood.arousal <= 0.7
             assert state.revision >= 1
+        finally:
+            await fs.store.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_mutation_updates_life_state(self, tmp_path: Path):
+        """life mutation 只能通过 StateStore 单写者持久化"""
+        data_dir = _make_test_db_dir(tmp_path)
+        fs = _fresh_state_store(data_dir)
+
+        await fs.store.start()
+        try:
+            await fs.store.submit_mutation(
+                StateMutation(
+                    life=LifeState(
+                        mode="absorbed",
+                        attention="memory",
+                        current_activity="carrying_unspoken_thought",
+                    ),
+                    life_residue=LifeResidue(topic="未说出口的话", mood="soft", intensity=0.4),
+                )
+            )
+            await asyncio.sleep(0.2)
+
+            state = await fs.store.read()
+            assert state.life.mode == "absorbed"
+            assert state.life.attention == "memory"
+            assert state.life.current_activity == "carrying_unspoken_thought"
+            assert state.life.residue.topic == "未说出口的话"
+            assert state.life.residue.intensity == 0.4
         finally:
             await fs.store.stop()
 

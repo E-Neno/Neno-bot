@@ -3,6 +3,13 @@ import os
 from pydantic import BaseModel
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class ConsciousnessConfig(BaseModel):
     """consciousness 模块所有可调参数集中管理"""
 
@@ -29,6 +36,15 @@ class ConsciousnessConfig(BaseModel):
 
     # 心跳
     heartbeat_interval_seconds: int = 300
+
+    # Living World（默认关闭）
+    life_loop_enabled: bool = _env_bool("CONSCIOUSNESS_LIFE_LOOP_ENABLED", False)
+    reflection_enabled: bool = _env_bool("CONSCIOUSNESS_REFLECTION_ENABLED", False)
+    reflection_model_enabled: bool = _env_bool("CONSCIOUSNESS_REFLECTION_MODEL_ENABLED", False)
+    expression_gate_enabled: bool = _env_bool("CONSCIOUSNESS_EXPRESSION_GATE_ENABLED", False)
+    life_loop_interval_seconds: int = int(os.getenv("CONSCIOUSNESS_LIFE_LOOP_INTERVAL_SECONDS", "1200"))
+    reflection_hour: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_HOUR", "5"))
+    reflection_minute: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_MINUTE", "0"))
 
     # 记忆
     today_experiences_max: int = 10
