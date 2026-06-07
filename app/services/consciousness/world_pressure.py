@@ -12,7 +12,16 @@ if TYPE_CHECKING:
     from app.services.consciousness.config import ConsciousnessConfig
 
 # 默认显著度表（当 config.world_salience 为空时使用）
+# 同时覆盖两套词汇：① 真实 LifeEvent.kind（mishap/message/weather/craving/memory）
+# ② world_loop 内部合成的触发（phase_change/money_low/plant_thirsty/action_done）
 _DEFAULT_SALIENCE: dict[str, float] = {
+    # —— 真实生活事件（LifeEvent.kind）——
+    "mishap": 50.0,        # 出岔子（水壶摔了等）→ hard，立刻想
+    "message": 40.0,       # 来消息
+    "craving": 20.0,       # 馋了/想做点什么
+    "weather": 15.0,       # 天气变化
+    "memory": 10.0,        # 翻起一段回忆
+    # —— world_loop 内部合成触发 ——
     "kettle_broken": 50.0,
     "message_in": 40.0,
     "money_low": 30.0,

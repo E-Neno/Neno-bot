@@ -60,6 +60,11 @@ class WorldState(BaseModel):
     gone_log: list[dict] = Field(default_factory=list)  # [{object,label,cause,when}]
     # 竖切7：最近一步快照（持久化，端点只读 DB 即可还原"她刚在干嘛"）
     last_tick: dict | None = None
+    # 压力触发状态（第二刀 2b：门控 LLM 调用）
+    pressure_value: float = 0.0
+    pressure_last_wake_ts: float | None = None
+    pressure_wakes_this_hour: int = 0
+    pressure_hour_anchor: float | None = None
 
 
 WorldOpType = Literal["set_state", "move", "create_object", "destroy_object"]

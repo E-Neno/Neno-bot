@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from .action_validator import validate_ops
@@ -20,6 +21,7 @@ from .world_drift import apply_drift
 from .world_model import (
     apply_op, load_world_def, objects_in_room, WorldOp, WorldState,
 )
+from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
 from .world_store import WorldStore
 
 _log = logging.getLogger(__name__)
@@ -219,7 +221,32 @@ class WorldLoop:
                         drifted = apply_op(wd, drifted, event.world_op)
                 event_mood = event.mood_delta
 
-            if cfg.world_llm_enabled:
+            # ── 压力门控：从 ws 重建 PressureState ──
+            pressure = PressureState(
+                value=ws.pressure_value,
+                last_wake_ts=ws.pressure_last_wake_ts,
+                wakes_this_hour=ws.pressure_wakes_this_hour,
+                hour_anchor=ws.pressure_hour_anchor,
+            )
+
+            # 收集本 tick 事件种类
+            event_kinds: list[str] = []
+            if event is not None:
+                event_kinds.append(event.kind if hasattr(event, "kind") else "action_done")
+            if drift:
+                event_kinds.append("plant_thirsty")
+            if ws.last_tick and ws.last_tick.get("phase") != PHASE_ZH.get(phase):
+                event_kinds.append("phase_change")
+            if drifted.money < 30:
+                event_kinds.append("money_low")
+
+            now_real = time.time()
+            hard = is_hard(event_kinds, cfg)
+            pressure = accumulate(pressure, event_kinds, cfg, now=now_real)
+            wake, wake_reason = should_wake(pressure, cfg, now=now_real, hard_event=hard)
+
+            if wake and cfg.world_llm_enabled:
+                # LLM 路径（真想）
                 plan_dp = DailyPlan.model_validate(ws.daily_plan) if ws.daily_plan else None
                 q = [drifted.location]
                 if plan_dp:
@@ -238,7 +265,9 @@ class WorldLoop:
                 action, reason, micro, ops = (
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
                 )
+                pressure = pressure_on_wake(pressure, now=now_real)
             else:
+                # 免费 mock 路径（滑行）
                 action, reason, ops, micro = routine_decide(wd, drifted)
 
             sim = drifted
@@ -255,6 +284,11 @@ class WorldLoop:
             for r in sim.recent_actions[:-1]:
                 r["ago_min"] = r.get("ago_min", 0) + step
             sim.sim_minutes = sim_minutes
+            # 持久化压力状态
+            sim.pressure_value = pressure.value
+            sim.pressure_last_wake_ts = pressure.last_wake_ts
+            sim.pressure_wakes_this_hour = pressure.wakes_this_hour
+            sim.pressure_hour_anchor = pressure.hour_anchor
             if sim.daily_plan:
                 for it in sim.daily_plan.get("items", []):
                     if it["phase"] == phase and not it.get("done"):
@@ -266,6 +300,7 @@ class WorldLoop:
                 "event": (event.content if event is not None else None),
                 "sleeping": False, "phase": PHASE_ZH.get(phase, phase),
                 "real_time": now8.strftime("%H:%M"),
+                "wake": wake, "wake_reason": wake_reason, "pressure": round(pressure.value, 1),
             }
             await self._world_store.write(sim)
             ws = sim

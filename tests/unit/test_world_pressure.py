@@ -29,6 +29,16 @@ def state() -> PressureState:
     return PressureState()
 
 
+# ── 回归：真实 LifeEvent.kind 必须有显著度（曾经词表对不齐=0）──
+
+def test_real_lifeevent_kinds_have_salience(config: ConsciousnessConfig) -> None:
+    """world_loop 直接塞 event.kind；这些真实事件必须有非零权重，否则意外永远不驱动唤醒。"""
+    for kind in ("mishap", "message", "weather", "craving", "memory"):
+        assert salience_of(kind, config) > 0, f"{kind} 显著度为 0，意外会变哑"
+    # mishap 必须是 hard（立刻想）
+    assert is_hard(["mishap"], config) is True
+
+
 # ── 回归：预算窗口过期后必须解锁（曾经死锁）─────────────────
 
 def test_budget_unlocks_after_hour_window_passes(config: ConsciousnessConfig) -> None:

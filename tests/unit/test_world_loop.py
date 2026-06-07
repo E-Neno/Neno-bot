@@ -121,3 +121,161 @@ async def test_tick_uses_real_utc8_time(tmp_path: Path):
         assert ws.last_tick["real_time"] == "14:37"
     finally:
         await store.stop()
+
+
+import time
+
+
+# ── Fake brain（替身，记录 decide 调用次数）──
+
+class _FakeBrain:
+    """记录 decide() 被调用的次数，返回固定结果。"""
+
+    def __init__(self):
+        self.call_count = 0
+
+    async def decide(self, *args, **kwargs):
+        self.call_count += 1
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            action="test_action", reasoning="test_reason",
+            micro_event="test_micro", world_ops=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressure_gate_low_pressure_uses_routine(tmp_path: Path):
+    """压力未到阈值且非 hard -> brain 未被调用（走 routine），pressure 累积上升。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=99999.0,
+        world_boredom_drip=1.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+        snap = await loop.tick()
+        await _drain(store)
+
+        assert brain.call_count == 0
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.pressure_value > 0
+        assert ws.last_tick.get("wake") is False
+        assert ws.last_tick.get("wake_reason") == "accumulating"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_pressure_gate_threshold_triggers_brain(tmp_path: Path):
+    """压力到阈值 -> brain 被调用恰好 1 次，pressure 被清零。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=0.1,
+        world_boredom_drip=1.0,
+        world_wake_min_gap_seconds=0.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+        snap = await loop.tick()
+        await _drain(store)
+
+        assert brain.call_count == 1
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.pressure_value == 0.0
+        assert ws.last_tick.get("wake") is True
+        assert ws.last_tick.get("wake_reason") == "threshold"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_pressure_gate_min_gap_blocks_second_wake(tmp_path: Path):
+    """min_gap 内连续两 tick -> 第二次不调 brain。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=0.1,
+        world_boredom_drip=1.0,
+        world_wake_min_gap_seconds=9999.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+
+        await loop.tick()
+        await _drain(store)
+        assert brain.call_count == 1
+
+        await loop.tick()
+        await _drain(store)
+        assert brain.call_count == 1
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.last_tick.get("wake_reason") == "min_gap"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_pressure_gate_llm_disabled_never_calls_brain(tmp_path: Path):
+    """world_llm_enabled=False 时，无论压力多高，brain 永不被调用。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=False,
+        world_pressure_threshold=0.0,
+        world_boredom_drip=999.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+
+        await loop.tick()
+        await _drain(store)
+
+        assert brain.call_count == 0
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_pressure_state_roundtrip(tmp_path: Path):
+    """tick 后 WorldStore 读回的 ws 含 pressure_* 字段，值正确。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=99999.0,
+        world_boredom_drip=5.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+        await loop.tick()
+        await _drain(store)
+
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.pressure_value > 0.0
+        assert ws.pressure_wakes_this_hour == 0
+        assert ws.pressure_hour_anchor is None
+        assert "pressure" in ws.last_tick
+        assert "wake" in ws.last_tick
+        assert "wake_reason" in ws.last_tick
+    finally:
+        await store.stop()
