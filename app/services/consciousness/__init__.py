@@ -11,6 +11,7 @@ from .memory_recall import MemoryRecall
 from .perception import PerceptionService
 from .state_store import StateStore
 from .world_engine import WorldEngine
+from .world_loop import WorldLoop
 
 
 class ConsciousnessEngine:
@@ -47,9 +48,13 @@ class ConsciousnessEngine:
             config=self.config,
         )
 
+        # 竖切7：常驻世界循环（默认关，由 world_loop_enabled 控制）
+        self.world_loop = WorldLoop(self.state_store, self.config, recall=self.recall)
+
     async def start(self) -> None:
         await self.state_store.start()
         self._world_engine.register_jobs()
+        self.world_loop.register_jobs(self._scheduler)
 
         # Phase 3a: Register brain cycle
         self._scheduler.add_job(

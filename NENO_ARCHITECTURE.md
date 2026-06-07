@@ -65,10 +65,47 @@ sequenceDiagram
 | **Persistent** | `messages` | SQLite | 永久保存，只增不改。 | 事务级安全。SQLite 本身是所有逻辑的锚点。 |
 | **Persistent** | `memories` | SQLite | 长期保存，允许去重。 | 单点写入。如果提取模型吐出坏 JSON，新状态将被静默丢弃。 |
 | **Persistent** | `relationship_state` | SQLite | 持续累加，包含 stage 和 scores。 | `apply_relationship_update` 保障。若失败会回退。 |
+| **Persistent** | `agent_state` | SQLite | Neno 的精力、情绪、需求、LifeState 与反思余波。 | `StateStore` 单写者队列负责更新。 |
+| **Persistent** | `life_world_state` | SQLite | 房间、物品、模拟时间、金钱、计划和最近行动。 | `WorldStore` 管理单行 JSON；坏 JSON 降级到种子世界。 |
+| **Persistent** | `life_activity_episodes` | SQLite | 连续活动片段与当天生活时间线。 | 原子替换 active episode，供反思读取。 |
+| **Persistent** | `inner_experience_log` / `dream_reflection_runs` | SQLite | 未表达经历、生活事件与跨天反思审计。 | 失败应降级，不可阻断聊天或世界循环。 |
 | **Semi-Persist**| `history_digest.json`| Filesystem | 会随时间更新。属 Token 回收站。 | 纯 JSON I/O。依赖上层 `SubmitLock` 保护免受并发写入。 |
 | **Semi-Persist**| `metadata_json` | SQLite (列) | 冻结于生成时刻，永久只读。 | 不允许后续异步补充，以防止破坏回放功能的时间线。 |
 | **Runtime** | `Aggregation Queues` | RAM (`dict`) | 寿命仅 `window_seconds`。 | **高风险**：服务器一旦重启，队列瞬间蒸发（Lost Update）。 |
 | **Runtime** | `Submit Locks` | RAM (`RLock`) | 会话活跃期存活。 | **高风险**：若发生未被捕捉的底级逃逸异常，引发永久死锁。 |
+
+---
+
+## 3.1 Living World State Boundary
+
+Living World 是与聊天主链并行的持久生活系统，不是聊天 prompt 的附属文本。
+
+```mermaid
+flowchart TD
+    Scheduler["APScheduler"] --> WorldLoop["WorldLoop.tick()"]
+    Manual["POST /debug/consciousness/world-tick"] --> WorldLoop
+    WorldLoop --> WorldStore["WorldStore / life_world_state"]
+    WorldLoop --> StateStore["StateStore / agent_state"]
+    WorldLoop --> Guard["action_validator"]
+    Guard --> Apply["world_model.apply_op()"]
+    Apply --> WorldStore
+    WorldLoop --> Experience["inner_experience_log"]
+    WorldLoop --> Episodes["life_activity_episodes"]
+    WorldLoop --> Reflection["ReflectionEngine / long_term_memory"]
+```
+
+**所有权边界：**
+
+- `life_world_state` 保存外部世界事实：地点、物品、模拟时间、金钱、计划和行动历史。
+- `agent_state` 保存 Neno 内在事实：精力、情绪、需求、LifeState 和 residue。
+- `WorldLoop` 是后端正式融合循环。演示脚本不得成为第二个生产真相源。
+- 所有 LLM 产生的 `world_ops` 必须先通过 `action_validator`，再由纯函数
+  `world_model.apply_op()` 变更世界。
+- 世界循环、世界 LLM 和日计划 LLM 是三个独立开关；仓库示例配置全部关闭。
+- 用户消息当前没有进入 Living World。后续接入必须把消息建模为外部事件，
+  不能直接改变主聊天 prompt 顺序或绕过 Session 串行模型。
+
+具体组件、端点、运行参数与已知缺口见 `docs/living-world.md`。
 
 ---
 

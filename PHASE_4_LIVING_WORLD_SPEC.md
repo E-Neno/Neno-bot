@@ -6,10 +6,14 @@
 
 ---
 
-## 0. 当前状态与阶段重划（2026-06-06 二次校正 · 权威）
+> **状态提醒（2026-06-07）：** 本文保留产品目标与历史规格，但阶段状态已经
+> 被后续实现超越。当前代码事实、运行参数和未完成项以
+> `docs/living-world.md` 与 `PHASE_4_PROGRESS.md` 为准。
 
-> **重要：Phase 4a 已验收 ≠ Phase 4 完成 ≠ 世界引擎完成。**
-> 本节是 Phase 4 阶段划分的**唯一权威来源**。本文其余章节（含 §8 Phasing）如有出入，**以本节为准**。
+## 0. 历史阶段重划（2026-06-06）
+
+> **历史判断仍成立：Phase 4a 已验收 ≠ Phase 4 完成 ≠ 世界引擎完成。**
+> 本节只记录 2026-06-06 的阶段划分，不再描述 2026-06-07 之后的代码状态。
 > 已经做完的 4a / 4b 只是"地基 + 可观测生活状态机"。Neno 已能沉淀、反思、回写和展示生活状态，但生活内容仍偏模板；完整世界引擎必须继续在 Phase 4 内完成。
 
 ### Phase 4a — 已验收（ACCEPTED）
@@ -38,7 +42,7 @@
 
 **4b 的本质**：Neno 已有可读、可调试、可回归测试的生活状态机。但它仍主要由确定性规则和固定文案驱动，不能被宣称为完整世界引擎。
 
-### Phase 4c — 待做（PENDING · Living Simulation Core）
+### Phase 4c — 当时待做（历史状态 · Living Simulation Core）
 
 完整世界引擎核心。目标不是继续扩主动表达，而是把 4b 的模板状态机升级为**连续生活模拟**：
 
@@ -55,7 +59,7 @@
 - **ExpressionGate**：从 LifeState + InnerExperience 生成 ExpressionPlan，仅写 `proactive_intent`，发送仍由 Phase 3b 漏斗决定。
 - 明确降级为 optional：**不是 4b / 4c 的前置或必需项**，完整世界引擎验收不依赖 ExpressionGate。可在 4c 之后单独推进，或长期保持关闭。
 
-### Phase 5 — 暂停（PAUSED）
+### Phase 5 — 当时暂停（历史状态）
 
 - 被动消息进入世界引擎（PassiveWorldIngress / 回复前世界决策）**暂停**。
 - **硬性前提：必须等 Phase 4c 验收通过后再启动。** 在 4c 把连续生活模拟做实之前，让用户消息先过世界引擎只会放大不确定性。
@@ -679,7 +683,7 @@ UI 目标 · Phase 4d optional（非 4b / 4c 必需，仅启用 ExpressionGate �
 - 没有今日生活线 replay。
 - 没有 VirtualSpace / Routine / MicroEvent。
 
-### Phase 4c — 待做：Living Simulation Core（PENDING · 完整世界引擎核心）
+### Phase 4c — 历史计划：Living Simulation Core（当前实现已超过本范围）
 
 - ActivityEpisode：生活片段具备开始、持续、结束、转移和打断。
 - VirtualSpace：以命名场景 / 物品表达虚拟生活环境，不做地图模拟。

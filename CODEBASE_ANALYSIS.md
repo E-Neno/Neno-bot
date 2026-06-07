@@ -2,6 +2,9 @@
 
 > 本地复刻版，基于 GitHub E-Neno/Neno-bot（commit 1d09042）
 > 分析日期：2026-06-01，Phase 3a 后更新
+>
+> **历史快照：** 本文的文件数量、阶段状态和 consciousness 结构已过期。
+> 当前运行架构见 `NENO_ARCHITECTURE.md`，Living World 见 `docs/living-world.md`。
 
 ---
 

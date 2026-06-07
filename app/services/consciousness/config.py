@@ -46,6 +46,19 @@ class ConsciousnessConfig(BaseModel):
     reflection_hour: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_HOUR", "5"))
     reflection_minute: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_MINUTE", "0"))
 
+    # Living World 竖切1（封闭世界）
+    world_llm_enabled: bool = _env_bool("CONSCIOUSNESS_WORLD_LLM_ENABLED", False)
+    world_planner_enabled: bool = _env_bool("CONSCIOUSNESS_WORLD_PLANNER_ENABLED", False)
+    # 常驻世界循环（默认关；开了才在后端注册定时 tick）
+    world_loop_enabled: bool = _env_bool("CONSCIOUSNESS_WORLD_LOOP_ENABLED", False)
+    world_loop_interval_seconds: int = int(os.getenv("CONSCIOUSNESS_WORLD_LOOP_INTERVAL", "8"))
+    world_sim_minutes_per_tick: int = int(os.getenv("CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK", "30"))
+    world_model: str = os.getenv("OPENROUTER_WORLD_MODEL", "openai/gpt-4o-mini")
+    world_llm_timeout_seconds: float = float(os.getenv("CONSCIOUSNESS_WORLD_LLM_TIMEOUT", "20"))
+    world_kettle_cool_minutes: int = 30
+    world_plant_dry_minutes: int = 2880  # 2 天
+    world_plant_wilt_minutes: int = 1440  # 再 1 天
+
     # 记忆
     today_experiences_max: int = 10
     memory_recall_top_k: int = 5

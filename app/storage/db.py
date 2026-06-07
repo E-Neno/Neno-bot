@@ -343,6 +343,48 @@ def init_db():
             ON dream_reflection_runs(status, created_at)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS life_activity_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT,
+                activity_key TEXT NOT NULL,
+                activity_label TEXT NOT NULL,
+                place TEXT NOT NULL,
+                time_phase TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                started_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                ended_at TEXT,
+                reason TEXT NOT NULL DEFAULT '',
+                continuity_note TEXT NOT NULL DEFAULT '',
+                source_residue_json TEXT NOT NULL DEFAULT '{}',
+                routine_key TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_life_episode_status_updated
+            ON life_activity_episodes(status, updated_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_life_episode_started
+            ON life_activity_episodes(started_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS life_world_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                state_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
 
 
 def add_message(

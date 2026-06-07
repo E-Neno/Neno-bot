@@ -1,5 +1,10 @@
 # Phase 4c Living Simulation Core 实现计划
 
+> **历史计划，不再是当前执行依据。** 2026-06-07 代码已经超过本计划的
+> C1.1-C1.7 范围，新增了持久世界、世界动作、日计划、事件、昼夜跨天、
+> 真实 WorldBrain、常驻 WorldLoop 和控制台接入。当前事实与下一步见
+> `docs/living-world.md` 和 `PHASE_4_PROGRESS.md`。
+
 > **目标：** 把 Phase 4b 的模板状态机升级为可连续运行、可重放、可反思的完整世界引擎核心。实现必须遵守单机 SQLite 约束，但目标不再后移到 Phase 5 或 Phase 6；Phase 5 只在本计划验收后处理“用户消息进入世界引擎”。
 
 ## 1. 成功定义

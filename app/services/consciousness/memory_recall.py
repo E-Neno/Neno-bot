@@ -59,6 +59,74 @@ class MemoryRecall:
             logger.exception("memory_recall.recall failed")
             return []
 
+    async def recall_weighted(
+        self,
+        query: str,
+        now,
+        top_k: int | None = None,
+    ) -> list[dict]:
+        """加权召回：score = relevance*0.5 + importance*0.3 + recency*0.2。
+
+        - relevance：query 关键词在 content/tags 中命中的归一化比例
+        - importance：salience（0-1）
+        - recency：exp(-Δ小时/24)
+        返回按 score 降序的 [{content, score, created_at}]；空 query / 异常 → []。
+        """
+        import math
+        from datetime import datetime, timezone
+
+        try:
+            keywords = _tokenize(query)
+            if not keywords:
+                return []
+            k = top_k or self._cfg.memory_recall_top_k
+
+            clauses: list[str] = []
+            params: list[str] = []
+            for kw in keywords:
+                clauses.append("(content LIKE ? OR tags LIKE ?)")
+                params.extend([f"%{kw}%", f"%{kw}%"])
+            where = " OR ".join(clauses)
+            sql = (
+                f"SELECT content, tags, salience, created_at FROM long_term_memory "
+                f"WHERE {where} LIMIT ?"
+            )
+            params.append(str(k * 4))
+            rows = await asyncio.to_thread(fetch_all, sql, tuple(params))
+            if not rows:
+                return []
+
+            if isinstance(now, str):
+                now = datetime.fromisoformat(now)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+
+            scored: list[dict] = []
+            for row in rows:
+                blob = f"{row['content']} {row['tags'] or ''}"
+                hits = sum(1 for kw in keywords if kw in blob)
+                relevance = hits / len(keywords)
+                importance = float(row["salience"] or 0.0)
+                try:
+                    created = datetime.fromisoformat(row["created_at"])
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    delta_h = max(0.0, (now - created).total_seconds() / 3600.0)
+                    recency = math.exp(-delta_h / 24.0)
+                except Exception:
+                    recency = 0.0
+                score = relevance * 0.5 + importance * 0.3 + recency * 0.2
+                scored.append({
+                    "content": row["content"],
+                    "score": round(float(score), 4),
+                    "created_at": row["created_at"],
+                })
+            scored.sort(key=lambda r: r["score"], reverse=True)
+            return scored[:k]
+        except Exception:
+            logger.exception("memory_recall.recall_weighted failed")
+            return []
+
     async def add_memory(self, content: str, tags: list[str],
                          subject: str | None, salience: float = 0.5) -> int:
         """写入一条长期记忆，返回 id。Phase 4 梦境服务使用。"""

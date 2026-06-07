@@ -49,3 +49,10 @@ openclaw-plugins/neno-bridge/allowed_wx_users.json
 *.kuzu
 tmp/
 
+
+# tooling artifacts
+.agents/
+.cgcignore
+.claudeignore
+account-risk-check.md
+tmp/

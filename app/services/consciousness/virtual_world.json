@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "home": "neno_apartment",
+  "categories": {
+    "drinkware": { "states": ["clean", "dirty", "broken"], "default": "clean" },
+    "appliance": { "states": ["cold", "warm", "boiling"], "default": "cold" },
+    "furniture": { "states": ["tidy", "rumpled"], "default": "tidy" },
+    "plant":     { "states": ["fresh", "needs_water", "wilting", "dead"], "default": "fresh" },
+    "device":    { "states": ["silent", "has_unread"], "default": "silent" },
+    "book":      { "states": ["closed", "reading", "finished"], "default": "closed" },
+    "window":    { "states": ["bright", "dim", "dark"], "default": "bright" },
+    "light":     { "states": ["off", "on"], "default": "off" }
+  },
+  "rooms": {
+    "bedroom":     { "objects": ["bed", "desk", "bookshelf", "phone", "window_bed", "lamp"] },
+    "kitchen":     { "objects": ["kettle", "mug", "fridge"] },
+    "living_room": { "objects": ["sofa", "book", "tv", "ceiling_light"] },
+    "balcony":     { "objects": ["chair", "plants"] }
+  },
+  "objects": {
+    "bed":           { "category": "furniture", "label": "床" },
+    "desk":          { "category": "furniture", "label": "书桌" },
+    "bookshelf":     { "category": "furniture", "label": "书架" },
+    "phone":         { "category": "device",    "label": "手机" },
+    "window_bed":    { "category": "window",    "label": "卧室窗" },
+    "lamp":          { "category": "light",     "label": "台灯" },
+    "kettle":        { "category": "appliance", "label": "水壶" },
+    "mug":           { "category": "drinkware", "label": "马克杯" },
+    "fridge":        { "category": "appliance", "label": "冰箱" },
+    "sofa":          { "category": "furniture", "label": "沙发" },
+    "book":          { "category": "book",      "label": "书" },
+    "tv":            { "category": "device",    "label": "电视" },
+    "ceiling_light": { "category": "light",     "label": "客厅灯" },
+    "chair":         { "category": "furniture", "label": "阳台椅" },
+    "plants":        { "category": "plant",     "label": "盆栽" }
+  }
+}

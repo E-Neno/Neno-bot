@@ -614,6 +614,116 @@ export function buildConsciousnessPanel(panel, header) {
   grid.appendChild(livingCard);
 }
 
+function createWorldWorkspace() {
+  const workspace = createElement("section", "world-workspace");
+  workspace.id = "worldWorkspace";
+  workspace.innerHTML = `
+    <aside class="world-scene-rail">
+      <div class="world-rail-label">世界场景</div>
+      <button class="world-scene-button active" type="button"><strong>家</strong><span>当前场景</span></button>
+      <button class="world-scene-button future" type="button"><strong>街区</strong><span>后续开放</span></button>
+      <button class="world-scene-button future" type="button"><strong>地图</strong><span>后续开放</span></button>
+      <div class="world-rail-spacer"></div>
+      <div class="world-rail-foot">场景<br>登记册</div>
+    </aside>
+    <section class="world-stage-card">
+      <div class="world-viewport" id="worldViewport">
+        <div class="world-room-strip" id="worldRoomStrip">
+          <article class="world-room bedroom" data-world-room="bedroom"><span class="world-room-label">卧室</span></article>
+          <article class="world-room living_room active" data-world-room="living_room"><span class="world-room-label">客厅</span></article>
+          <article class="world-room kitchen" data-world-room="kitchen">
+            <span class="world-room-label">厨房</span>
+            <div class="world-steam" id="worldSteam"><i></i><i></i><i></i></div>
+          </article>
+          <article class="world-room balcony" data-world-room="balcony"><span class="world-room-label">阳台</span></article>
+          <div class="world-neno" id="worldNeno">
+            <div class="world-thought" id="worldThought"></div>
+            <img src="/static/img/world/neno-idle-v1.png" alt="Neno">
+          </div>
+        </div>
+        <div class="world-vignette"></div>
+        <div class="world-stage-meta"><small>场景 · Neno 的家</small><h1>Neno 的家</h1></div>
+        <div class="world-minimap" aria-label="房间位置">
+          <span data-world-map-room="bedroom">卧</span>
+          <span class="active" data-world-map-room="living_room">厅</span>
+          <span data-world-map-room="kitchen">厨</span>
+          <span data-world-map-room="balcony">台</span>
+        </div>
+        <button class="world-step-button" id="cWorldStepBtn" type="button">步进一步</button>
+        <div class="world-stage-clock"><strong id="worldClock">--:--</strong><span id="worldPhase">等待世界数据</span></div>
+      </div>
+    </section>
+    <aside class="world-story">
+      <div class="world-story-time" id="worldStoryTime">等待世界数据</div>
+      <h2 id="worldStoryAction">Neno 的生活正在加载</h2>
+      <blockquote id="worldStoryInner">读取真实世界快照后，这里会显示她此刻为什么这样做。</blockquote>
+      <div class="world-mood">
+        <div class="world-mood-swatch" id="worldMoodSwatch"></div>
+        <div><small>此刻心情</small><strong id="worldMoodText">—</strong></div>
+      </div>
+      <div class="world-stats">
+        <div class="world-stat"><span>精力</span><b id="worldEnergy">—</b></div>
+        <div class="world-stat"><span>钱包</span><b id="worldMoney">—</b></div>
+        <div class="world-stat"><span>状态</span><b id="worldEnergyStatus">—</b></div>
+      </div>
+      <div class="world-plan-title">今天想做的</div>
+      <ul class="world-plan" id="worldPlan"><li>等待计划数据</li></ul>
+      <div class="world-change" id="worldChange">世界暂时没有新的变化。</div>
+      <div class="world-status" id="cWorldLiveStatus">等待连接真实世界引擎。</div>
+    </aside>
+    <section class="world-chronicle">
+      <div class="world-chronicle-head">
+        <strong>今天的生活长卷</strong>
+        <span id="worldChronicleRange">今天 · 等待数据</span>
+      </div>
+      <div class="world-chronicle-content">
+        <div class="world-timeline" id="worldTimeline">
+          <div class="world-moment"><time>—</time>等待最近活动</div>
+          <div class="world-moment current" id="worldCurrentMoment"><time>--:--</time>正在加载</div>
+        </div>
+        <div class="world-threads">
+          <span>仍在发生</span>
+          <div class="world-thread"><b>未完计划</b><span id="worldPendingThread">等待计划数据</span></div>
+          <div class="world-thread"><b>带到今天</b><span id="worldCarriedThread">暂无</span></div>
+          <div class="world-thread"><b>失去的东西</b><span id="worldGoneThread">暂无</span></div>
+        </div>
+      </div>
+    </section>
+  `;
+  return workspace;
+}
+
+function createWorkspaceTopbar() {
+  const topbar = createElement("header", "world-workspace-topbar");
+  topbar.innerHTML = `
+    <div class="world-brand">
+      <div class="world-brand-mark">N</div>
+      <div><strong>Neno Living World</strong><small>持续生活观测台</small></div>
+    </div>
+    <nav class="world-workspace-switch" aria-label="控制台工作区">
+      <button class="active" id="worldWorkspaceButton" type="button">世界引擎</button>
+      <button id="controlWorkspaceButton" type="button">控制中枢</button>
+    </nav>
+    <div class="world-runtime" id="worldRuntimeStatus">等待世界状态</div>
+  `;
+  return topbar;
+}
+
+function bindWorkspaceSwitch(worldWorkspace, controlWorkspace) {
+  const worldButton = document.getElementById("worldWorkspaceButton");
+  const controlButton = document.getElementById("controlWorkspaceButton");
+  const activate = (name) => {
+    const showWorld = name === "world";
+    worldWorkspace.classList.toggle("workspace-hidden", !showWorld);
+    controlWorkspace.classList.toggle("workspace-hidden", showWorld);
+    worldButton?.classList.toggle("active", showWorld);
+    controlButton?.classList.toggle("active", !showWorld);
+    window.dispatchEvent(new CustomEvent("neno:workspace-change", { detail: { workspace: name } }));
+  };
+  worldButton?.addEventListener("click", () => activate("world"));
+  controlButton?.addEventListener("click", () => activate("control"));
+}
+
 export function buildConsoleLayout() {
   const app = document.querySelector(".app");
   const chat = document.querySelector(".chat");
@@ -891,9 +1001,17 @@ export function buildConsoleLayout() {
     debugPanel.panel
   );
 
+  const controlWorkspace = createElement("section", "control-workspace workspace-hidden");
+  controlWorkspace.id = "controlWorkspace";
+  controlWorkspace.append(sidebar, main);
+  const worldWorkspace = createWorldWorkspace();
+  const topbar = createWorkspaceTopbar();
+
   side.remove();
-  app.classList.add("app-shell");
-  app.replaceChildren(sidebar, main);
+  document.body.classList.add("world-console-active");
+  app.classList.add("app-shell", "world-console-shell");
+  app.replaceChildren(topbar, worldWorkspace, controlWorkspace);
+  bindWorkspaceSwitch(worldWorkspace, controlWorkspace);
   setActivePanel("chatPanel");
 }
 

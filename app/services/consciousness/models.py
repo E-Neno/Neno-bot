@@ -2,7 +2,7 @@
 """Pydantic models for the consciousness layer."""
 from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Any, Optional
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -85,6 +85,53 @@ class LifeEnvironment(BaseModel):
     summary: str = "安静的房间"
 
 
+class ActivityEpisode(BaseModel):
+    id: Optional[int] = None
+    trace_id: Optional[str] = None
+    activity_key: str
+    activity_label: str
+    place: str
+    time_phase: str
+    status: str = "active"
+    started_at: str
+    updated_at: str
+    ended_at: Optional[str] = None
+    reason: str = ""
+    continuity_note: str = ""
+    source_residue: dict[str, Any] = Field(default_factory=dict)
+    routine_key: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VirtualSpace(BaseModel):
+    key: str
+    label: str
+    place: str
+    available_objects: list[str] = Field(default_factory=list)
+
+
+class DailyIntent(BaseModel):
+    key: str
+    reason: str
+    drivers: list[str] = Field(default_factory=list)
+
+
+class MicroEvent(BaseModel):
+    trace_id: str = ""
+    episode_id: Optional[int] = None
+    kind: str
+    content: str
+    salience: float = 0.4
+    mood_impact: float = 0.0
+    desire_impact: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("salience", mode="after")
+    @classmethod
+    def _clamp_salience(cls, value: float) -> float:
+        return _clamp(value, 0.0, 1.0)
+
+
 class LifeState(BaseModel):
     mode: str = "idle"
     attention: str = "ambient"
@@ -100,6 +147,8 @@ class LifeState(BaseModel):
     activity_label: str = "安静观察"
     activity_reason: str = "没有新的外部刺激，维持低强度观察"
     continuity_note: str = ""
+    active_episode_id: Optional[int] = None
+    daily_intent: str = ""
 
 
 # ── Today's experience ─────────────────────────────────

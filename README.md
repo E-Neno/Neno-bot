@@ -2,7 +2,7 @@
 
 Neno 是一个有性格的 AI 聊天机器人后端（FastAPI），人格设定为"小傲"——话少、嘴硬、偶尔怼人，不想回的时候可以不回。
 
-核心能力：多阶段关系演进、长期记忆、主动消息、Anthropic 缓存命中、阶段化历史摘要压缩、多平台消息转发。
+核心能力：多阶段关系演进、长期记忆、主动消息、持续虚拟生活世界、Anthropic 缓存命中、阶段化历史摘要压缩、多平台消息转发。
 
 ## 快速开始
 
@@ -65,7 +65,19 @@ app/
 │   │   ├── models.py                 #    NenoState / StateMutation / Event
 │   │   ├── experience_recorder.py     #    内在经历沉淀：写入 / 查询 / 去重 / 状态标记
 │   │   ├── life_loop.py               #    Living World 生活循环与 dry-run 预览
+│   │   ├── activity_episode_store.py  #    连续生活片段持久化
+│   │   ├── life_simulation.py         #    旧生活线确定性决策器
 │   │   ├── reflection_engine.py        #    梦境总结、长期记忆写入与状态回注
+│   │   ├── virtual_world.json          #    房间、物品、类别与合法状态
+│   │   ├── world_model.py              #    世界模型、动态物品与状态变换
+│   │   ├── world_store.py              #    世界状态 SQLite 持久化
+│   │   ├── world_drift.py              #    不依赖 Neno 意志的自然变化
+│   │   ├── action_validator.py         #    世界动作合法性守门
+│   │   ├── world_brain.py              #    受约束世界决策器
+│   │   ├── daily_planner.py            #    每日生活计划
+│   │   ├── day_cycle.py                #    睡眠、醒来和跨天结算
+│   │   ├── life_events.py              #    从状态派生的生活事件
+│   │   ├── world_loop.py               #    正式世界融合循环
 │   │   ├── desire.py                 #    表达欲推算模型
 │   │   ├── mood.py                   #    二维情绪模型
 │   │   ├── state_store.py            #    单写者 + 乐观锁持久化
@@ -152,6 +164,22 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 - 基于相似度检索相关记忆注入上下文
 - 调试台支持确认/忽略候选记忆
 
+### Living World
+
+Neno 拥有一个持久化的小公寓世界。世界包含房间、物品、模拟时间、金钱、
+日计划、自然漂移、生活事件、睡眠/醒来和跨天反思。正式入口是
+`app/services/consciousness/world_loop.py`，世界状态存入 SQLite
+`life_world_state`。
+
+默认配置不会启动常驻循环，也不会调用真实世界模型。可在调试控制台查看
+“生活世界 · 新引擎”，或使用：
+
+- `GET /debug/consciousness/world-live`：只读当前世界。
+- `POST /debug/consciousness/world-tick`：手动推进一步。
+
+完整架构、运行开关和已知缺口见 [`docs/living-world.md`](docs/living-world.md)。
+当前实现是可运行的公寓世界纵向管道；用户消息尚未作为世界事件接入。
+
 ## 环境变量
 
 核心配置（`.env`）：
@@ -178,6 +206,13 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 | `CONSCIOUSNESS_REFLECTION_HOUR` | 每日反思小时（默认 5） |
 | `CONSCIOUSNESS_REFLECTION_MINUTE` | 每日反思分钟（默认 0） |
 | `CONSCIOUSNESS_EXPRESSION_GATE_ENABLED` | ExpressionGate 预留开关（默认 false，当前未实现） |
+| `CONSCIOUSNESS_WORLD_LOOP_ENABLED` | 新世界常驻循环开关（默认 false） |
+| `CONSCIOUSNESS_WORLD_LOOP_INTERVAL` | 常驻 tick 的真实秒数间隔（默认 8） |
+| `CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` | 每次 tick 推进的模拟分钟（默认 30） |
+| `CONSCIOUSNESS_WORLD_LLM_ENABLED` | WorldBrain 是否允许真实模型调用（默认 false） |
+| `CONSCIOUSNESS_WORLD_PLANNER_ENABLED` | DailyPlanner 是否允许真实模型调用（默认 false） |
+| `OPENROUTER_WORLD_MODEL` | 世界决策和日计划使用的模型 |
+| `CONSCIOUSNESS_WORLD_LLM_TIMEOUT` | 世界模型调用超时秒数（默认 20） |
 | `BRAIN_INTENT_CONSUMER_ENABLED` | brain intent 消费器总开关（默认 false，灰度前关闭） |
 | `BRAIN_WHITELIST_USERS` | brain intent 发送白名单（逗号分隔 user_id，空=全量关闭） |
 
@@ -196,3 +231,4 @@ Neno 的人格由 `prompts/system.txt` 定义，核心规则：
 - 模型配置变更后需重启
 - 调试台仅限本地使用，不要暴露到公网
 - 测试脚本放 `tmp/`，不提交
+- `.env` 可能覆盖代码默认值；启动世界引擎前应确认三个 `CONSCIOUSNESS_WORLD_*_ENABLED` 开关

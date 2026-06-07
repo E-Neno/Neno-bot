@@ -6,9 +6,17 @@ from typing import Any
 
 from app.storage.db import add_debug_event
 
+from .activity_episode_store import ActivityEpisodeStore
 from .config import ConsciousnessConfig
 from .experience_recorder import ExperienceRecorder, InnerExperienceIn
-from .models import LifeEnvironment, LifeState, StateMutation
+from .life_simulation import LifeSimulation, SimulationDecision
+from .models import (
+    ActivityEpisode,
+    LifeEnvironment,
+    LifeState,
+    MicroEvent,
+    StateMutation,
+)
 from .state_store import StateStore
 
 
@@ -18,10 +26,14 @@ class LifeLoop:
         state_store: StateStore,
         recorder: ExperienceRecorder,
         config: ConsciousnessConfig,
+        simulation: LifeSimulation | None = None,
+        episode_store: ActivityEpisodeStore | None = None,
     ) -> None:
         self._state_store = state_store
         self._recorder = recorder
         self._config = config
+        self._simulation = simulation or LifeSimulation()
+        self._episode_store = episode_store or ActivityEpisodeStore()
 
     async def dry_run(self, trace_id: str | None = None) -> dict[str, Any]:
         state = await self._state_store.read()
@@ -36,25 +48,66 @@ class LifeLoop:
                 "would_update_life": state.life.model_dump(),
                 "would_record_experience": None,
                 "would_mutate_state": None,
+                "micro_event_preview": None,
             }
 
+        persisted_life = state.life.model_copy(deep=True)
         life = self._decide_life_state(state, recent_unspoken)
-        experience = {
-            "trace_id": trace_id or "",
-            "source": "life_loop",
-            "kind": "state_shift",
-            "content": f"Neno 正在{life.activity_label}",
-            "mood_impact": 0.0,
-            "desire_impact": 0.0,
-            "salience": 0.4,
-            "expression_status": "unspoken",
-            "metadata": {
-                "life": life.model_dump(),
-                "reason": "life_loop_tick",
-            },
-        }
+        episode_decision = None
+        current_episode = None
+        episode_error = None
+        micro_event_preview = None
+        try:
+            current_episode_data = await self._episode_store.get_active_episode()
+            if current_episode_data is not None:
+                current_episode = ActivityEpisode.model_validate(current_episode_data)
+            simulation_state = state.model_copy(deep=True)
+            simulation_state.life = life
+            decision = self._simulation.decide(simulation_state, current_episode)
+            episode_decision = decision.model_dump()
+            preview_episode_id = (
+                current_episode.id
+                if decision.action == "continue" and current_episode is not None
+                else None
+            )
+            self._sync_life_with_decision(
+                life,
+                decision,
+                active_episode_id=preview_episode_id,
+            )
+            target_episode = self._episode_from_decision(
+                decision,
+                episode_id=preview_episode_id,
+                trace_id=trace_id,
+                time_phase=life.time_phase,
+            )
+            preview = self._simulation.derive_micro_event(
+                simulation_state,
+                decision,
+                target_episode,
+                previous_episode=current_episode,
+            )
+            if preview is not None:
+                micro_event_preview = preview.model_dump()
+        except Exception as exc:
+            episode_error = str(exc)
+            life = self._life_for_current_episode(
+                persisted_life,
+                current_episode,
+            )
 
-        return {
+        experience = (
+            self._failure_experience(
+                trace_id=trace_id,
+                life=life,
+                episode_error=episode_error,
+                attempted_decision=episode_decision,
+            )
+            if episode_error is not None
+            else self._micro_event_experience(micro_event_preview)
+        )
+
+        result = {
             "success": True,
             "enabled": self._config.life_loop_enabled,
             "action": "would_update",
@@ -64,7 +117,16 @@ class LifeLoop:
                 "mood_valence_delta": 0.0,
                 "desire_pulse": 0.0,
             },
+            "episode_decision": episode_decision,
+            "micro_event_preview": micro_event_preview,
+            "current_episode": (
+                current_episode.model_dump() if current_episode is not None else None
+            ),
+            "persisted_life": persisted_life.model_dump(),
         }
+        if episode_error is not None:
+            result["episode_error"] = episode_error
+        return result
 
     async def run_once(self, trace_id: str | None = None) -> dict[str, Any]:
         if not self._config.life_loop_enabled:
@@ -80,20 +142,70 @@ class LifeLoop:
                 return plan
 
             life = LifeState.model_validate(plan["would_update_life"])
-            exp_data = plan["would_record_experience"]
-            experience_id = await self._recorder.record(
-                InnerExperienceIn(
-                    trace_id=exp_data["trace_id"],
-                    source=exp_data["source"],
-                    kind=exp_data["kind"],
-                    content=exp_data["content"],
-                    mood_impact=exp_data["mood_impact"],
-                    desire_impact=exp_data["desire_impact"],
-                    salience=exp_data["salience"],
-                    expression_status=exp_data["expression_status"],
-                    metadata=exp_data["metadata"],
-                )
+            persisted_life = LifeState.model_validate(plan["persisted_life"])
+            current_episode_data = plan.get("current_episode")
+            current_episode = (
+                ActivityEpisode.model_validate(current_episode_data)
+                if current_episode_data is not None
+                else None
             )
+            episode_error = plan.get("episode_error")
+            episode_decision_data = plan.get("episode_decision")
+            micro_event_data = plan.get("micro_event_preview")
+            active_episode_id = None
+            if episode_decision_data is not None:
+                try:
+                    decision = SimulationDecision.model_validate(
+                        episode_decision_data
+                    )
+                    active_episode_id = await self._apply_episode_decision(
+                        decision,
+                        trace_id=trace_id,
+                        time_phase=life.time_phase,
+                    )
+                    self._sync_life_with_decision(
+                        life,
+                        decision,
+                        active_episode_id=active_episode_id,
+                    )
+                except Exception as exc:
+                    episode_error = str(exc)
+                    life = self._life_for_current_episode(
+                        persisted_life,
+                        current_episode,
+                    )
+
+            experience_id = None
+            if episode_error is not None:
+                exp_data = self._failure_experience(
+                    trace_id=trace_id,
+                    life=life,
+                    episode_error=episode_error,
+                    attempted_decision=episode_decision_data,
+                )
+            elif micro_event_data is not None:
+                event = MicroEvent.model_validate(micro_event_data)
+                event.episode_id = active_episode_id
+                event.metadata["episode_id"] = active_episode_id
+                exp_data = self._micro_event_experience(event.model_dump())
+                exp_data["metadata"]["life"] = life.model_dump()
+            else:
+                exp_data = None
+
+            if exp_data is not None:
+                experience_id = await self._recorder.record(
+                    InnerExperienceIn(
+                        trace_id=exp_data["trace_id"],
+                        source=exp_data["source"],
+                        kind=exp_data["kind"],
+                        content=exp_data["content"],
+                        mood_impact=exp_data["mood_impact"],
+                        desire_impact=exp_data["desire_impact"],
+                        salience=exp_data["salience"],
+                        expression_status=exp_data["expression_status"],
+                        metadata=exp_data["metadata"],
+                    )
+                )
             await self._state_store.submit_mutation(
                 StateMutation(
                     life=life,
@@ -103,13 +215,17 @@ class LifeLoop:
                     reason="life_loop",
                 )
             )
-            return {
+            result = {
                 "success": True,
                 "enabled": True,
                 "action": "updated",
                 "experience_id": experience_id,
                 "life": life.model_dump(),
+                "episode_decision": episode_decision_data,
             }
+            if episode_error is not None:
+                result["episode_error"] = episode_error
+            return result
         except Exception as exc:
             add_debug_event(
                 trace_id=trace_id,
@@ -126,6 +242,168 @@ class LifeLoop:
                 "action": "error",
                 "reason": str(exc),
             }
+
+    async def _apply_episode_decision(
+        self,
+        decision: SimulationDecision,
+        *,
+        trace_id: str | None,
+        time_phase: str,
+    ) -> int:
+        current_id = decision.current_episode_id
+        if decision.action == "continue":
+            if current_id is None:
+                raise ValueError("continue decision requires current episode")
+            updated = await self._episode_store.continue_episode(
+                current_id,
+                activity_label=decision.activity_label,
+                place=decision.space.place,
+                time_phase=time_phase,
+                reason=decision.reason,
+                continuity_note=decision.continuity_note,
+                metadata=self._episode_metadata(decision),
+            )
+            if updated is None:
+                raise RuntimeError("active episode disappeared before continue")
+            return int(updated["id"])
+
+        if decision.action == "transition":
+            if current_id is None:
+                raise ValueError("transition decision requires current episode")
+            previous_status = "ended"
+        elif decision.action == "interrupt":
+            if current_id is None:
+                raise ValueError("interrupt decision requires current episode")
+            previous_status = "interrupted"
+        elif decision.action != "create":
+            raise ValueError(f"unsupported episode action: {decision.action}")
+        else:
+            previous_status = None
+
+        episode_data = {
+            "trace_id": trace_id,
+            "activity_key": decision.activity_key,
+            "activity_label": decision.activity_label,
+            "place": decision.space.place,
+            "time_phase": time_phase,
+            "reason": decision.reason,
+            "continuity_note": decision.continuity_note,
+            "metadata": self._episode_metadata(decision),
+        }
+        if previous_status is not None:
+            return await self._episode_store.replace_active_episode(
+                current_id,
+                previous_status=previous_status,
+                **episode_data,
+            )
+        return await self._episode_store.start_episode(
+            **episode_data,
+        )
+
+    @staticmethod
+    def _sync_life_with_decision(
+        life: LifeState,
+        decision: SimulationDecision,
+        *,
+        active_episode_id: int | None,
+    ) -> None:
+        life.current_activity = decision.activity_key
+        life.activity_label = decision.activity_label
+        life.activity_reason = decision.reason
+        life.continuity_note = decision.continuity_note
+        life.place = decision.space.place
+        life.active_episode_id = active_episode_id
+        life.daily_intent = decision.intent.key
+
+    @staticmethod
+    def _life_for_current_episode(
+        persisted_life: LifeState,
+        current_episode: ActivityEpisode | None,
+    ) -> LifeState:
+        life = persisted_life.model_copy(deep=True)
+        if current_episode is None:
+            return life
+        life.active_episode_id = current_episode.id
+        life.current_activity = current_episode.activity_key
+        life.activity_label = current_episode.activity_label
+        life.place = current_episode.place
+        life.activity_reason = current_episode.reason
+        life.continuity_note = current_episode.continuity_note
+        return life
+
+    @staticmethod
+    def _episode_metadata(decision: SimulationDecision) -> dict[str, Any]:
+        return {
+            "daily_intent": decision.intent.key,
+            "decision_action": decision.action,
+            "space_key": decision.space.key,
+            "available_objects": decision.space.available_objects,
+        }
+
+    @staticmethod
+    def _episode_from_decision(
+        decision: SimulationDecision,
+        *,
+        episode_id: int | None,
+        trace_id: str | None,
+        time_phase: str,
+    ) -> ActivityEpisode:
+        return ActivityEpisode(
+            id=episode_id,
+            trace_id=trace_id,
+            activity_key=decision.activity_key,
+            activity_label=decision.activity_label,
+            place=decision.space.place,
+            time_phase=time_phase,
+            status="active",
+            started_at="",
+            updated_at="",
+            reason=decision.reason,
+            continuity_note=decision.continuity_note,
+        )
+
+    @staticmethod
+    def _micro_event_experience(
+        event_data: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if event_data is None:
+            return None
+        event = MicroEvent.model_validate(event_data)
+        return {
+            "trace_id": event.trace_id,
+            "source": "life_simulation",
+            "kind": event.kind,
+            "content": event.content,
+            "mood_impact": event.mood_impact,
+            "desire_impact": event.desire_impact,
+            "salience": event.salience,
+            "expression_status": "unspoken",
+            "metadata": dict(event.metadata),
+        }
+
+    @staticmethod
+    def _failure_experience(
+        *,
+        trace_id: str | None,
+        life: LifeState,
+        episode_error: str,
+        attempted_decision: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            "trace_id": trace_id or "",
+            "source": "life_loop",
+            "kind": "episode_apply_failed",
+            "content": f"Life episode attempt failed: {episode_error}",
+            "mood_impact": 0.0,
+            "desire_impact": 0.0,
+            "salience": 0.1,
+            "expression_status": "unspoken",
+            "metadata": {
+                "life": life.model_dump(),
+                "episode_error": episode_error,
+                "attempted_decision": attempted_decision,
+            },
+        }
 
     def _decide_life_state(self, state: Any, recent_unspoken: list[dict[str, Any]]) -> LifeState:
         return self._build_next_life_state(
@@ -239,9 +517,9 @@ class LifeLoop:
 def _has_recent_unspoken(rows: list[dict[str, Any]]) -> bool:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
     for row in rows:
-        # 跳过 life_loop 自己写入的 state_shift 记录，避免它把后续每一轮都永久推进成 absorbed。
-        # 只有真正的"没说出口的想法"（如 brain_judge）才应触发 absorbed。
-        if row.get("source") == "life_loop":
+        # 生活模拟事件和失败观测都不是"没说出口的想法"，不能触发 absorbed。
+        # 只有真正的内在想法（如 brain_judge）才参与该判断。
+        if row.get("source") in {"life_loop", "life_simulation"}:
             continue
         created_at = row.get("created_at")
         if not isinstance(created_at, str):

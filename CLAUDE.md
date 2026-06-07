@@ -59,3 +59,17 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 
 如果你认为哪怕只有 1% 的可能性某个 skill 适用于你正在做的事情，你必须调用该 skill 检查。
 <!-- superpowers-zh:end -->
+
+---
+
+# Living World 修改边界
+
+Living World 已有正式 `WorldLoop`、SQLite 世界状态、房间物品、日计划、事件、
+昼夜跨天、世界 LLM 和控制台接入。修改前必须阅读：
+
+- `docs/living-world.md`
+- `NENO_ARCHITECTURE.md` §3.1
+
+不得绕过 `action_validator` 应用模型动作，不得复制第二套生产循环，不得把世界
+状态偷接到主聊天 prompt。常驻循环、世界 LLM 和日计划 LLM 的示例配置必须默认关闭。
+用户消息尚未进入世界引擎；在持续生活与多日因果验收完成前，不得宣称完整世界完成。

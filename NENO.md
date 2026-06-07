@@ -48,6 +48,20 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 *   **Degrade vs Crash (宁可降级，绝不崩溃)**：如果关系更新出错，回退到旧状态；如果 Digest 主模型（free）失败，使用 Fallback 模型，双双失败则挂起压缩并使用原始超长上下文。
 *   **Fallback 优先级**：在遇到非预期数据时（例如多模态解析报错），拦截错误并在 `debug_events` 中记录异常，但不可让整个 Chat Loop 宕机。
 
+## 7.1 Living World Contract (虚拟生活世界契约)
+
+*   **状态分离**：`life_world_state` 保存房间、物品、时间、计划和行动历史；
+    `agent_state` 保存精力、情绪、需求和反思余波。两者不能互相覆盖职责。
+*   **正式入口**：后端世界推进以 `WorldLoop.tick()` 为准。演示脚本可以观测或驱动，
+    但不能维护第二套生产世界逻辑。
+*   **动作守门**：模型产生的 `world_ops` 必须先经过 `action_validator`，
+    再由 `world_model.apply_op()` 改变世界并写回 SQLite。
+*   **独立开关**：常驻循环、世界决策模型和日计划模型分别启用；示例配置默认全关。
+*   **聊天边界**：用户消息尚未进入世界引擎。禁止通过修改主聊天 prompt 或
+    `context_builder.py` 偷接世界状态；后续入口必须继续服从 Session 串行化。
+*   **完成定义**：房间、事件、日计划和 LLM 决策只构成可运行基础。
+    未通过持续生活、因果延续和多日模拟验收前，不得宣称完整世界引擎完成。
+
 ## 8. Debug System is Production System (可观测性即生产环境)
 
 *   **禁止精简**：`/debug` 路由、`debug_events` 表、`test.html` 是 Neno 在低资源环境下核心的可观测设施，绝对不允许以“清理无用代码”为由删除。

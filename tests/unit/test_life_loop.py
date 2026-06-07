@@ -5,10 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from app.services.consciousness.activity_episode_store import ActivityEpisodeStore
 from app.services.consciousness.config import ConsciousnessConfig
 from app.services.consciousness.experience_recorder import ExperienceRecorder
 from app.services.consciousness.life_loop import LifeLoop
-from app.services.consciousness.models import EnergyState, LifeResidue, StateMutation
+from app.services.consciousness.life_simulation import LifeSimulation
+from app.services.consciousness.models import (
+    EnergyState,
+    LifeResidue,
+    StateMutation,
+)
 from app.services.consciousness.state_store import StateStore
 from app.storage import db as db_storage
 
@@ -25,6 +31,45 @@ def _init_test_db(tmp_path: Path) -> Path:
 def _fresh_store(tmp_path: Path) -> StateStore:
     _init_test_db(tmp_path)
     return StateStore(db=None, config=ConsciousnessConfig())
+
+
+def _episode_count() -> int:
+    row = db_storage.fetch_one(
+        "SELECT COUNT(*) AS count FROM life_activity_episodes"
+    )
+    return int(row["count"])
+
+
+class _FailingEpisodeStore:
+    async def get_active_episode(self):
+        raise RuntimeError("episode store unavailable")
+
+
+class _FailingApplyEpisodeStore:
+    def __init__(self, delegate: ActivityEpisodeStore, action: str):
+        self._delegate = delegate
+        self._action = action
+
+    async def get_active_episode(self):
+        return await self._delegate.get_active_episode()
+
+    async def continue_episode(self, *args, **kwargs):
+        if self._action == "continue":
+            raise RuntimeError("forced continue failure")
+        return await self._delegate.continue_episode(*args, **kwargs)
+
+    async def replace_active_episode(self, *args, **kwargs):
+        if self._action == "replace":
+            raise RuntimeError("forced replacement failure")
+        return await self._delegate.replace_active_episode(*args, **kwargs)
+
+    async def start_episode(self, *args, **kwargs):
+        return await self._delegate.start_episode(*args, **kwargs)
+
+
+class _ForbiddenEpisodeStore:
+    async def get_active_episode(self):
+        raise AssertionError("disabled loop must not access episode store")
 
 
 def test_living_world_flags_default_disabled(monkeypatch):
@@ -57,7 +102,8 @@ async def test_life_loop_dry_run_does_not_write(tmp_path: Path):
 
         after = len(await recorder.list_recent())
         assert result["success"] is True
-        assert result["would_record_experience"]["source"] == "life_loop"
+        assert result["micro_event_preview"] is not None
+        assert result["would_record_experience"]["source"] == "life_simulation"
         assert before == after
     finally:
         await store.stop()
@@ -81,6 +127,44 @@ async def test_life_loop_disabled_noop(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_sleeping_run_once_does_not_write_state_episode_or_experience(
+    tmp_path: Path,
+):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        await store.submit_mutation(
+            StateMutation(
+                energy=EnergyState(
+                    value=20,
+                    status="sleeping",
+                    description="sleeping",
+                )
+            )
+        )
+        await asyncio.sleep(0.2)
+        before_state = await store.read()
+        before_episodes = _episode_count()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+        )
+
+        result = await loop.run_once("trace_sleeping")
+
+        after_state = await store.read()
+        assert result["action"] == "skipped_sleeping"
+        assert result["micro_event_preview"] is None
+        assert await recorder.list_recent() == []
+        assert _episode_count() == before_episodes
+        assert after_state == before_state
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
 async def test_life_loop_enabled_records_experience_and_updates_state(tmp_path: Path):
     store = _fresh_store(tmp_path)
     await store.start()
@@ -97,9 +181,19 @@ async def test_life_loop_enabled_records_experience_and_updates_state(tmp_path: 
         assert result["action"] == "updated"
         assert len(rows) == 1
         assert rows[0]["trace_id"] == "trace_life"
-        assert rows[0]["source"] == "life_loop"
-        assert rows[0]["kind"] == "state_shift"
+        assert rows[0]["source"] == "life_simulation"
+        assert rows[0]["kind"] == "episode_started"
         assert rows[0]["metadata"]["life"]["current_activity"] == state.life.current_activity
+        assert rows[0]["metadata"]["episode_id"] == state.life.active_episode_id
+        assert {
+            "daily_intent",
+            "place",
+            "time_phase",
+            "activity_key",
+            "space_key",
+            "available_objects",
+            "decision_action",
+        } <= rows[0]["metadata"].keys()
         assert state.life.current_activity in {
             "quiet_observing",
             "thinking_of_user",
@@ -135,7 +229,8 @@ async def test_life_loop_low_energy_moves_to_resting(tmp_path: Path):
         assert result["action"] == "updated"
         assert state.life.mode == "resting"
         assert state.life.attention == "self"
-        assert state.life.current_activity == "low_energy_resting"
+        assert state.life.current_activity == "quiet_rest"
+        assert state.life.daily_intent == "recover"
     finally:
         await store.stop()
 
@@ -189,9 +284,10 @@ async def test_low_energy_resting_has_life_semantics(tmp_path: Path):
 
         life = (await store.read()).life
         assert life.mode == "resting"
-        assert life.current_activity == "low_energy_resting"
+        assert life.current_activity == "quiet_rest"
+        assert life.daily_intent == "recover"
         # 理由要解释“为什么在休息”——引用精力
-        assert "精力" in life.activity_reason
+        assert "energy" in life.activity_reason
         assert life.activity_label and life.activity_label != "安静观察"
         assert life.environment.summary and life.environment.summary != "安静的房间"
         assert life.time_phase and life.time_phase != "unknown"
@@ -293,8 +389,9 @@ async def test_residue_changes_next_life_progression(tmp_path: Path):
         await asyncio.sleep(0.2)
 
         life = (await store.read()).life
-        assert "那场没下完的雨" in life.activity_label
-        assert ("那场没下完的雨" in life.activity_reason) or ("低落" in life.activity_reason)
+        assert life.current_activity == "memory_processing"
+        assert life.daily_intent == "process_memory"
+        assert life.residue.topic in life.activity_reason
         assert life.attention == "memory"
     finally:
         await store.stop()
@@ -315,7 +412,7 @@ async def test_high_intensity_residue_has_stronger_effect(tmp_path: Path):
         loop_low = LifeLoop(low, ExperienceRecorder(), ConsciousnessConfig(life_loop_enabled=True))
         await loop_low.run_once("t_low")
         await asyncio.sleep(0.2)
-        low_label = (await low.read()).life.activity_label
+        low_life = (await low.read()).life
     finally:
         await low.stop()
 
@@ -331,13 +428,14 @@ async def test_high_intensity_residue_has_stronger_effect(tmp_path: Path):
         loop_high = LifeLoop(high, ExperienceRecorder(), ConsciousnessConfig(life_loop_enabled=True))
         await loop_high.run_once("t_high")
         await asyncio.sleep(0.2)
-        high_label = (await high.read()).life.activity_label
+        high_life = (await high.read()).life
     finally:
         await high.stop()
 
-    assert "同一件小事" not in low_label
-    assert "同一件小事" in high_label
-    assert low_label != high_label
+    assert low_life.daily_intent != "process_memory"
+    assert high_life.daily_intent == "process_memory"
+    assert high_life.current_activity == "memory_processing"
+    assert low_life.activity_label != high_life.activity_label
 
 
 @pytest.mark.asyncio
@@ -361,8 +459,9 @@ async def test_residue_effect_survives_self_state_shift(tmp_path: Path):
         await asyncio.sleep(0.2)
 
         life = (await store.read()).life
-        assert "搁着的那句话" in life.activity_label
-        assert life.current_activity != "carrying_unspoken_thought"
+        assert life.current_activity == "memory_processing"
+        assert life.daily_intent == "process_memory"
+        assert life.residue.topic in life.activity_reason
     finally:
         await store.stop()
 
@@ -409,8 +508,473 @@ async def test_dry_run_previews_residue_effect_without_writing(tmp_path: Path):
         after_rev = (await store.read()).revision
         after_count = len(await recorder.list_recent())
 
-        assert "预览用的事" in plan["would_update_life"]["activity_label"]
+        preview = plan["would_update_life"]
+        assert preview["daily_intent"] == "process_memory"
+        assert preview["current_activity"] == "memory_processing"
+        assert preview["residue"]["topic"] in preview["activity_reason"]
         assert before_count == after_count
         assert before_rev == after_rev
+    finally:
+        await store.stop()
+
+
+# ── C1.3 LifeLoop episode progression ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_once_creates_episode_when_none_active(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+
+        result = await loop.run_once("trace_episode_create")
+        await asyncio.sleep(0.2)
+
+        active = await episode_store.get_active_episode()
+        state = await store.read()
+        assert result["episode_decision"]["action"] == "create"
+        assert active is not None
+        assert state.life.active_episode_id == active["id"]
+        assert state.life.daily_intent == result["episode_decision"]["intent"]["key"]
+        assert state.life.current_activity == active["activity_key"]
+        assert state.life.activity_label == active["activity_label"]
+        assert state.life.activity_reason == active["reason"]
+        assert state.life.continuity_note == active["continuity_note"]
+        assert state.life.place == active["place"]
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_run_once_continues_same_episode_when_conditions_stable(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+
+        await loop.run_once("trace_episode_first")
+        first = await episode_store.get_active_episode()
+        result = await loop.run_once("trace_episode_continue")
+        second = await episode_store.get_active_episode()
+
+        assert first is not None and second is not None
+        assert result["episode_decision"]["action"] == "continue"
+        assert second["id"] == first["id"]
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_run_once_transitions_episode_when_conditions_change(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+        await loop.run_once("trace_before_transition")
+        old = await episode_store.get_active_episode()
+        await store.submit_mutation(
+            StateMutation(
+                life_residue=LifeResidue(
+                    topic="unfinished memory",
+                    mood="quiet",
+                    intensity=0.9,
+                )
+            )
+        )
+        await asyncio.sleep(0.2)
+
+        result = await loop.run_once("trace_transition")
+        rows = await episode_store.list_recent()
+        new = await episode_store.get_active_episode()
+
+        assert old is not None and new is not None
+        assert result["episode_decision"]["action"] == "transition"
+        assert new["activity_key"] == "memory_processing"
+        assert new["id"] != old["id"]
+        old_row = next(row for row in rows if row["id"] == old["id"])
+        assert old_row["status"] == "ended"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_run_once_interrupts_episode_for_low_energy(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+        await loop.run_once("trace_before_interrupt")
+        old = await episode_store.get_active_episode()
+        await store.submit_mutation(
+            StateMutation(
+                energy=EnergyState(value=15, status="awake", description="low")
+            )
+        )
+        await asyncio.sleep(0.2)
+
+        result = await loop.run_once("trace_interrupt")
+        rows = await episode_store.list_recent()
+        new = await episode_store.get_active_episode()
+
+        assert old is not None and new is not None
+        assert result["episode_decision"]["action"] == "interrupt"
+        assert new["activity_key"] == "quiet_rest"
+        old_row = next(row for row in rows if row["id"] == old["id"])
+        assert old_row["status"] == "interrupted"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_previews_episode_without_writes(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=ActivityEpisodeStore(),
+        )
+        before_state = await store.read()
+        before_experiences = len(await recorder.list_recent())
+        before_episodes = _episode_count()
+
+        result = await loop.dry_run("trace_episode_dry")
+
+        after_state = await store.read()
+        decision = result["episode_decision"]
+        preview = result["would_update_life"]
+        assert result["episode_decision"]["action"] == "create"
+        assert result["micro_event_preview"] is not None
+        assert result["micro_event_preview"]["kind"] == "episode_started"
+        assert preview["current_activity"] == decision["activity_key"]
+        assert preview["activity_label"] == decision["activity_label"]
+        assert preview["activity_reason"] == decision["reason"]
+        assert preview["continuity_note"] == decision["continuity_note"]
+        assert preview["place"] == decision["space"]["place"]
+        assert preview["active_episode_id"] is None
+        assert preview["daily_intent"] == decision["intent"]["key"]
+        assert _episode_count() == before_episodes
+        assert len(await recorder.list_recent()) == before_experiences
+        assert after_state.revision == before_state.revision
+        assert after_state.life == before_state.life
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_disabled_run_once_does_not_access_episode_store(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        loop = LifeLoop(
+            store,
+            ExperienceRecorder(),
+            ConsciousnessConfig(life_loop_enabled=False),
+            simulation=LifeSimulation(),
+            episode_store=_ForbiddenEpisodeStore(),
+        )
+
+        result = await loop.run_once("trace_disabled_episode")
+
+        assert result["action"] == "disabled"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_episode_store_failure_degrades_without_crashing(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        loop = LifeLoop(
+            store,
+            ExperienceRecorder(),
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=_FailingEpisodeStore(),
+        )
+
+        before_life = (await store.read()).life
+        result = await loop.run_once("trace_episode_failure")
+        await asyncio.sleep(0.2)
+
+        final_life = (await store.read()).life
+        experiences = await ExperienceRecorder().list_recent()
+        assert result["success"] is True
+        assert result["action"] == "updated"
+        assert "episode_error" in result
+        assert final_life == before_life
+        assert experiences[0]["source"] == "life_loop"
+        assert experiences[0]["kind"] == "episode_apply_failed"
+        assert "failed" in experiences[0]["content"].lower()
+        assert experiences[0]["metadata"]["life"] == final_life.model_dump()
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_transition_failure_keeps_old_episode_and_life_state(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        initial_loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+        await initial_loop.run_once("trace_transition_initial")
+        old_episode = await episode_store.get_active_episode()
+        await store.submit_mutation(
+            StateMutation(
+                life_residue=LifeResidue(
+                    topic="failed transition memory",
+                    mood="quiet",
+                    intensity=0.9,
+                )
+            )
+        )
+        await asyncio.sleep(0.2)
+        previous_intent = (await store.read()).life.daily_intent
+
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=_FailingApplyEpisodeStore(episode_store, "replace"),
+        )
+        result = await loop.run_once("trace_transition_failure")
+        await asyncio.sleep(0.2)
+
+        active = await episode_store.get_active_episode()
+        life = (await store.read()).life
+        experiences = await recorder.list_recent()
+        assert old_episode is not None and active is not None
+        assert result["episode_decision"]["action"] == "transition"
+        assert "episode_error" in result
+        assert active["id"] == old_episode["id"]
+        assert life.active_episode_id == active["id"]
+        assert life.current_activity == active["activity_key"]
+        assert life.activity_label == active["activity_label"]
+        assert life.place == active["place"]
+        assert life.activity_reason == active["reason"]
+        assert life.continuity_note == active["continuity_note"]
+        assert life.daily_intent == previous_intent
+        assert experiences[0]["metadata"]["life"] == life.model_dump()
+        assert experiences[0]["metadata"]["attempted_decision"]["action"] == "transition"
+        assert experiences[0]["source"] == "life_loop"
+        assert experiences[0]["kind"] == "episode_apply_failed"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_failure_keeps_old_episode_and_life_state(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        initial_loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+        await initial_loop.run_once("trace_interrupt_initial")
+        old_episode = await episode_store.get_active_episode()
+        await store.submit_mutation(
+            StateMutation(
+                energy=EnergyState(value=15, status="awake", description="low")
+            )
+        )
+        await asyncio.sleep(0.2)
+        previous_intent = (await store.read()).life.daily_intent
+
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=_FailingApplyEpisodeStore(episode_store, "replace"),
+        )
+        result = await loop.run_once("trace_interrupt_failure")
+        await asyncio.sleep(0.2)
+
+        active = await episode_store.get_active_episode()
+        life = (await store.read()).life
+        assert old_episode is not None and active is not None
+        assert result["episode_decision"]["action"] == "interrupt"
+        assert "episode_error" in result
+        assert active["id"] == old_episode["id"]
+        assert life.active_episode_id == active["id"]
+        assert life.current_activity == active["activity_key"]
+        assert life.activity_label == active["activity_label"]
+        assert life.place == active["place"]
+        assert life.activity_reason == active["reason"]
+        assert life.continuity_note == active["continuity_note"]
+        assert life.daily_intent == previous_intent
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_continue_failure_keeps_current_episode_state(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        episode_store = ActivityEpisodeStore()
+        initial_loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=episode_store,
+        )
+        await initial_loop.run_once("trace_continue_initial")
+        old_episode = await episode_store.get_active_episode()
+        previous_intent = (await store.read()).life.daily_intent
+
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=_FailingApplyEpisodeStore(episode_store, "continue"),
+        )
+        result = await loop.run_once("trace_continue_failure")
+        await asyncio.sleep(0.2)
+
+        active = await episode_store.get_active_episode()
+        life = (await store.read()).life
+        assert old_episode is not None and active is not None
+        assert result["episode_decision"]["action"] == "continue"
+        assert "episode_error" in result
+        assert active["id"] == old_episode["id"]
+        assert life.active_episode_id == active["id"]
+        assert life.current_activity == active["activity_key"]
+        assert life.activity_label == active["activity_label"]
+        assert life.place == active["place"]
+        assert life.activity_reason == active["reason"]
+        assert life.continuity_note == active["continuity_note"]
+        assert life.daily_intent == previous_intent
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_episode_tick_records_at_most_one_experience(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=ActivityEpisodeStore(),
+        )
+        before = len(await recorder.list_recent())
+
+        await loop.run_once("trace_single_experience")
+
+        after = len(await recorder.list_recent())
+        assert after - before == 1
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_stable_continue_does_not_add_experience(tmp_path: Path):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=ActivityEpisodeStore(),
+        )
+        await loop.run_once("trace_create_event")
+        before = len(await recorder.list_recent())
+
+        result = await loop.run_once("trace_stable_continue")
+
+        after = len(await recorder.list_recent())
+        assert result["episode_decision"]["action"] == "continue"
+        assert result["experience_id"] is None
+        assert after == before
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_life_simulation_experience_is_not_treated_as_unspoken_thought(
+    tmp_path: Path,
+):
+    store = _fresh_store(tmp_path)
+    await store.start()
+    try:
+        recorder = ExperienceRecorder()
+        loop = LifeLoop(
+            store,
+            recorder,
+            ConsciousnessConfig(life_loop_enabled=True),
+            simulation=LifeSimulation(),
+            episode_store=ActivityEpisodeStore(),
+        )
+
+        await loop.run_once("trace_micro_event")
+        await loop.run_once("trace_after_micro_event")
+        life = (await store.read()).life
+
+        assert life.mode != "absorbed"
+        assert life.current_activity != "carrying_unspoken_thought"
     finally:
         await store.stop()

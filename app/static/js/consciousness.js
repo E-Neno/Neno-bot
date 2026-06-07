@@ -1,7 +1,12 @@
 import { getAdminHeaders, requestJson } from "./api.js";
 import { clearChildren, setBusyButton, setOptionalText } from "./dom.js";
+import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER } from "./worldViewAdapter.js";
 
 let _desireInterval = null;
+let _worldLiveInterval = null;
+let _worldRoomWidth = 0;
+let _lastWorldX = null;
+let _latestWorldState = null;
 
 // ── State rendering ───────────────────────────────────────
 
@@ -709,6 +714,184 @@ export async function loadLivingWorld() {
   }
 }
 
+function ensureWorldPanel() {
+  const workspace = document.getElementById("worldWorkspace");
+  const viewport = document.getElementById("worldViewport");
+  const strip = document.getElementById("worldRoomStrip");
+  return Boolean(workspace && viewport && strip);
+}
+
+function setWorldText(id, value, fallback = "—") {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value == null || value === "" ? fallback : String(value);
+}
+
+function renderWorldPlan(items) {
+  const list = document.getElementById("worldPlan");
+  if (!list) return;
+  clearChildren(list);
+  if (!items.length) {
+    const item = document.createElement("li");
+    item.textContent = "今天还没有明确计划";
+    list.appendChild(item);
+    return;
+  }
+  for (const plan of items) {
+    const item = document.createElement("li");
+    item.classList.toggle("done", Boolean(plan.done));
+    item.textContent = plan.intent || plan.phase || "未命名计划";
+    list.appendChild(item);
+  }
+}
+
+function renderWorldTimeline(state) {
+  const timeline = document.getElementById("worldTimeline");
+  if (!timeline) return;
+  clearChildren(timeline);
+  const recent = state.recent.slice(-5);
+  for (const activity of recent) {
+    const item = document.createElement("div");
+    item.className = "world-moment";
+    const time = document.createElement("time");
+    time.textContent = activity.ago_min != null ? `${activity.ago_min} 分钟前` : "此前";
+    item.append(time, document.createTextNode(activity.action || "发生了一些事"));
+    timeline.appendChild(item);
+  }
+  const current = document.createElement("div");
+  current.className = "world-moment current";
+  current.id = "worldCurrentMoment";
+  const time = document.createElement("time");
+  time.textContent = state.time;
+  current.append(time, document.createTextNode(state.moment));
+  timeline.appendChild(current);
+}
+
+function layoutWorldStage(state, animate) {
+  const viewport = document.getElementById("worldViewport");
+  const strip = document.getElementById("worldRoomStrip");
+  const neno = document.getElementById("worldNeno");
+  if (!viewport || !strip || !neno) return;
+
+  _worldRoomWidth = Math.max(620, viewport.clientWidth * 0.88);
+  const rooms = [...document.querySelectorAll("[data-world-room]")];
+  rooms.forEach((room) => {
+    room.style.width = `${_worldRoomWidth}px`;
+    room.classList.toggle("active", room.dataset.worldRoom === state.roomKey);
+  });
+  strip.style.width = `${_worldRoomWidth * ROOM_ORDER.length}px`;
+
+  const worldX = state.room * _worldRoomWidth + state.x * _worldRoomWidth;
+  neno.className = "world-neno";
+  if (_lastWorldX != null && worldX < _lastWorldX) neno.classList.add("face-left");
+  if (animate && state.walk) {
+    neno.classList.add("walking");
+    window.setTimeout(() => neno.classList.remove("walking"), 1750);
+  }
+  if (state.pose === "reading") neno.classList.add("reading");
+  if (state.pose === "sleeping") neno.classList.add("sleeping");
+  neno.style.left = `${worldX}px`;
+
+  const worldWidth = _worldRoomWidth * ROOM_ORDER.length;
+  const camera = Math.max(
+    -(worldWidth - viewport.clientWidth),
+    Math.min(0, -(worldX - viewport.clientWidth / 2))
+  );
+  strip.style.transform = `translateX(${camera}px)`;
+  _lastWorldX = worldX;
+
+  document.querySelectorAll("[data-world-map-room]").forEach((cell) => {
+    cell.classList.toggle("active", cell.dataset.worldMapRoom === state.roomKey);
+  });
+}
+
+export function renderWorldLive(data) {
+  if (!ensureWorldPanel()) return;
+  if (!data || data.success === false || !data.world) {
+    setWorldText("cWorldLiveStatus", data?.reason || "世界引擎暂无数据。可检查 Admin Token，或点击“步进一步”。");
+    setWorldText("worldRuntimeStatus", "世界状态不可用");
+    return;
+  }
+
+  const state = mapWorldSnapshot(data.world);
+  _latestWorldState = state;
+  layoutWorldStage(state, true);
+  setWorldText("worldClock", state.time);
+  setWorldText("worldPhase", state.phase || (state.sleeping ? "睡眠中" : "生活进行中"));
+  setWorldText("worldStoryTime", `${state.phase || "此刻"} ${state.time} · ${ROOM_NAME[state.roomKey]}`);
+  setWorldText("worldStoryAction", state.action);
+  setWorldText("worldStoryInner", state.inner ? `“${state.inner}”` : "她没有解释，只是继续做手上的事。");
+  setWorldText("worldMoodText", `${state.mood} · ${Number(state.moodValence).toFixed(2)}`);
+  setWorldText("worldEnergy", state.energy);
+  setWorldText("worldMoney", `¥${state.money}`);
+  setWorldText("worldEnergyStatus", state.energyStatus);
+  setWorldText("worldChange", state.change || "世界暂时没有新的变化。");
+  setWorldText("worldPendingThread", state.plan.filter((item) => !item.done).map((item) => item.intent).filter(Boolean).join("；") || "暂无");
+  setWorldText("worldCarriedThread", state.carriedOver.map((item) => item.intent || item).join("；") || "暂无");
+  setWorldText("worldGoneThread", state.gone.join("；") || "暂无");
+  setWorldText("worldChronicleRange", `今天 · ${state.time}`);
+  setWorldText("worldRuntimeStatus", data.loop_enabled ? "世界循环运行中" : "常驻循环关闭 · 可手动推进");
+  setWorldText("cWorldLiveStatus", data.loop_enabled ? "每 5 秒读取真实世界状态。" : "常驻循环未开启；当前显示数据库快照，可手动推进。");
+
+  const thought = document.getElementById("worldThought");
+  if (thought) {
+    thought.textContent = state.thought;
+    thought.classList.add("on");
+    window.setTimeout(() => thought.classList.remove("on"), 2200);
+  }
+  document.getElementById("worldSteam")?.classList.toggle("on", state.steam);
+  renderWorldPlan(state.plan);
+  renderWorldTimeline(state);
+}
+
+export async function loadWorldLive() {
+  const token = getAdminHeaders()["X-Admin-Token"];
+  if (!token) return;
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/world-live",
+      { method: "GET", headers: getAdminHeaders() },
+      "加载世界失败："
+    );
+    renderWorldLive(data);
+  } catch (err) {
+    setOptionalText("cWorldLiveStatus", `· ${err.message}`);
+  }
+}
+
+async function worldTickOnce(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "推进中..."; }
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/world-tick",
+      { method: "POST", headers: getAdminHeaders() },
+      "推进世界失败："
+    );
+    if (data?.world) renderWorldLive({ success: true, world: data.world, loop_enabled: data.loop_enabled });
+    else await loadWorldLive();
+  } catch (err) {
+    setWorldText("cWorldLiveStatus", err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "步进一步"; }
+  }
+}
+
+function startWorldLiveRefresh() {
+  stopWorldLiveRefresh();
+  loadWorldLive();
+  _worldLiveInterval = window.setInterval(() => {
+    if (!document.getElementById("worldWorkspace")?.classList.contains("workspace-hidden")) {
+      loadWorldLive();
+    }
+  }, 5000);
+}
+
+function stopWorldLiveRefresh() {
+  if (_worldLiveInterval) {
+    window.clearInterval(_worldLiveInterval);
+    _worldLiveInterval = null;
+  }
+}
+
 function startDesireRefresh() {
   stopDesireRefresh();
   _desireInterval = setInterval(() => {
@@ -773,11 +956,34 @@ export function bindConsciousnessEvents() {
       loadConsciousnessState();
       loadConsciousnessEvents();
       loadLivingWorld();
+      loadWorldLive();
     });
   }
 
   const livingRefreshBtn = document.getElementById("cLivingWorldRefreshBtn");
   if (livingRefreshBtn) {
     livingRefreshBtn.addEventListener("click", () => loadLivingWorld());
+  }
+
+  const worldStepBtn = document.getElementById("cWorldStepBtn");
+  if (worldStepBtn && !worldStepBtn.dataset.bound) {
+    worldStepBtn.dataset.bound = "true";
+    worldStepBtn.addEventListener("click", () => worldTickOnce(worldStepBtn));
+  }
+
+  window.addEventListener("resize", () => {
+    if (_latestWorldState) layoutWorldStage(_latestWorldState, false);
+  });
+  window.addEventListener("neno:workspace-change", (event) => {
+    if (event.detail?.workspace === "world") {
+      if (_latestWorldState) layoutWorldStage(_latestWorldState, false);
+      startWorldLiveRefresh();
+    } else {
+      stopWorldLiveRefresh();
+    }
+  });
+
+  if (ensureWorldPanel()) {
+    startWorldLiveRefresh();
   }
 }

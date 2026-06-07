@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
-from typing import Any
+import logging
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 
 from app.storage import db as db_storage
 
@@ -13,9 +15,19 @@ from .memory_recall import MemoryRecall
 from .models import LifeResidue, StateMutation
 from .state_store import StateStore
 
+if TYPE_CHECKING:
+    from .activity_episode_store import ActivityEpisodeStore
 
-async def _llm_reflect(*, experiences: list[dict[str, Any]], state: Any, config: ConsciousnessConfig) -> dict[str, Any]:
-    raise RuntimeError("reflection model calls are disabled unless explicitly enabled and mocked")
+_log = logging.getLogger(__name__)
+_TZ_8 = timezone(timedelta(hours=8))
+
+
+async def _llm_reflect(
+    *, experiences: list[dict[str, Any]], state: Any, config: ConsciousnessConfig
+) -> dict[str, Any]:
+    raise RuntimeError(
+        "reflection model calls are disabled unless explicitly enabled and mocked"
+    )
 
 
 class ReflectionEngine:
@@ -25,16 +37,45 @@ class ReflectionEngine:
         recorder: ExperienceRecorder,
         recall: MemoryRecall,
         config: ConsciousnessConfig,
+        episode_store: "ActivityEpisodeStore | None" = None,  # C1.5
     ) -> None:
         self._state_store = state_store
         self._recorder = recorder
         self._recall = recall
         self._config = config
+        self._episode_store = episode_store  # C1.5
 
-    async def dry_run(self, trace_id: str | None = None) -> dict[str, Any]:
+    # ── C1.5: today's episode timeline (no internal datetime.now) ─────────
+    async def _fetch_today_episodes(self, target_day: date) -> list[dict[str, Any]]:
+        """Fetch episodes for *target_day* (UTC+8 calendar day).
+
+        The caller is responsible for computing target_day exactly once so that
+        experiences and episodes always use the same boundary.  This method must
+        never call datetime.now() internally.
+        """
+        if self._episode_store is None:
+            return []
+        try:
+            return await self._episode_store.list_for_day(target_day, "+08:00")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "episode_store.list_for_day failed, degrading to experience-only: %s", exc
+            )
+            return []
+
+    async def dry_run(
+        self,
+        trace_id: str | None = None,
+        _target_day: date | None = None,  # injection point for tests
+    ) -> dict[str, Any]:
+        # Gap 1: compute target_day once; both inputs must use this same value.
+        target_day = _target_day if _target_day is not None else datetime.now(_TZ_8).date()
+
         state = await self._state_store.read()
-        experiences = _today_experiences(await self._recorder.list_recent(limit=200))
-        if not experiences:
+        experiences = _today_experiences(await self._recorder.list_recent(limit=200), target_day)
+        episodes = await self._fetch_today_episodes(target_day)
+
+        if not experiences and not episodes:
             return {
                 "success": True,
                 "enabled": self._config.reflection_enabled,
@@ -44,17 +85,21 @@ class ReflectionEngine:
                 "output": None,
             }
 
-        output = await self._build_output(experiences, state)
+        output = await self._build_output(experiences, state, episodes=episodes)
         return {
             "success": True,
             "enabled": self._config.reflection_enabled,
             "action": "would_reflect",
             "trace_id": trace_id,
-            "input_summary": _input_summary(experiences),
+            "input_summary": _input_summary(experiences, episodes=episodes),
             "output": output,
         }
 
-    async def run_once(self, trace_id: str | None = None) -> dict[str, Any]:
+    async def run_once(
+        self,
+        trace_id: str | None = None,
+        _target_day: date | None = None,  # injection point for tests
+    ) -> dict[str, Any]:
         if not self._config.reflection_enabled:
             return {
                 "success": True,
@@ -62,11 +107,15 @@ class ReflectionEngine:
                 "action": "disabled",
             }
 
-        state = await self._state_store.read()
-        experiences = _today_experiences(await self._recorder.list_recent(limit=200))
-        input_summary = _input_summary(experiences)
+        # Gap 1: compute target_day ONCE here; pass to every helper that needs it.
+        target_day = _target_day if _target_day is not None else datetime.now(_TZ_8).date()
 
-        if not experiences:
+        state = await self._state_store.read()
+        experiences = _today_experiences(await self._recorder.list_recent(limit=200), target_day)
+        episodes = await self._fetch_today_episodes(target_day)
+        input_summary = _input_summary(experiences, episodes=episodes)
+
+        if not experiences and not episodes:
             run_id = await asyncio.to_thread(
                 _insert_reflection_run,
                 trace_id or "",
@@ -83,7 +132,7 @@ class ReflectionEngine:
                 "run_id": run_id,
             }
 
-        output = await self._build_output(experiences, state)
+        output = await self._build_output(experiences, state, episodes=episodes)
         run_id = await asyncio.to_thread(
             _insert_reflection_run,
             trace_id or "",
@@ -122,34 +171,218 @@ class ReflectionEngine:
             "output": output,
         }
 
-    async def _build_output(self, experiences: list[dict[str, Any]], state: Any) -> dict[str, Any]:
+    async def _build_output(
+        self,
+        experiences: list[dict[str, Any]],
+        state: Any,
+        episodes: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         if self._config.reflection_model_enabled:
-            return await _llm_reflect(experiences=experiences, state=state, config=self._config)
-        return _deterministic_output(experiences)
+            return await _llm_reflect(
+                experiences=experiences, state=state, config=self._config
+            )
+        return _deterministic_output(experiences, episodes=episodes or [], state=state)
 
 
-def _deterministic_output(experiences: list[dict[str, Any]]) -> dict[str, Any]:
+# ── Deterministic reflection (C1.5 upgraded) ─────────────────────────────
+
+def _deterministic_output(
+    experiences: list[dict[str, Any]],
+    episodes: list[dict[str, Any]] | None = None,
+    state: Any = None,
+) -> dict[str, Any]:
+    """Build a deterministic reflection summary.
+
+    With *episodes* (C1.5 mode):
+    - Summary: activity count, first/last label, transition count, interrupt count,
+      most-frequent place (frequency-ordered, ties by first occurrence), daily_intent.
+    - residue.topic priority: high-salience experience (≥0.7) > best life_simulation
+      MicroEvent (any salience) > last episode label > first experience.
+    - long_term_memory written only for: repeated activity patterns (same key ≥2),
+      frequent interrupts (≥2), or persistent residue (intensity ≥0.5).
+      Single ordinary episodes NEVER produce LTM entries.
+
+    Without *episodes* (experience-only / legacy mode):
+    - All original behaviour preserved verbatim.
+    """
+    episodes = episodes or []
     recent = experiences[:3]
-    summary = " / ".join(exp.get("content", "") for exp in recent if exp.get("content"))
-    high_salience = [exp for exp in experiences if float(exp.get("salience") or 0.0) >= 0.7]
-    memories = [
-        {
-            "content": exp.get("content", ""),
-            "tags": ["life", exp.get("source", "experience"), exp.get("kind", "reflection")],
-            "subject": "",
-            "salience": min(1.0, max(0.0, float(exp.get("salience") or 0.5))),
-        }
-        for exp in high_salience[:2]
-        if exp.get("content")
-    ]
-    residue_source = high_salience[0] if high_salience else recent[0]
-    residue_topic = residue_source.get("content", "") if residue_source else ""
-    residue_intensity = min(1.0, max(0.0, float(residue_source.get("salience") or 0.3))) if residue_source else 0.0
+    high_salience = [e for e in experiences if float(e.get("salience") or 0.0) >= 0.7]
+
+    # ── 1. Build summary ──────────────────────────────────────────────────
+    summary_parts: list[str] = []
+
+    if episodes:
+        count = len(episodes)
+        first_ep = episodes[0]   # list_for_day → ASC by started_at
+        last_ep  = episodes[-1]
+
+        # Transitions: adjacent episodes with different activity_key
+        transitions = sum(
+            1 for a, b in zip(episodes, episodes[1:])
+            if a.get("activity_key") != b.get("activity_key")
+        )
+
+        # Interrupts
+        interrupt_count = sum(
+            1 for ep in episodes if ep.get("status") == "interrupted"
+        )
+
+        # Most-frequent place (ties → first occurrence wins)
+        place_seq = [ep.get("place", "") for ep in episodes if ep.get("place")]
+        if place_seq:
+            place_counts = Counter(place_seq)
+            first_seen: dict[str, int] = {}
+            for idx, p in enumerate(place_seq):
+                first_seen.setdefault(p, idx)
+            main_place = min(
+                place_counts,
+                key=lambda p: (-place_counts[p], first_seen[p]),
+            )
+        else:
+            main_place = ""
+
+        # daily_intent from LifeState if available
+        daily_intent = ""
+        if state is not None:
+            try:
+                daily_intent = state.life.daily_intent or ""
+            except AttributeError:
+                pass
+
+        summary_parts.append(f"今天共有 {count} 段活动")
+        summary_parts.append(f"从「{first_ep.get('activity_label', '')}」开始")
+        if count > 1:
+            summary_parts.append(f"到「{last_ep.get('activity_label', '')}」结束")
+        if transitions:
+            summary_parts.append(f"经历了 {transitions} 次活动切换")
+        if interrupt_count:
+            summary_parts.append(f"被打断 {interrupt_count} 次")
+        if main_place:
+            summary_parts.append(f"主要场所：{main_place}")
+        if daily_intent:
+            summary_parts.append(f"今日意图：{daily_intent}")
+
+    else:
+        # experience-only mode: fall back to content snippet
+        exp_snippet = " / ".join(
+            e.get("content", "") for e in recent if e.get("content")
+        )
+        if exp_snippet:
+            summary_parts.append(exp_snippet)
+
+    summary = "，".join(summary_parts)
+
+    # ── 2. Residue topic ──────────────────────────────────────────────────
+    # Priority:
+    #   1. High-salience experience (any source, salience ≥ 0.7)
+    #   2. Best life_simulation MicroEvent (highest salience, any value)
+    #   3. Last episode label
+    #   4. First experience content
+    micro_events = [e for e in experiences if e.get("source") == "life_simulation"]
+    best_micro: dict[str, Any] | None = (
+        max(micro_events, key=lambda e: float(e.get("salience") or 0.0))
+        if micro_events
+        else None
+    )
+
+    residue_topic = ""
+    residue_intensity = 0.3
+
+    if high_salience:
+        src = high_salience[0]
+        residue_topic = src.get("content", "")
+        residue_intensity = min(1.0, float(src.get("salience") or 0.3))
+    elif best_micro:
+        residue_topic = best_micro.get("content", "")
+        residue_intensity = min(1.0, float(best_micro.get("salience") or 0.3))
+    elif episodes:
+        residue_topic = episodes[-1].get("activity_label", "")
+        residue_intensity = 0.3
+    elif recent:
+        src = recent[0]
+        residue_topic = src.get("content", "")
+        residue_intensity = min(1.0, float(src.get("salience") or 0.3))
+
+    residue_intensity = min(1.0, max(0.0, residue_intensity))
+
+    # ── 3. Long-term memories ─────────────────────────────────────────────
+    memories: list[dict[str, Any]] = []
+
+    if episodes:
+        # 3a. Repeated activity patterns (same activity_key ≥ 2 times)
+        activity_counts: Counter[str] = Counter(
+            ep.get("activity_key", "") for ep in episodes if ep.get("activity_key")
+        )
+        for key, cnt in activity_counts.most_common():
+            if cnt < 2:
+                break
+            label = next(
+                (
+                    ep.get("activity_label", key)
+                    for ep in episodes
+                    if ep.get("activity_key") == key
+                ),
+                key,
+            )
+            memories.append({
+                "content": f"今天多次回到「{label}」（{cnt} 次），可能是一种习惯模式",
+                "tags": ["life", "pattern", "repeated_activity"],
+                "subject": "",
+                "salience": 0.7,
+            })
+
+        # 3b. Frequent interrupts (≥ 2)
+        total_interrupts = sum(
+            1 for ep in episodes if ep.get("status") == "interrupted"
+        )
+        if total_interrupts >= 2:
+            memories.append({
+                "content": f"今天有 {total_interrupts} 段活动被打断，注意力容易被外部拉走",
+                "tags": ["life", "pattern", "frequent_interrupt"],
+                "subject": "",
+                "salience": 0.65,
+            })
+
+        # 3c. Residue persistence (intensity ≥ 0.5)
+        if state is not None:
+            try:
+                residue = state.life.residue
+                if residue.intensity >= 0.5 and residue.topic:
+                    memories.append({
+                        "content": f"生活余波持续影响：{residue.topic}",
+                        "tags": ["life", "residue", "persistence"],
+                        "subject": "",
+                        "salience": float(residue.intensity),
+                    })
+            except AttributeError:
+                pass
+
+        # Episode mode: no fallback to experience-based LTM.
+        # Single ordinary episodes intentionally produce zero LTM entries.
+
+    else:
+        # Experience-only mode: original behaviour — high-salience → LTM
+        memories = [
+            {
+                "content": exp.get("content", ""),
+                "tags": [
+                    "life",
+                    exp.get("source", "experience"),
+                    exp.get("kind", "reflection"),
+                ],
+                "subject": "",
+                "salience": min(1.0, max(0.0, float(exp.get("salience") or 0.5))),
+            }
+            for exp in high_salience[:2]
+            if exp.get("content")
+        ]
+
     return {
         "summary": summary,
-        "memories": memories,
+        "memories": memories[:2],
         "state_feedback": {
-            "mood_valence_delta": 0.02 if experiences else 0.0,
+            "mood_valence_delta": 0.02 if (experiences or episodes) else 0.0,
             "desire_pulse": 0.0,
             "life_residue": {
                 "topic": residue_topic,
@@ -160,8 +393,18 @@ def _deterministic_output(experiences: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _today_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    today = datetime.now(timezone.utc).date()
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+def _today_experiences(
+    rows: list[dict[str, Any]],
+    target_day: date,  # Gap 1: must be pre-computed by caller; no datetime.now() here
+) -> list[dict[str, Any]]:
+    """Filter *rows* to those whose created_at falls on *target_day* (UTC+8).
+
+    The caller (run_once / dry_run) computes target_day once and passes the same
+    value to both _today_experiences and _fetch_today_episodes so that experiences
+    and episodes always share an identical calendar-day boundary.
+    """
     result: list[dict[str, Any]] = []
     for row in rows:
         created_at = row.get("created_at")
@@ -173,16 +416,42 @@ def _today_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        if parsed.astimezone(timezone.utc).date() == today:
+        if parsed.astimezone(_TZ_8).date() == target_day:
             result.append(row)
     return result
 
 
-def _input_summary(experiences: list[dict[str, Any]]) -> str:
-    return "\n".join(
+def _input_summary(
+    experiences: list[dict[str, Any]],
+    episodes: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build the audit input string stored in dream_reflection_runs.
+
+    C1.5: prepend episode timeline including metadata.daily_intent so operators
+    can audit which intent drove each episode.  Missing or malformed metadata
+    is handled safely (defaults to empty string, no crash).
+    """
+    parts: list[str] = []
+    if episodes:
+        parts.append(f"[episodes: {len(episodes)}]")
+        for ep in episodes:
+            # Gap 2: safely extract daily_intent from decoded metadata dict
+            meta = ep.get("metadata")
+            if not isinstance(meta, dict):
+                meta = {}
+            daily_intent = meta.get("daily_intent", "")
+            parts.append(
+                f"  [{ep.get('time_phase', '')}@{ep.get('place', '')}]"
+                f" {ep.get('activity_label', '')}"
+                f" ({ep.get('status', '')})"
+                f" reason={ep.get('reason', '')!r}"
+                f" daily_intent={daily_intent!r}"
+            )
+    parts.extend(
         f"- [{exp.get('source')}/{exp.get('kind')}] {exp.get('content', '')}"
         for exp in experiences[:20]
     )
+    return "\n".join(parts)
 
 
 def _insert_reflection_run(

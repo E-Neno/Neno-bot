@@ -10,7 +10,11 @@
 
 ---
 
-## 0.0 阶段状态与任务映射（2026-06-06 二次校正 · 权威）
+> **状态提醒（2026-06-07）：** 本文是历史实现计划，不再是代码现状的权威来源。
+> 世界引擎已经超过下述 4c/C1 规划并接入应用。当前架构、运行方式、缺口和
+> 下一步以 `docs/living-world.md` 与 `PHASE_4_PROGRESS.md` 为准。
+
+## 0.0 阶段状态与任务映射（2026-06-06 历史校正）
 
 > **Phase 4a / 4b 已验收 ≠ Phase 4 完成。** 本节是任务 → 阶段的权威映射；§6 验收标准与本节对齐。
 > 阶段定义见 `PHASE_4_LIVING_WORLD_SPEC.md` §0。
@@ -25,7 +29,7 @@
 | 任务 6 | ReflectionEngine（反思 + long_term 回写 + 回注） | **Phase 4a** | ✅ 已验收 |
 | 任务 8（只读部分） | Living World debug endpoint | **Phase 4a** | ✅ 已验收 |
 | **任务 B1** | **Living World Model（富字段）+ 生活化 LifeLoop + residue 回灌 + 生活验收面板** | **Phase 4b** | ✅ 已验收（MVP 状态机） |
-| **任务 C1（新增）** | **Living Simulation Core：ActivityEpisode + VirtualSpace + Routine + MicroEvent + timeline replay** | **Phase 4c** | ⏳ 待做（完整世界引擎核心） |
+| **任务 C1（新增）** | **Living Simulation Core：ActivityEpisode + VirtualSpace + Routine + MicroEvent + timeline replay** | **Phase 4c** | 历史状态：当时待做；当前已实现并被新世界层扩展 |
 | 任务 7 | ExpressionGate | **Phase 4d（可选）** | ⏳ 未做 / 非 4c 必需 |
 | —— | 被动消息进世界引擎 | **Phase 5** | ⛔ 暂停（等 4c 验收） |
 
@@ -1144,7 +1148,7 @@ pytest tests/unit/test_reflection_engine.py tests/unit/test_world_engine.py -v
 - **验证命令：** `pytest tests/integration/test_consciousness_living_world_debug.py -v`（保证面板数据契约正确）
 - **验收：** 面板展示 SPEC §7 的 Phase 4b 六项——她在哪 / 在做什么 / 为什么 / 今天经历 / 反思残留 / 长期记忆影响；不在 UI 触发真实发送；"表达闸门原因"不在 4b 面板内（属 4d）。
 
-### 任务 C1（Phase 4c · 待做 · 完整世界引擎核心）：Living Simulation Core
+### 任务 C1（Phase 4c · 历史计划，现已实现并被后续世界层扩展）：Living Simulation Core
 
 > 详细执行计划见 `PHASE_4C_LIVING_SIMULATION_PLAN.md`。本任务必须一步到位实现完整生活模拟核心，而不是继续把目标后移。
 
@@ -1380,7 +1384,7 @@ pytest tests/unit/test_expression_gate.py -v   # 该文件 4d 才创建，当前
 
 ## 6. 验收标准
 
-> **阶段编号以 §0.0 为权威。** 旧 → 新映射：旧「Phase 4A 验收」+「Phase 4B 验收」= 新 **Phase 4a（已验收）**；任务 B1 = 新 **Phase 4b（Living World MVP，已验收）**；完整世界引擎核心 = 新 **Phase 4c（Living Simulation Core，待做）**；ExpressionGate 顺延为 **Phase 4d（可选）**。
+> **历史阶段映射：** 旧「Phase 4A 验收」+「Phase 4B 验收」= Phase 4a；任务 B1 = Phase 4b；当时把任务 C1 定义为 Phase 4c。当前状态不再以本段判断。
 
 Phase 4a 验收 · A 段（地基，已验收）：
 
@@ -1408,7 +1412,7 @@ Phase 4b 验收（Living World MVP，已验收）：
 - Debug endpoint 返回 `life` / `life_residue` / `loop_preview`，dry-run 不写库。
 - WebUI 生活验收面板能展示她在哪、做什么、为什么、余波和下一轮预览。
 
-Phase 4c 验收（Living Simulation Core，待做）：
+Phase 4c 验收（历史验收清单；实现已超过本范围）：
 
 - ActivityEpisode 有生命周期，不只是单点状态。
 - VirtualSpace / DailyIntent / Routine 影响活动选择。

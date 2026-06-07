@@ -11,9 +11,11 @@
 > | 召回 Top-5 记忆注入最后一条 user message（§3 `_inject_consciousness_state`） | 同上：禁 prompt 注入 | ❌ 作废 |
 > | 把 Phase 4 当作单块"梦境闭环"一次验收 | 导致"地基完成"被误读为"世界引擎完成" | ❌ 作废 |
 >
-> **唯一执行依据**：`PHASE_4_LIVING_WORLD_SPEC.md`（规格，§0 为权威阶段划分）+ `PHASE_4_IMPL_PLAN.md`（实现计划，§0.0 为权威任务映射）+ `PHASE_4C_LIVING_SIMULATION_PLAN.md`（完整世界引擎核心计划）。
+> **当前执行依据**：本文件及旧 Phase 计划均只保留作历史。当前代码事实、
+> 运行方式、已知缺口与下一步见 `docs/living-world.md` 和 `PHASE_4_PROGRESS.md`。
 >
-> **文档组约束（必须共同保留 / 共同提交）**：本文件与 `PHASE_4_LIVING_WORLD_SPEC.md`、`PHASE_4_IMPL_PLAN.md`、`PHASE_4C_LIVING_SIMULATION_PLAN.md` 构成**一个不可分割的文档组**。后续若提交，四份必须进**同一个 commit**；**禁止只提交 PHASE_4.md** 而让规格 / 实现计划掉队，否则本文件指向的"唯一执行依据"会悬空。
+> **文档组约束**：若保留或提交历史 Phase 文档，应共同维护其历史标记；
+> 不得再把其中任何一份单独提升为当前权威规格。
 >
 > **幸存的思想**：每日梦境总结 + 长期记忆沉淀的**目标**仍然成立，但已**重生为 `ReflectionEngine`**——它只通过 `MemoryRecall.add_memory()` 写 `long_term_memory`、通过 `StateStore.submit_mutation()` 回注状态，**绝不注入主聊天 prompt、绝不碰 `chat_service.py`**。
 >

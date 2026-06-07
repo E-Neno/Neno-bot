@@ -837,6 +837,59 @@ async def consciousness_living_world(
     return payload
 
 
+@router.get("/consciousness/world-live", dependencies=[Depends(require_admin_token)])
+async def consciousness_world_live():
+    """只读：新世界引擎当前快照（房间/物品/动态物品/钱包/失去/计划/最近/事件/精力心情）。
+
+    纯读 life_world_state + agent_state，不启动写者、不写库、不调真实模型。容错不 500。
+    """
+    try:
+        from app.services.consciousness.config import ConsciousnessConfig
+        from app.services.consciousness.state_store import StateStore
+        from app.services.consciousness.world_store import WorldStore
+        from app.services.consciousness.world_loop import build_snapshot
+        from app.services.consciousness.world_model import load_world_def
+
+        cfg = ConsciousnessConfig()
+        wd = load_world_def()
+        world_state = await WorldStore(wd).read()
+        nstate = await StateStore(db=None, config=cfg).read()  # read() 纯 DB 读，无需 start()
+        return {
+            "success": True,
+            "world": build_snapshot(wd, world_state, nstate),
+            "loop_enabled": cfg.world_loop_enabled,
+        }
+    except Exception as exc:  # debug 只读不允许 500
+        return {"success": False, "reason": str(exc)}
+
+
+@router.post("/consciousness/world-tick", dependencies=[Depends(require_admin_token)])
+async def consciousness_world_tick():
+    """手动推进世界一步（即使常驻 loop 关着也能在控制台点一下走一步）。"""
+    import asyncio as _asyncio
+
+    from app.services.consciousness.config import ConsciousnessConfig
+    from app.services.consciousness.state_store import StateStore
+    from app.services.consciousness.world_loop import WorldLoop
+
+    cfg = ConsciousnessConfig()
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        loop = WorldLoop(store, cfg)
+        snap = await loop.tick()
+        for _ in range(200):  # 排空写者，确保精力等落库
+            if store._queue.empty():
+                break
+            await _asyncio.sleep(0.01)
+        await _asyncio.sleep(0.05)
+        return {"success": True, "world": snap}
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "reason": str(exc)}
+    finally:
+        await store.stop()
+
+
 @router.get("/consciousness/events", dependencies=[Depends(require_admin_token)])
 def consciousness_events():
     rows = fetch_all(
