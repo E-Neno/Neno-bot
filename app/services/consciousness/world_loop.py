@@ -167,15 +167,15 @@ class WorldLoop:
         step = cfg.world_sim_minutes_per_tick
 
         ws = await self._world_store.read()
-        if not ws.sim_minutes:
-            ws.sim_minutes = START_SIM_MINUTES
         if not ws.daily_plan:
             plan = await self._planner.make_plan(date="day1", residue="", carried_over=[])
             ws.daily_plan = plan.model_dump()
             await self._world_store.write(ws)
 
-        sim_minutes = ws.sim_minutes
-        hour = (sim_minutes // 60) % 24
+        # ── 时钟：从真实时间(UTC+8)推导，不再累加 ──
+        now8 = datetime.now(_TZ8)
+        sim_minutes = now8.hour * 60 + now8.minute
+        hour = now8.hour
         phase = self._day_cycle.phase_of(hour)
         nstate = await self._state_store.read()
 
@@ -265,6 +265,7 @@ class WorldLoop:
                 "ops": op_log, "micro": micro,
                 "event": (event.content if event is not None else None),
                 "sleeping": False, "phase": PHASE_ZH.get(phase, phase),
+                "real_time": now8.strftime("%H:%M"),
             }
             await self._world_store.write(sim)
             ws = sim
@@ -295,9 +296,10 @@ class WorldLoop:
                 "action": action, "reasoning": reason, "drift": [], "ops": [],
                 "micro": micro, "event": None, "sleeping": sleeping,
                 "phase": PHASE_ZH.get(phase, phase),
+                "real_time": now8.strftime("%H:%M"),
             }
             await self._world_store.write(ws)
 
-        ws.sim_minutes = sim_minutes + step
+        ws.sim_minutes = sim_minutes  # 写回真实时间，不再累加
         await self._world_store.write(ws)
         return build_snapshot(wd, ws, nstate)
