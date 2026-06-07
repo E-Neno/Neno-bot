@@ -78,6 +78,72 @@ def test_world_snapshot_adapter_supports_chinese_walk_and_sleep_actions():
     assert result["sleeping"]["pose"] == "sleeping"
 
 
+def test_world_snapshot_adapter_derives_daylight_and_active_lights():
+    module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()
+    script = f"""
+      import {{ mapWorldSnapshot }} from {json.dumps(module_uri)};
+      const night = mapWorldSnapshot({{
+        sim_time: "23:15",
+        location: "bedroom",
+        rooms: {{
+          bedroom: {{ objects: [{{ key: "lamp", state: "on" }}] }},
+          kitchen: {{ objects: [{{ key: "ceiling_light", state: "off" }}] }}
+        }},
+        last: {{ action: "rest" }}
+      }});
+      const afternoon = mapWorldSnapshot({{
+        sim_time: "14:05",
+        location: "living_room",
+        rooms: {{
+          living_room: {{ objects: [{{ key: "lamp", state: "on" }}] }}
+        }},
+        last: {{ action: "read_book" }}
+      }});
+      console.log(JSON.stringify({{ night, afternoon }}));
+    """
+
+    result = _run_node_module(script)
+
+    assert result["night"]["daylight"]["phase"] == "late_night"
+    assert result["night"]["daylight"]["color"] == "#0e1430"
+    assert result["night"]["daylight"]["opacity"] == 0.52
+    assert result["night"]["daylight"]["blend"] == "multiply"
+    assert result["night"]["activeLights"] == ["bedroom"]
+    assert result["afternoon"]["daylight"]["phase"] == "day"
+    assert result["afternoon"]["activeLights"] == []
+
+
+def test_world_snapshot_adapter_uses_furniture_anchors_for_reading_and_sleep():
+    module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()
+    script = f"""
+      import {{ mapWorldSnapshot }} from {json.dumps(module_uri)};
+      const reading = mapWorldSnapshot({{
+        sim_time: "20:30",
+        location: "living_room",
+        last: {{ action: "read_book" }}
+      }});
+      const sleeping = mapWorldSnapshot({{
+        sim_time: "23:40",
+        location: "bedroom",
+        last: {{ action: "sleep", sleeping: true }}
+      }});
+      console.log(JSON.stringify({{ reading, sleeping }}));
+    """
+
+    result = _run_node_module(script)
+
+    assert result["reading"]["anchor"] == {
+        "kind": "seat",
+        "object": "sofa",
+        "x": 0.52,
+        "y": 0.72,
+    }
+    assert result["reading"]["x"] == 0.52
+    assert result["reading"]["y"] == 0.72
+    assert result["sleeping"]["anchor"]["object"] == "bed"
+    assert result["sleeping"]["pose"] == "sleeping"
+
+
 def test_console_contains_world_engine_and_control_center_workspaces():
     layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
     consciousness = (STATIC / "js" / "consciousness.js").read_text(encoding="utf-8")
@@ -100,6 +166,35 @@ def test_console_contains_world_engine_and_control_center_workspaces():
     assert "/debug/consciousness/world-live" in consciousness
     assert "/debug/consciousness/world-tick" in consciousness
     assert "const states =" not in consciousness
+
+
+def test_world_view_has_phase2_light_and_anchor_layers():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    consciousness = (STATIC / "js" / "consciousness.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    assert 'id="worldDaylight"' in layout
+    assert 'id="worldLampGlow"' in layout
+    assert "worldDaylight" in consciousness
+    assert "activeLights" in consciousness
+    assert "style.bottom" in consciousness
+    assert ".world-daylight" in css
+    assert ".world-lamp-glow.on" in css
+    assert ".world-neno.anchored" in css
+
+
+def test_world_view_has_ambient_environment_layers():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    consciousness = (STATIC / "js" / "consciousness.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    assert 'id="worldCityLights"' in layout
+    assert 'id="worldAirMotion"' in layout
+    assert 'dataset.dayPhase' in consciousness
+    assert ".world-city-lights.on" in css
+    assert ".world-air-motion.on" in css
+    assert "@keyframes world-city-twinkle" in css
+    assert "@keyframes world-air-drift" in css
 
 
 def test_world_view_assets_are_served_from_static_directory():

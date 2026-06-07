@@ -766,6 +766,39 @@ function renderWorldTimeline(state) {
   timeline.appendChild(current);
 }
 
+function characterBottom(state) {
+  if (!state.anchor) return "4.5%";
+  const normalized = typeof state.y === "number" && Number.isFinite(state.y) ? state.y : 0.50;
+  return `${Math.max(9, Math.min(24, normalized * 34 - 4)).toFixed(2)}%`;
+}
+
+function applyWorldLight(state) {
+  const viewport = document.getElementById("worldViewport");
+  if (viewport && state.daylight) {
+    viewport.dataset.dayPhase = state.daylight.phase;
+  }
+
+  const daylight = document.getElementById("worldDaylight");
+  if (daylight && state.daylight) {
+    daylight.style.background = state.daylight.color;
+    daylight.style.opacity = String(state.daylight.opacity);
+    daylight.style.mixBlendMode = state.daylight.blend;
+  }
+
+  const lampGlow = document.getElementById("worldLampGlow");
+  if (lampGlow) {
+    const hasActiveLight = state.activeLights.includes(state.roomKey);
+    lampGlow.classList.toggle("on", hasActiveLight);
+  }
+
+  const nightPhases = new Set(["deep_night", "evening", "late_night"]);
+  document.getElementById("worldCityLights")?.classList.toggle(
+    "on",
+    nightPhases.has(state.daylight?.phase)
+  );
+  document.getElementById("worldAirMotion")?.classList.add("on");
+}
+
 function layoutWorldStage(state, animate) {
   const viewport = document.getElementById("worldViewport");
   const strip = document.getElementById("worldRoomStrip");
@@ -789,7 +822,9 @@ function layoutWorldStage(state, animate) {
   }
   if (state.pose === "reading") neno.classList.add("reading");
   if (state.pose === "sleeping") neno.classList.add("sleeping");
+  if (state.anchor) neno.classList.add("anchored");
   neno.style.left = `${worldX}px`;
+  neno.style.bottom = characterBottom(state);
 
   const worldWidth = _worldRoomWidth * ROOM_ORDER.length;
   const camera = Math.max(
@@ -802,6 +837,7 @@ function layoutWorldStage(state, animate) {
   document.querySelectorAll("[data-world-map-room]").forEach((cell) => {
     cell.classList.toggle("active", cell.dataset.worldMapRoom === state.roomKey);
   });
+  applyWorldLight(state);
 }
 
 export function renderWorldLive(data) {

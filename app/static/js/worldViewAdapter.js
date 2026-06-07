@@ -28,6 +28,14 @@ const ACTION_ZH = {
   organize: "整理",
 };
 
+const SEAT_ANCHOR = {
+  read_book: { kind: "seat", object: "sofa", x: 0.52, y: 0.72 },
+  sleep: { kind: "seat", object: "bed", x: 0.30, y: 0.62 },
+  water_plant: { kind: "use", object: "plant", x: 0.78, y: 0.58 },
+};
+
+const LIGHT_KEYS = new Set(["lamp", "ceiling_light", "floor_lamp", "desk_lamp", "bedside_lamp"]);
+
 export function actionLabel(action) {
   return ACTION_ZH[action] || action || "发呆";
 }
@@ -46,12 +54,41 @@ function formatDrift(drift) {
     .filter(Boolean);
 }
 
+export function dayGrade(hhmm) {
+  const h = parseInt(String(hhmm || "12:00").split(":")[0], 10);
+  if (h < 5) return { phase: "deep_night", color: "#0e1430", opacity: 0.55, blend: "multiply" };
+  if (h < 8) return { phase: "morning", color: "#ffcaa0", opacity: 0.22, blend: "soft-light" };
+  if (h < 16) return { phase: "day", color: "#fff4e0", opacity: 0.06, blend: "soft-light" };
+  if (h < 19) return { phase: "dusk", color: "#ff9e6b", opacity: 0.30, blend: "soft-light" };
+  if (h < 22) return { phase: "evening", color: "#2a2350", opacity: 0.38, blend: "multiply" };
+  return { phase: "late_night", color: "#0e1430", opacity: 0.52, blend: "multiply" };
+}
+
+function isNight(hhmm) {
+  const h = parseInt(String(hhmm || "12:00").split(":")[0], 10);
+  return h >= 19 || h < 6;
+}
+
+function activeLights(rooms, hhmm) {
+  if (!isNight(hhmm)) return [];
+  return Object.entries(rooms || {})
+    .filter(([, room]) => (room.objects || []).some(
+      (object) => LIGHT_KEYS.has(object.key) && object.state === "on"
+    ))
+    .map(([roomKey]) => roomKey);
+}
+
+function anchorFor(action) {
+  return SEAT_ANCHOR[action] || null;
+}
+
 export function mapWorldSnapshot(world = {}) {
   const roomKey = ROOM_ORDER.includes(world.location) ? world.location : "living_room";
   const room = ROOM_ORDER.indexOf(roomKey);
   const last = world.last || {};
   const action = actionLabel(last.action);
   const pose = last.sleeping ? "sleeping" : poseOf(last.action);
+  const anchor = anchorFor(last.action);
   const kitchenObjects = world.rooms?.kitchen?.objects || [];
   const steam = kitchenObjects.some(
     (object) => object.key === "kettle" && object.state === "boiling"
@@ -61,7 +98,9 @@ export function mapWorldSnapshot(world = {}) {
   return {
     room,
     roomKey,
-    x: DEFAULT_X[roomKey] ?? 0.5,
+    x: anchor?.x ?? DEFAULT_X[roomKey] ?? 0.5,
+    y: anchor?.y ?? 0.50,
+    anchor,
     action,
     thought: last.micro || action,
     inner: last.reasoning || "",
@@ -71,6 +110,8 @@ export function mapWorldSnapshot(world = {}) {
     energyStatus: world.energy_status || "—",
     duration: "",
     time: world.sim_time || "--:--",
+    daylight: dayGrade(world.sim_time),
+    activeLights: activeLights(world.rooms, world.sim_time),
     phase: last.phase || "",
     change,
     moment: action,

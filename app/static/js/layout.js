@@ -641,6 +641,12 @@ function createWorldWorkspace() {
             <img src="/static/img/world/neno-idle-v1.png" alt="Neno">
           </div>
         </div>
+        <div class="world-daylight" id="worldDaylight"></div>
+        <div class="world-lamp-glow" id="worldLampGlow"></div>
+        <div class="world-city-lights" id="worldCityLights" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="world-air-motion" id="worldAirMotion" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="world-vignette"></div>
         <div class="world-stage-meta"><small>场景 · Neno 的家</small><h1>Neno 的家</h1></div>
         <div class="world-minimap" aria-label="房间位置">
