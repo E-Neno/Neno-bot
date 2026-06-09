@@ -279,3 +279,140 @@ async def test_pressure_state_roundtrip(tmp_path: Path):
         assert "wake_reason" in ws.last_tick
     finally:
         await store.stop()
+
+
+# ── ① 滑行接续测试 ──
+
+@pytest.mark.asyncio
+async def test_glide_continues_reading_action(tmp_path: Path):
+    """LLM 开、未唤醒、last_tick.action="读书" → 滑行：action 仍为"读书"，brain 未调用。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=99999.0,
+        world_boredom_drip=1.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        # 预设 last_tick = "读书"（模拟上一拍 LLM 真想选了读书）
+        wstore = WorldStore(load_world_def())
+        ws = await wstore.read()
+        ws.last_tick = {
+            "action": "读书", "reasoning": "沉浸在书里", "drift": [],
+            "ops": [], "micro": None, "event": None, "sleeping": False,
+            "phase": "下午", "real_time": "14:00",
+            "wake": True, "wake_reason": "threshold", "pressure": 0.0,
+        }
+        await wstore.write(ws)
+
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._world_store = wstore
+        loop._brain = brain
+
+        snap = await loop.tick()
+        await _drain(store)
+
+        assert snap["last"]["action"] == "读书"
+        assert brain.call_count == 0  # 没调 LLM
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_glide_falls_back_on_transient_action(tmp_path: Path):
+    """LLM 开、未唤醒、last_tick.action="去厨房"（瞬态）→ 回退 routine_decide。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_pressure_threshold=99999.0,
+        world_boredom_drip=1.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        wstore = WorldStore(load_world_def())
+        ws = await wstore.read()
+        # 放到厨房，让 routine_decide 走厨房分支（烧水/去客厅）
+        ws.location = "kitchen"
+        ws.last_tick = {
+            "action": "去厨房", "reasoning": "想喝点热的", "drift": [],
+            "ops": [], "micro": None, "event": None, "sleeping": False,
+            "phase": "上午", "real_time": "09:00",
+            "wake": False, "wake_reason": "accumulating", "pressure": 0.0,
+        }
+        await wstore.write(ws)
+
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._world_store = wstore
+        loop._brain = brain
+
+        # 固定到 14:00 UTC+8 避免 sleep/wake 转换干扰
+        fake_now = datetime(2026, 6, 8, 14, 0, 0, tzinfo=_TZ8)
+        with patch("app.services.consciousness.world_loop.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            snap = await loop.tick()
+        await _drain(store)
+
+        # 去厨房是瞬态 → 回退 routine_decide → 在厨房会选"烧水"或"去客厅"
+        assert snap["last"]["action"] in {"烧水", "去客厅"}
+        assert brain.call_count == 0
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_llm_disabled_still_uses_routine_every_tick(tmp_path: Path):
+    """world_llm_enabled=False → 每拍 routine_decide，回归测试（行为不变）。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(world_llm_enabled=False)
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _FakeBrain()
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+
+        snap1 = await loop.tick()
+        await _drain(store)
+        snap2 = await loop.tick()
+        await _drain(store)
+
+        # LLM 关 → brain 永不被调用
+        assert brain.call_count == 0
+        # 每拍都有 action（routine_decide 总会返回一个）
+        assert snap1["last"]["action"]
+        assert snap2["last"]["action"]
+    finally:
+        await store.stop()
+
+
+# ── ② 精力重调测试 ──
+
+@pytest.mark.asyncio
+async def test_energy_uses_config_drop_per_tick(tmp_path: Path):
+    """tick 后精力下降量 == cfg.world_energy_drop_per_tick（不再是硬编码 3.0）。"""
+    _init_db(tmp_path)
+    custom_drop = 0.07
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=False,
+        world_energy_drop_per_tick=custom_drop,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        before = await store.read()
+        e0 = before.energy.value
+
+        loop = WorldLoop(store, cfg)
+        await loop.tick()
+        await _drain(store)
+
+        after = await store.read()
+        actual_drop = e0 - after.energy.value
+        assert abs(actual_drop - custom_drop) < 0.001, f"expected drop={custom_drop}, got {actual_drop}"
+    finally:
+        await store.stop()

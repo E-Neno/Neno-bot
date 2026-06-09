@@ -500,6 +500,51 @@ body.world-console-active {
 }
 .world-step-button:disabled { opacity:.55;cursor:wait; }
 
+/* ── 💭 正在想 / 滑行指示 ── */
+.world-thinking {
+  position:absolute;
+  left:50%;
+  top:-36px;
+  transform:translateX(-50%);
+  z-index:10;
+  padding:4px 9px;
+  border:1px solid rgba(239,194,115,.28);
+  border-radius:6px;
+  color:var(--world-amber);
+  background:rgba(17,14,18,.72);
+  backdrop-filter:blur(8px);
+  font:10px var(--world-serif);
+  white-space:nowrap;
+  opacity:0;
+  transition:opacity .45s ease;
+  pointer-events:none;
+}
+.world-thinking.wake { opacity:1; }
+.world-thinking.glide {
+  opacity:.38;
+  color:#918b96;
+  border-color:rgba(255,255,255,.08);
+}
+
+.world-pressure-bar {
+  position:absolute;
+  left:50%;
+  bottom:-8px;
+  transform:translateX(-50%);
+  width:64px;
+  height:3px;
+  border-radius:2px;
+  background:rgba(255,255,255,.06);
+  overflow:hidden;
+  z-index:10;
+}
+.world-pressure-fill {
+  height:100%;
+  border-radius:2px;
+  background:linear-gradient(90deg, rgba(239,194,115,.25), rgba(239,194,115,.65));
+  transition:width .6s ease;
+}
+
 .world-story {
   display:flex;
   flex-direction:column;
@@ -588,6 +633,29 @@ body.world-console-active {
   .world-threads { border-left:0;border-top:1px solid rgba(255,255,255,.055); }
 }
 
+/* 💭 真思考(LLM 唤醒)那一拍的可视标记 —— consciousness.js 切 is-thinking */
+#worldThought.is-thinking {
+  border-color: rgba(245,207,134,.85);
+  box-shadow: 0 0 0 1px rgba(245,207,134,.5), 0 6px 22px -6px rgba(245,207,134,.65);
+  color: #fff3d6;
+}
+#worldNeno.is-thinking::after {
+  content: "💭";
+  position: absolute;
+  left: 50%;
+  top: -26px;
+  transform: translateX(-50%);
+  font-size: 18px;
+  filter: drop-shadow(0 0 6px rgba(245,207,134,.7));
+  animation: worldThinkPulse 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes worldThinkPulse {
+  0%,100% { opacity:.6; transform: translateX(-50%) translateY(0); }
+  50%     { opacity:1;  transform: translateX(-50%) translateY(-3px); }
+}
+
 @media(prefers-reduced-motion:reduce) {
   .world-room-strip,.world-neno,.world-thought { transition:none!important;animation:none!important; }
+  #worldNeno.is-thinking::after { animation:none!important; }
 }

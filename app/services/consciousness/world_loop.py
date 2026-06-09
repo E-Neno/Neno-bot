@@ -35,8 +35,10 @@ OBJ_EMOJI = {
     "ceiling_light": "💡", "chair": "🪑", "plants": "🪴",
 }
 PHASE_ZH = {"morning": "上午", "afternoon": "下午", "evening": "傍晚", "night": "夜里"}
-ENERGY_DROP_PER_TICK = 3.0
 START_SIM_MINUTES = 7 * 60
+
+# 瞬态动作集合：滑行接续时不应延续的动作（移动/睡眠类）
+_TRANSIENT_ACTIONS = {"睡觉", "睡着", "醒来", "去厨房", "去客厅", "去阳台", "回卧室"}
 
 
 def _obj_label(wd, state: WorldState, o: str) -> str:
@@ -246,7 +248,7 @@ class WorldLoop:
             wake, wake_reason = should_wake(pressure, cfg, now=now_real, hard_event=hard)
 
             if wake and cfg.world_llm_enabled:
-                # LLM 路径（真想）
+                # ── 真想：LLM 路径 ──
                 plan_dp = DailyPlan.model_validate(ws.daily_plan) if ws.daily_plan else None
                 q = [drifted.location]
                 if plan_dp:
@@ -266,8 +268,18 @@ class WorldLoop:
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
                 )
                 pressure = pressure_on_wake(pressure, now=now_real)
+            elif cfg.world_llm_enabled:
+                # ── 滑行接续：LLM 开着但这拍没醒 → 继续上一次真想定的事 ──
+                last_action = (ws.last_tick or {}).get("action")
+                if last_action and last_action not in _TRANSIENT_ACTIONS:
+                    action = last_action
+                    reason = "继续手上的事"
+                    ops = []
+                    micro = None
+                else:
+                    action, reason, ops, micro = routine_decide(wd, drifted)
             else:
-                # 免费 mock 路径（滑行）
+                # ── 纯 mock 模式（LLM 关）：保持现状，每拍 routine_decide ──
                 action, reason, ops, micro = routine_decide(wd, drifted)
 
             sim = drifted
@@ -321,7 +333,7 @@ class WorldLoop:
             self._prev_action = action
 
             energy = nstate.energy.model_copy(deep=True)
-            energy.value = max(0.0, energy.value - ENERGY_DROP_PER_TICK)
+            energy.value = max(0.0, energy.value - cfg.world_energy_drop_per_tick)
             await self._state_store.submit_mutation(StateMutation(
                 energy=energy, mood_valence_delta=0.01 + event_mood, reason="world loop tick"))
             nstate = await self._state_store.read()

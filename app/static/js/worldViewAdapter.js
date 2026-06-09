@@ -125,5 +125,7 @@ export function mapWorldSnapshot(world = {}) {
     gone: Array.isArray(world.gone) ? world.gone : [],
     money: world.money ?? "—",
     rooms: world.rooms || {},
+    wake: Boolean(last.wake),
+    pressure: last.pressure ?? 0,
   };
 }

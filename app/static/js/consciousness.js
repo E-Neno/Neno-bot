@@ -870,9 +870,17 @@ export function renderWorldLive(data) {
 
   const thought = document.getElementById("worldThought");
   if (thought) {
-    thought.textContent = state.thought;
+    thought.textContent = state.wake ? `💭 ${state.thought}` : state.thought;
+    thought.classList.toggle("is-thinking", state.wake);
     thought.classList.add("on");
     window.setTimeout(() => thought.classList.remove("on"), 2200);
+  }
+  // 💭 正在想：wake=true 那一拍点亮她头顶的思考标记 + 压力条
+  document.getElementById("worldNeno")?.classList.toggle("is-thinking", state.wake);
+  const pBar = document.getElementById("worldPressureFill");
+  if (pBar) {
+    const pct = Math.max(0, Math.min(100, Number(state.pressure) || 0));
+    pBar.style.width = `${pct}%`;
   }
   document.getElementById("worldSteam")?.classList.toggle("on", state.steam);
   renderWorldPlan(state.plan);

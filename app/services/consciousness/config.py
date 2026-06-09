@@ -44,6 +44,7 @@ class ConsciousnessConfig(BaseModel):
     # 精力
     energy_wake_value: float = 95.0
     energy_decay_rate: float = 0.04
+    world_energy_drop_per_tick: float = float(os.getenv("CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK", "0.01"))
 
     # 睡眠
     sleep_hour: int = 1

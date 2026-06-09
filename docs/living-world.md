@@ -54,6 +54,7 @@ flowchart LR
 | `daily_planner.py` | 生成上午、下午和晚间生活意图 |
 | `day_cycle.py` | 时段、入睡、醒来、反思、计划跨天继承 |
 | `life_events.py` | 从世界状态、时段和内在状态派生低频生活事件 |
+| `world_pressure.py` | 压力触发决策引擎：salience/accumulate/should_wake/on_wake/is_hard 纯函数，门控 LLM 调用 |
 | `world_loop.py` | 正式融合循环与控制台快照的单一实现入口 |
 
 旧的 `LifeLoop`、`LifeSimulation` 和 `ActivityEpisodeStore` 仍承担早期生活线与反思输入。
@@ -83,14 +84,17 @@ flowchart LR
 正式 `WorldLoop.tick()` 当前按以下顺序执行：
 
 1. 读取世界状态和 Neno 内在状态。
-2. 初始化模拟时钟与当日计划。
-3. 判断时段、睡眠和醒来；醒来时运行昨日反思并生成新计划。
+2. 从真实时间（`datetime.now(_TZ8)`，固定 UTC+8）推导世界时钟与时段；不再按 tick 累加模拟分钟。
+3. 判断时段、睡眠和醒来；醒来时运行昨日反思并生成新计划。睡眠时不调 LLM。
 4. 对物品执行自然漂移。
 5. 尝试派生生活事件，并把合法事件操作应用到世界。
-6. 根据开关选择真实 LLM 决策或确定性 fallback（降级规则）。
+6. **压力门控**：把本 tick 事件映射成 salience 种类 → `accumulate` 累积压力 → `should_wake`（用真实秒算 min_gap/预算）。三分支：
+   - `wake 且 world_llm_enabled` → 真实 LLM 决策 + `on_wake` 清零压力；
+   - `world_llm_enabled` 但未唤醒 → 滑行接续（继续上一非瞬态动作，不产生新 ops）；
+   - `world_llm_enabled=False` → 确定性 `routine_decide`（行为与门控前一致）。
 7. 校验并应用最多一组 `world_ops`。
-8. 写回世界、经历、episode、精力和情绪。
-9. 推进模拟时间并返回控制台快照。
+8. 写回世界、压力状态、经历、episode、精力和情绪；`last_tick` 记录 `wake/wake_reason/pressure`。
+9. 返回控制台快照（世界时钟即真实 UTC+8）。
 
 ## 6. 运行开关
 
@@ -100,13 +104,21 @@ flowchart LR
 |---|---:|---|
 | `CONSCIOUSNESS_WORLD_LOOP_ENABLED` | `false` | 注册常驻世界 tick |
 | `CONSCIOUSNESS_WORLD_LOOP_INTERVAL` | `8` | 真实秒数间隔 |
-| `CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` | `30` | 每次推进的模拟分钟 |
-| `CONSCIOUSNESS_WORLD_LLM_ENABLED` | `false` | 允许 WorldBrain 调用真实模型 |
+| `CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` | `30` | **已废弃于时间推进**（世界时钟改真实 UTC+8）；仅 `recent_actions` 的 `ago_min` 仍用 |
+| `CONSCIOUSNESS_WORLD_LLM_ENABLED` | `false` | 允许 WorldBrain 调用真实模型（仍受压力门控） |
 | `CONSCIOUSNESS_WORLD_PLANNER_ENABLED` | `false` | 允许 DailyPlanner 调用真实模型 |
+| `CONSCIOUSNESS_WORLD_PRESSURE_THRESHOLD` | `100` | 压力攒够此值才唤醒 LLM |
+| `CONSCIOUSNESS_WORLD_WAKE_MIN_GAP` | `60` | 两次唤醒最小真实秒间隔 |
+| `CONSCIOUSNESS_WORLD_WAKE_BUDGET_PER_HOUR` | `12` | 每真实小时唤醒上限（成本护栏，窗口过期自动重置）|
+| `CONSCIOUSNESS_WORLD_BOREDOM_DRIP` | `1` | 无事件时每 tick 的压力滴漏 |
+| `CONSCIOUSNESS_WORLD_SALIENCE` | 内置表 | 事件→显著度 JSON 覆盖（须覆盖真实 `LifeEvent.kind`）|
+| `CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` | `0.01` | 每 tick 精力下降（实时时钟下平缓，不再几分钟掉光）|
 | `OPENROUTER_WORLD_MODEL` | `openai/gpt-4o-mini` | 世界决策与计划模型 |
 | `CONSCIOUSNESS_WORLD_LLM_TIMEOUT` | `20` | 世界模型超时秒数 |
 
 注意：应用加载 `.env` 后，运行值可能与 shell 中直接实例化配置不同。启动前应通过调试端点确认 `loop_enabled`，不要仅凭代码默认值判断。
+
+**切换 LLM 开关**：用 `scripts/neno-llm.ps1 on|off|status`（改 `.env` 的 LLM/PLANNER + 重启 uvicorn）。开 LLM 时成本由预算护栏钉在约 ¥0.6/天；关时走免费 mock，世界仍持续运行。她按真实 UTC+8 作息，夜里睡眠不调 LLM。
 
 ## 7. 调试端点
 
@@ -118,8 +130,10 @@ flowchart LR
 | `GET` | `/debug/consciousness/world-live` | 只读新世界快照，不启动写者 |
 | `POST` | `/debug/consciousness/world-tick` | 手动执行一次正式 `WorldLoop.tick()` 并写库 |
 
-控制台“生活世界 · 新引擎”面板展示模拟时间、房间、物品、精力、情绪、
-钱包、计划、事件和最近行动。
+控制台“生活世界 · 新引擎”面板展示世界时间、房间、物品、精力、情绪、
+钱包、计划、事件和最近行动。`/test` 是重写的“跟随镜头单间”可视化（`worldViewAdapter.js`
++ `world-view.css`），写实房间底图 + 风格化角色精灵，随时段调光；`last_tick.wake=true`
+那一拍她头顶冒 💭，标示这是真实 LLM 思考而非滑行 mock。
 
 ## 8. 数据表
 
@@ -145,7 +159,8 @@ Living World 直接使用：
 5. 旧 `LifeLoop/LifeSimulation` 与新 `WorldLoop` 并存，状态所有权还需进一步收敛。
 6. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
 7. 用户消息尚未作为世界事件进入；回复、不回复、延迟和多段回复属于后续 Phase 5。
-8. 2026-06-07 综合回归为 `222 passed, 3 failed`：两个旧 LifeLoop 断言未适配新活动，一个 world-live 测试假定运行配置必为关闭。
+8. 已知偶发失败：`test_life_loop` / `test_reflection_engine` 中少量旧断言在 UTC+8 凌晨时段因 wallclock 跨天而 flaky（属早期 LifeLoop 遗留，非 WorldLoop 问题）。
+9. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
 
 因此，当前可以称为“已接入应用、可持续运行的公寓世界引擎纵向实现”，
 不能称为用户目标意义上的完整虚拟生活已经完成。
