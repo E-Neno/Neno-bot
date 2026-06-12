@@ -453,6 +453,7 @@ def run_platform_chat_turn(
         success=True,
         reply=result["reply"],
         session_id=session_id,
+        world_action=result.get("world_action"),
     )
 
 

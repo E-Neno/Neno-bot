@@ -79,6 +79,7 @@ class WorldBrain:
         memories=None,
         recent=None,
         event=None,
+        threads=None,
     ) -> str:
         """给 LLM 的世界上下文：世界约束 + 时段 + 内在状态 + 计划 + 最近行动 + 记忆。
 
@@ -112,6 +113,26 @@ class WorldBrain:
                 for r in recent
             )
             lines.append(f"[最近做过，别重复] {rec_txt}")
+        # ── 牵挂渲染（活跃：unresolved 且 (loss/residue 任意强度 或 goal carry>=2)）──
+        if threads:
+            _GOAL_ACTIVE = 2
+            active = [
+                t for t in threads
+                if not t.get("resolved") and (
+                    t["kind"] in ("loss", "residue") or
+                    (t["kind"] == "goal" and t.get("carry_count", 0) >= _GOAL_ACTIVE)
+                )
+            ]
+            active.sort(key=lambda t: t.get("intensity", 0), reverse=True)
+            if active:
+                parts = []
+                for t in active[:3]:
+                    if t["kind"] == "goal":
+                        parts.append(f"{t['topic']}(惦记{t.get('carry_count', 0)}天)")
+                    else:
+                        mood = t.get("mood", "")
+                        parts.append(f"{t['topic']}({mood})" if mood else t["topic"])
+                lines.append("[心里还挂着] " + "；".join(parts))
         if memories:
             mem_txt = "；".join(
                 m.get("content", "") if isinstance(m, dict) else str(m)
@@ -153,13 +174,14 @@ class WorldBrain:
         memories=None,
         recent=None,
         event=None,
+        threads=None,
     ) -> ActionPlan:
         if not self._config.world_llm_enabled:
             return self._mock_decide(state)
         try:
             return await self._llm_decide(
                 state, nstate=nstate, phase=phase, plan=plan,
-                memories=memories, recent=recent, event=event,
+                memories=memories, recent=recent, event=event, threads=threads,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("world LLM decide failed, falling back to mock: %s", exc)
@@ -175,6 +197,7 @@ class WorldBrain:
         memories=None,
         recent=None,
         event=None,
+        threads=None,
     ) -> ActionPlan:
         if not OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -184,7 +207,7 @@ class WorldBrain:
                 "role": "user",
                 "content": self._build_user_message(
                     state, nstate=nstate, phase=phase, plan=plan,
-                    memories=memories, recent=recent, event=event,
+                    memories=memories, recent=recent, event=event, threads=threads,
                 ),
             },
         ]

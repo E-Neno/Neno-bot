@@ -118,7 +118,7 @@ body.world-console-active {
   display:grid;
   grid-template-columns:260px minmax(0,1fr);
   overflow:auto;
-  background:#f6f7fb;
+  background:#16141a;
 }
 
 .control-workspace > .console-sidebar {
@@ -484,12 +484,16 @@ body.world-console-active {
   background:var(--world-amber);
 }
 
-.world-step-button {
+.world-step-controls {
   position:absolute;
   left:50%;
   bottom:16px;
   z-index:14;
   transform:translateX(-50%);
+  display:flex;
+  gap:8px;
+}
+.world-step-button {
   border:1px solid rgba(255,255,255,.18);
   border-radius:7px;
   padding:8px 13px;
@@ -600,17 +604,33 @@ body.world-console-active {
 }
 .world-chronicle-head strong { font-size:10px; }
 .world-chronicle-head span { color:#5f5965;font:8px var(--world-mono); }
-.world-chronicle-content { display:grid;grid-template-columns:minmax(0,1fr) 280px;height:calc(100% - 40px); }
-.world-timeline { display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:5px;padding:10px 12px; }
-.world-moment { position:relative;padding:8px 9px;overflow:hidden;border:1px solid rgba(255,255,255,.045);border-radius:6px;color:#aaa3af;background:rgba(255,255,255,.025);font-size:9px; }
+.world-chronicle-content { display:grid;grid-template-columns:minmax(0,1fr) 280px;height:calc(100% - 40px);align-items:start; }
+.world-timeline { display:flex;flex-wrap:wrap;align-content:start;gap:7px;padding:10px 12px; }
+.world-moment { position:relative;flex:0 1 auto;min-width:120px;max-width:190px;padding:8px 11px;overflow:hidden;border:1px solid rgba(255,255,255,.045);border-radius:6px;color:#aaa3af;background:rgba(255,255,255,.025);font-size:12px;line-height:1.45; }
 .world-moment::before { content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:#55515a; }
-.world-moment time { display:block;margin-bottom:5px;color:#69636f;font:7px var(--world-mono); }
+.world-moment time { display:block;margin-bottom:5px;color:#69636f;font:9px var(--world-mono); }
 .world-moment.current { color:#f2e7d7;background:rgba(239,194,115,.07); }
 .world-moment.current::before { background:var(--world-amber); }
 .world-threads { padding:10px 13px;border-left:1px solid rgba(255,255,255,.055); }
-.world-threads > span { color:#69636f;font:7px var(--world-mono); }
-.world-thread { margin-top:7px;padding-left:9px;border-left:1px solid #625c67;color:#918a97;font-size:8px;line-height:1.45; }
-.world-thread b { color:#ddd4c8;font-weight:600;margin-right:5px; }
+.world-threads > span { color:#69636f;font:11px var(--world-mono);letter-spacing:.5px; }
+.world-thread { margin-top:9px;padding-left:11px;border-left:1px solid #625c67;color:#918a97;font-size:12px;line-height:1.5; }
+.world-thread b { color:#ddd4c8;font-weight:600;margin-right:6px; }
+
+/* 心里还挂着：跨天牵挂列表（强度条 / 惦记天数 / 心情）—— consciousness.js renderWorldThreads */
+.world-thread-list { margin-top:9px;display:flex;flex-direction:column;gap:8px; }
+.world-thread-empty { color:#69636f;font-size:12px;font-style:italic;padding-left:11px; }
+.world-thread-item { display:flex;align-items:center;gap:8px;padding-left:11px;border-left:2px solid #625c67;font-size:13px;line-height:1.5;color:#918a97; }
+.world-thread-item.kind-loss { border-left-color:#a86b78; }
+.world-thread-item.kind-goal { border-left-color:#6b9a86; }
+.world-thread-item.kind-residue { border-left-color:#8b81a6; }
+.world-thread-item .thread-icon { font-size:15px;flex:none; }
+.world-thread-item .thread-topic { color:#ddd4c8;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.world-thread-item .thread-bar { flex:none;letter-spacing:2px;font-size:12px; }
+.world-thread-item.kind-loss .thread-bar { color:#c98c98; }
+.world-thread-item.kind-goal .thread-bar { color:#8bc0a8; }
+.world-thread-item.kind-residue .thread-bar { color:#ada2c8; }
+.world-thread-item .thread-meta { flex:none;color:#8a8390;font-size:11px; }
+.world-thread-pending { margin-top:11px; }
 
 @media(max-width:1100px) {
   .world-workspace { grid-template-columns:66px minmax(0,1fr);grid-template-rows:520px auto 154px; }

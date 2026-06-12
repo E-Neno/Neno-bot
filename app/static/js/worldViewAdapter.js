@@ -123,6 +123,7 @@ export function mapWorldSnapshot(world = {}) {
     carriedOver: Array.isArray(world.carried_over) ? world.carried_over : [],
     recent: Array.isArray(world.recent) ? world.recent : [],
     gone: Array.isArray(world.gone) ? world.gone : [],
+    threads: Array.isArray(world.threads) ? world.threads : [],
     money: world.money ?? "—",
     rooms: world.rooms || {},
     wake: Boolean(last.wake),

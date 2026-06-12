@@ -85,7 +85,8 @@ flowchart LR
 
 1. 读取世界状态和 Neno 内在状态。
 2. 从真实时间（`datetime.now(_TZ8)`，固定 UTC+8）推导世界时钟与时段；不再按 tick 累加模拟分钟。
-3. 判断时段、睡眠和醒来；醒来时运行昨日反思并生成新计划。睡眠时不调 LLM。
+2b. **精力前置结算**：`energy_dynamics.step_energy` 按真实经过时间积分——醒着掉电、睡着回血，速率受 上一拍动作 / 心情 / 昼夜 调制（`activity/mood/circadian_mult`），单次结算 cap 12h 防停机尖刺，冷启动 `updated_real_ts=None` 不掉电。结算值就地写入内存供本拍判睡醒与快照，并入队持久化（不依赖「submit→read 立刻可见」）。
+3. 判断睡眠和醒来——**只看精力阈值**（醒着且 `value<20` 入睡、睡着且 `value>=90` 醒来），作息从精力自然涌现，不再受时段闸门约束；昼夜调制把就寝软锚在夜里。醒来时运行昨日反思并生成新计划；睡眠时 tick 不调 LLM，但精力照常按真实时间回血。
 4. 对物品执行自然漂移。
 5. 尝试派生生活事件，并把合法事件操作应用到世界。
 6. **压力门控**：把本 tick 事件映射成 salience 种类 → `accumulate` 累积压力 → `should_wake`（用真实秒算 min_gap/预算）。三分支：
@@ -112,13 +113,13 @@ flowchart LR
 | `CONSCIOUSNESS_WORLD_WAKE_BUDGET_PER_HOUR` | `12` | 每真实小时唤醒上限（成本护栏，窗口过期自动重置）|
 | `CONSCIOUSNESS_WORLD_BOREDOM_DRIP` | `1` | 无事件时每 tick 的压力滴漏 |
 | `CONSCIOUSNESS_WORLD_SALIENCE` | 内置表 | 事件→显著度 JSON 覆盖（须覆盖真实 `LifeEvent.kind`）|
-| `CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` | `0.01` | 每 tick 精力下降（实时时钟下平缓，不再几分钟掉光）|
+| `CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` | `0.01` | **已废弃于精力推进**：精力改由 `energy_dynamics.step_energy` 按真实时间积分（仿 `SIM_MIN_PER_TICK`）；配置项保留仅为兼容，WorldLoop 不再据它掉电 |
 | `OPENROUTER_WORLD_MODEL` | `openai/gpt-4o-mini` | 世界决策与计划模型 |
 | `CONSCIOUSNESS_WORLD_LLM_TIMEOUT` | `20` | 世界模型超时秒数 |
 
 注意：应用加载 `.env` 后，运行值可能与 shell 中直接实例化配置不同。启动前应通过调试端点确认 `loop_enabled`，不要仅凭代码默认值判断。
 
-**切换 LLM 开关**：用 `scripts/neno-llm.ps1 on|off|status`（改 `.env` 的 LLM/PLANNER + 重启 uvicorn）。开 LLM 时成本由预算护栏钉在约 ¥0.6/天；关时走免费 mock，世界仍持续运行。她按真实 UTC+8 作息，夜里睡眠不调 LLM。
+**切换 LLM 开关**：用 `scripts/neno-llm.ps1 on|off|status`（改 `.env` 的 LLM/PLANNER + 重启 uvicorn）。开 LLM 时成本由预算护栏钉在约 ¥0.6/天；关时走免费 mock，世界仍持续运行。她的作息由精力阈值自然涌现（累了就睡、睡够就醒），昼夜调制把就寝软锚在夜里；睡眠时不调 LLM，故可让作息完全涌现而无需到点必睡的兜底。
 
 ## 7. 调试端点
 
@@ -161,6 +162,7 @@ Living World 直接使用：
 7. 用户消息尚未作为世界事件进入；回复、不回复、延迟和多段回复属于后续 Phase 5。
 8. 已知偶发失败：`test_life_loop` / `test_reflection_engine` 中少量旧断言在 UTC+8 凌晨时段因 wallclock 跨天而 flaky（属早期 LifeLoop 遗留，非 WorldLoop 问题）。
 9. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
+10. 精力已改真实时间积分、作息改精力阈值涌现（解决「总在睡」「夜里掉不动」两个 P0），单元测试已覆盖纯函数与 tick 集成；但**涌现作息曲线与多日牵挂因果仍待真实运行时长时段验收**（需开后端连续观察就寝相位是否锚夜、不漂移）——代码就绪，体感未实测。
 
 因此，当前可以称为“已接入应用、可持续运行的公寓世界引擎纵向实现”，
 不能称为用户目标意义上的完整虚拟生活已经完成。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -60,11 +61,17 @@ class WorldState(BaseModel):
     gone_log: list[dict] = Field(default_factory=list)  # [{object,label,cause,when}]
     # 竖切7：最近一步快照（持久化，端点只读 DB 即可还原"她刚在干嘛"）
     last_tick: dict | None = None
+    # 第一刀：跨天牵挂（open thread）。骑现有单行 JSON，旧数据自动补 []。
+    open_threads: list[dict] = Field(default_factory=list)
     # 压力触发状态（第二刀 2b：门控 LLM 调用）
     pressure_value: float = 0.0
     pressure_last_wake_ts: float | None = None
     pressure_wakes_this_hour: int = 0
     pressure_hour_anchor: float | None = None
+    # Phase 5：睡着/沉浸时漏掉的用户消息，等她空下来/醒来再回（骑现有单行 JSON）。
+    # 每条 {session_id, message, user_message_ids, trace_id, source, platform,
+    #       chat_type, user_id, received_at, received_sim_min}
+    pending_messages: list[dict] = Field(default_factory=list)
 
 
 WorldOpType = Literal["set_state", "move", "create_object", "destroy_object"]
@@ -184,3 +191,79 @@ def objects_in_room(world_def: WorldDef, state: WorldState, room: str) -> list[s
 
 def room_count(world_def: WorldDef, state: WorldState, room: str) -> int:
     return len(objects_in_room(world_def, state, room))
+
+
+# ── 牵挂工具（第一刀：跨天 open thread）──────────────────────────────────────
+
+def make_thread(kind: str, topic: str, *, day: str, intensity: float, mood: str = "") -> dict:
+    """创建一条牵挂 dict。id 用于去重。"""
+    if kind == "loss":
+        tid = f"loss:{topic}"
+    elif kind == "goal":
+        tid = f"goal:{topic}"
+    else:
+        tid = f"residue:{topic}"
+    return {
+        "id": tid,
+        "kind": kind,
+        "topic": topic,
+        "intensity": intensity,
+        "mood": mood,
+        "born_day": day,
+        "last_touch_day": day,
+        "carry_count": 0,
+        "resolved": False,
+    }
+
+
+def find_thread(threads: list[dict], tid: str) -> dict | None:
+    """按 id 查找牵挂；未找到返回 None。"""
+    for t in threads:
+        if t.get("id") == tid:
+            return t
+    return None
+
+
+_PUNCT_RE = re.compile(r"[\s，。、！？,.!?…·；;：:\"'""'']+")
+
+
+def _norm_intent(s: str) -> str:
+    """归一化意图文本：去标点与空白，便于跨措辞匹配。"""
+    return _PUNCT_RE.sub("", s or "")
+
+
+def _bigram_jaccard(a: str, b: str) -> float:
+    """字符二元组 Jaccard 相似度，用于吸收 LLM 措辞抖动。"""
+    ba = {a[i:i + 2] for i in range(len(a) - 1)}
+    bb = {b[i:i + 2] for i in range(len(b) - 1)}
+    if not ba or not bb:
+        return 1.0 if a == b else 0.0
+    union = len(ba | bb)
+    return len(ba & bb) / union if union else 0.0
+
+
+def find_goal_thread(threads: list[dict], intent: str, *, threshold: float = 0.5) -> dict | None:
+    """为「未竟」goal 找已有牵挂，比 exact id 健壮。
+
+    匹配规则（保守，宁可不并也不误并不同目标）：
+      1. 归一化后相等 / 互为子串 → 命中
+      2. 否则取字符 bigram Jaccard 最高者；≥ threshold 才算同一目标
+    这样 LLM planner 每天措辞抖动（"把那本书读完" / "读完那本书"）仍能累积 carry_count。
+    """
+    target = _norm_intent(intent)
+    if not target:
+        return None
+    best: dict | None = None
+    best_score = 0.0
+    for t in threads:
+        if t.get("kind") != "goal" or t.get("resolved"):
+            continue
+        cand = _norm_intent(t.get("topic", ""))
+        if not cand:
+            continue
+        if cand == target or cand in target or target in cand:
+            return t
+        score = _bigram_jaccard(cand, target)
+        if score > best_score:
+            best, best_score = t, score
+    return best if best_score >= threshold else None

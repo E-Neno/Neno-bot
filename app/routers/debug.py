@@ -864,8 +864,12 @@ async def consciousness_world_live():
 
 
 @router.post("/consciousness/world-tick", dependencies=[Depends(require_admin_token)])
-async def consciousness_world_tick():
-    """手动推进世界一步（即使常驻 loop 关着也能在控制台点一下走一步）。"""
+async def consciousness_world_tick(force: str | None = Query(default=None)):
+    """手动推进世界一步（即使常驻 loop 关着也能在控制台点一下走一步）。
+
+    force=wake：先把她置醒（status=awake、energy=95），再 tick。仅 debug 观察用，
+    不进生产常驻 loop（生产 tick 不传 force，行为不变）。改状态走 StateStore 单写者队列。
+    """
     import asyncio as _asyncio
 
     from app.services.consciousness.config import ConsciousnessConfig
@@ -876,6 +880,16 @@ async def consciousness_world_tick():
     store = StateStore(db=None, config=cfg)
     await store.start()
     try:
+        if force == "wake":
+            from app.services.consciousness.models import StateMutation
+            ns = await store.read()
+            e = ns.energy.model_copy(deep=True)
+            e.status, e.value, e.description = "awake", 95.0, "(debug) 被叫醒了"
+            await store.submit_mutation(StateMutation(energy=e, reason="debug force wake"))
+            for _ in range(200):
+                if store._queue.empty():
+                    break
+                await _asyncio.sleep(0.01)
         loop = WorldLoop(store, cfg)
         snap = await loop.tick()
         for _ in range(200):  # 排空写者，确保精力等落库

@@ -55,6 +55,18 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "").strip()
 SYSTEM_PROMPT = load_text("prompts/system.txt")
 
+# Phase 5：把 Neno 真实生活状态（精力/情绪/在干嘛/牵挂）注入主聊天系统提示。
+# read-only 零模型成本；置 false 可退回纯人设无状态聊天。
+CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED = _env_bool("CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED", True)
+
+# Phase 5：在场门控。她睡着/沉浸时由世界状态决定「晚点回」，攒进 pending，
+# 等 world_loop 在她空下来/醒来那拍捡起来回。改变聊天回复时机，默认关闭，
+# 需配合 world_loop_enabled 常驻循环消费 pending 才有意义。
+WORLD_PRESENCE_GATE_ENABLED = _env_bool("WORLD_PRESENCE_GATE_ENABLED", False)
+# 捡起 pending 后，平台来源(WX/QQ)的回复是否真发回去。默认 dry_run(只建候选+演练不真发)，
+# 置 true 才经 neno-bridge 真推。web/控制台来源始终只写 session（刷新可见），不受此开关影响。
+WORLD_PRESENCE_WX_AUTO_SEND = _env_bool("WORLD_PRESENCE_WX_AUTO_SEND", False)
+
 BURST_MERGE_ENABLED = _env_bool("BURST_MERGE_ENABLED", True)
 BURST_MERGE_WINDOW_SECONDS = _env_float("BURST_MERGE_WINDOW_SECONDS", 12)
 BURST_MERGE_MAX_MESSAGES = _env_int("BURST_MERGE_MAX_MESSAGES", 5)

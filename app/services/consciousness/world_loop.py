@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
 from datetime import date, datetime, timedelta, timezone
+
+from app.config import WORLD_PRESENCE_GATE_ENABLED, WORLD_PRESENCE_WX_AUTO_SEND
 
 from .action_validator import validate_ops
 from .activity_episode_store import ActivityEpisodeStore
 from .config import ConsciousnessConfig
 from .daily_planner import DailyPlan, DailyPlanner
 from .day_cycle import DayCycle
+from .energy_dynamics import step_energy
+from .presence import DEFER_COOLDOWN_SECONDS
 from .experience_recorder import ExperienceRecorder, InnerExperienceIn
 from .life_events import LifeEventSource
 from .memory_recall import MemoryRecall
@@ -19,7 +24,7 @@ from .state_store import StateStore
 from .world_brain import WorldBrain
 from .world_drift import apply_drift
 from .world_model import (
-    apply_op, load_world_def, objects_in_room, WorldOp, WorldState,
+    _label_of, apply_op, find_goal_thread, find_thread, load_world_def, make_thread, objects_in_room, WorldOp, WorldState,
 )
 from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
 from .world_store import WorldStore
@@ -107,6 +112,12 @@ def build_snapshot(wd, state: WorldState, nstate) -> dict:
         "carried_over": plan.get("carried_over", []),
         "recent": state.recent_actions[-6:],
         "gone": [g.get("label") or g.get("object", "") for g in state.gone_log[-5:]],
+        "threads": [
+            {"kind": t["kind"], "topic": t["topic"],
+             "intensity": round(t["intensity"], 2), "carry": t.get("carry_count", 0),
+             "mood": t.get("mood", ""), "resolved": t.get("resolved", False)}
+            for t in (state.open_threads or [])
+        ],
         "last": last,
     }
     if nstate is not None:
@@ -148,6 +159,7 @@ class WorldLoop:
         self._rng = random.Random()
         self._prev_action = ""
         self._day_no = 1
+        self._consuming = False  # 防重入：pending 捡取期间不重复捡（杜绝双发）
 
     def register_jobs(self, scheduler) -> bool:
         """world_loop_enabled 为真才注册定时 tick。返回是否注册。"""
@@ -183,7 +195,22 @@ class WorldLoop:
         phase = self._day_cycle.phase_of(hour)
         nstate = await self._state_store.read()
 
-        transition = self._day_cycle.check_sleep_wake(nstate, phase, hour)
+        # ── 精力前置结算：按真实经过时间积分（上一拍动作 + 心情 + 昼夜调制）──
+        # submit 只管持久化（异步落库）；判睡醒与下游分支一律用就地结算后的内存值，
+        # 避免依赖「submit→read 立刻可见」（队列在 tick 内不让出事件循环，读不到刚提交的值）。
+        now_real = time.time()
+        prev_act = (ws.last_tick or {}).get("action", "")
+        settled = step_energy(
+            nstate.energy, status=nstate.energy.status, action=prev_act,
+            valence=nstate.mood.valence, hour8=hour, now=now_real,
+            time_scale=cfg.world_time_scale,
+        )
+        nstate.energy = settled
+        await self._state_store.submit_mutation(
+            StateMutation(energy=settled, reason="energy wallclock step")
+        )
+
+        transition = self._day_cycle.check_sleep_wake(nstate)
         sleeping = False
         action = reason = ""
         micro = None
@@ -242,6 +269,20 @@ class WorldLoop:
             if drifted.money < 30:
                 event_kinds.append("money_low")
 
+            # 牵挂压力注入：仅 LLM 路径，不影响 mock 模式的 pressure 数值
+            if cfg.world_llm_enabled:
+                _active = [
+                    t for t in (ws.open_threads or [])
+                    if not t.get("resolved") and (
+                        t["kind"] in ("loss", "residue") or
+                        (t["kind"] == "goal" and t.get("carry_count", 0) >= 2)
+                    )
+                ]
+                if _active:
+                    event_kinds.append("open_thread")
+                    if max(t.get("intensity", 0) for t in _active) >= 0.7:
+                        event_kinds.append("open_thread")
+
             now_real = time.time()
             hard = is_hard(event_kinds, cfg)
             pressure = accumulate(pressure, event_kinds, cfg, now=now_real)
@@ -260,9 +301,18 @@ class WorldLoop:
                     {"action": r.get("action", ""), "ago_min": r.get("ago_min", "?")}
                     for r in drifted.recent_actions[-6:]
                 ]
+                # 活跃牵挂传给 brain（loss/residue 任意强度，goal 需 carry>=2）
+                active_threads = [
+                    t for t in (ws.open_threads or [])
+                    if not t.get("resolved") and (
+                        t["kind"] in ("loss", "residue") or
+                        (t["kind"] == "goal" and t.get("carry_count", 0) >= 2)
+                    )
+                ]
                 plan_obj = await self._brain.decide(
                     drifted, nstate=nstate, phase=phase, plan=plan_dp,
                     memories=memories, recent=recent_ctx, event=event,
+                    threads=active_threads,
                 )
                 action, reason, micro, ops = (
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
@@ -284,9 +334,25 @@ class WorldLoop:
 
             sim = drifted
             op_log = []
+            today_str = now8.date().isoformat()
             for op in ops:
                 acc, rej = validate_ops(wd, sim, [op])
                 if acc:
+                    # loss 牵挂诞生：destroy_object 被接受后派生
+                    if op.op == "destroy_object":
+                        label = _label_of(wd, sim, op.object)
+                        tid = f"loss:扔掉的{label}"
+                        threads_mut = list(sim.open_threads or [])
+                        existing = find_thread(threads_mut, tid)
+                        if existing:
+                            existing["intensity"] = 0.6  # 重新被勾起
+                            existing["last_touch_day"] = today_str
+                        else:
+                            threads_mut.append(make_thread(
+                                "loss", f"扔掉的{label}",
+                                day=today_str, intensity=0.6, mood="空落落",
+                            ))
+                        sim.open_threads = threads_mut
                     sim = apply_op(wd, sim, op)
                     op_log.append({"r": "accept", "t": op.object or op.to_room, "s": op.state})
                 else:
@@ -306,6 +372,10 @@ class WorldLoop:
                     if it["phase"] == phase and not it.get("done"):
                         if any(w and w in (action + reason) for w in [it["intent"][:2]]):
                             it["done"] = True
+                            # goal 牵挂闭合：对应 intent 完成 → resolved（健壮匹配，吸收措辞抖动）
+                            th = find_goal_thread(sim.open_threads or [], it["intent"])
+                            if th:
+                                th["resolved"] = True
             sim.last_tick = {
                 "action": action, "reasoning": reason, "drift": drift,
                 "ops": op_log, "micro": micro,
@@ -332,11 +402,11 @@ class WorldLoop:
                     pass
             self._prev_action = action
 
-            energy = nstate.energy.model_copy(deep=True)
-            energy.value = max(0.0, energy.value - cfg.world_energy_drop_per_tick)
+            # 精力已在 tick 开头按真实时间结算；此处只提交心情变化，不再动 energy。
             await self._state_store.submit_mutation(StateMutation(
-                energy=energy, mood_valence_delta=0.01 + event_mood, reason="world loop tick"))
+                mood_valence_delta=0.01 + event_mood, reason="world loop tick"))
             nstate = await self._state_store.read()
+            nstate.energy = settled  # 结算值刚入队未落库，贴回去让快照显示真实精力
         else:
             ws.sim_minutes = sim_minutes
             ws.last_tick = {
@@ -347,6 +417,83 @@ class WorldLoop:
             }
             await self._world_store.write(ws)
 
+        # Phase 5：她空下来/醒来那拍，把睡着或沉浸时漏掉的用户消息捡起来回。
+        if WORLD_PRESENCE_GATE_ENABLED:
+            try:
+                await self._consume_pending(ws, nstate, action)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("consume pending error: %s", exc)
+
         ws.sim_minutes = sim_minutes  # 写回真实时间，不再累加
         await self._world_store.write(ws)
         return build_snapshot(wd, ws, nstate)
+
+    async def _consume_pending(self, ws, nstate, action: str) -> bool:
+        """她醒着、且某条 pending 的冷却已到 → 让她重新面对这条消息，由对话脑临场决定。
+
+        ④：这里不判「要不要回」(那是她对话脑的事)，只管两件物理/节流：
+        睡着不捡(她没意识)、她说过「暂不回」的给冷却别每拍打扰。她若仍不想回，再攒一会儿。
+        """
+        if self._consuming:
+            return False  # 上一次还没回完，别重复捡
+        if nstate.energy.status == "sleeping":
+            return False  # 物理：睡着没意识，不捡
+        now = time.time()
+        pending = list(ws.pending_messages or [])
+        due = [p for p in pending if float(p.get("reconsider_after") or 0.0) <= now]
+        if not due:
+            return False
+
+        by_session: dict[str, list[dict]] = {}
+        for p in due:
+            sid = str(p.get("session_id") or "")
+            if sid:
+                by_session.setdefault(sid, []).append(p)
+        if not by_session:
+            return False
+
+        # 先认领：把到期条目从 pending 移除并立刻落库（防双发：慢 LLM 期间下一拍读不到这批）。
+        claimed_ids = {id(p) for items in by_session.values() for p in items}
+        ws.pending_messages = [p for p in pending if id(p) not in claimed_ids]
+        await self._world_store.write(ws)
+
+        self._consuming = True
+        try:
+            from app.services.chat.turn_orchestrator import run_chat_turn_from_persisted_user_messages
+
+            for sid, items in by_session.items():
+                msg = "\n".join(str(p.get("message", "")) for p in items if p.get("message"))
+                uids = [int(i) for p in items for i in (p.get("user_message_ids") or [])]
+                tid = str(items[-1].get("trace_id") or "world_pickup")
+                try:
+                    result = await asyncio.to_thread(
+                        run_chat_turn_from_persisted_user_messages,
+                        session_id=sid, message=msg, trace_id=tid,
+                        user_message_ids=uids,
+                        source=str(items[-1].get("source") or "chat"),
+                    )
+                    if (result or {}).get("deferred"):
+                        # 她重新考虑后仍选择不回 → 重新攒，加冷却，过一阵再让她面对
+                        for p in items:
+                            p["reconsider_after"] = now + DEFER_COOLDOWN_SECONDS
+                        ws.pending_messages = (ws.pending_messages or []) + items
+                        continue
+                    # 平台来源(WX/QQ)：回复经 proactive 链路推回；web/控制台只写 session（刷新可见）。
+                    platform = sid.split(":")[0] if ":" in sid else str(items[-1].get("platform") or "")
+                    reply = str((result or {}).get("reply") or "").strip()
+                    if platform in ("wx", "qq") and reply:
+                        from app.services.proactive.send_executor import send_world_expression
+                        try:
+                            await asyncio.to_thread(
+                                send_world_expression, sid, [reply], tid,
+                                dry_run=not WORLD_PRESENCE_WX_AUTO_SEND,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            _log.warning("world expression send failed sid=%s: %s", sid, exc)
+                except Exception as exc:  # noqa: BLE001
+                    # 生成失败：回滚进 pending，下一拍再试（认领已落库，不与别处重复）
+                    ws.pending_messages = (ws.pending_messages or []) + items
+                    _log.warning("pending pickup failed sid=%s, re-stashed: %s", sid, exc)
+        finally:
+            self._consuming = False
+        return True

@@ -1144,6 +1144,12 @@ async function sendToNeno(api, payload) {
   try {
     const data = await postToNeno(payload);
     const reply = typeof data?.reply === "string" ? data.reply.trim() : "";
+    const worldAction = typeof data?.world_action === "string" ? data.world_action : "";
+    // Phase 5 在场模型：她睡着/沉浸 → reply_later，本轮故意不回（醒来/空了会补），静默别报错
+    if (data?.success === true && (worldAction === "reply_later" || worldAction === "no_expression")) {
+      api?.logger?.info?.(`[neno-bridge] world_action=${worldAction}, staying silent (she'll reply later)`);
+      return { handled: true, text: "", noReply: true };
+    }
     if (data?.success === true && reply) {
       api?.logger?.info?.(`[neno-bridge] replied len=${reply.length}`);
       return { handled: true, text: reply };

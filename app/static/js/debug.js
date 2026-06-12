@@ -101,9 +101,9 @@ export function renderDebugDiagnosis(diagnosis) {
 
   let suggestionHtml = "";
   if (priorityCard) {
-    suggestionHtml = `<div style="margin-top: 8px; font-weight: normal; font-size: 0.9em; padding: 4px; background: rgba(255,255,255,0.5); border-radius: 4px;">👉 <strong>优先处理建议：</strong>请先查看下方 <b>「${priorityCard.title || priorityCard.id}」</b> 卡片解决 ${levelLabel(priorityCard.level)} 级问题。</div>`;
+    suggestionHtml = `<div style="margin-top: 8px; font-weight: normal; font-size: 0.9em; padding: 4px; background: var(--milk-surface-soft); border-radius: 4px;">👉 <strong>优先处理建议：</strong>请先查看下方 <b>「${priorityCard.title || priorityCard.id}」</b> 卡片解决 ${levelLabel(priorityCard.level)} 级问题。</div>`;
   } else {
-    suggestionHtml = `<div style="margin-top: 8px; font-weight: normal; font-size: 0.9em; color: #555;">✅ 当前系统运转良好，暂无需要紧急处理的异常卡片。</div>`;
+    suggestionHtml = `<div style="margin-top: 8px; font-weight: normal; font-size: 0.9em; color: var(--milk-muted);">✅ 当前系统运转良好，暂无需要紧急处理的异常卡片。</div>`;
   }
 
   overallBox.innerHTML = `<strong>${overall.title || "诊断未加载"}：</strong>${overall.summary || "-"}${suggestionHtml}`;

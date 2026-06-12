@@ -184,7 +184,7 @@ async def tick_main():
             phase = dc.phase_of(hour)
             nstate = await state_store.read()
 
-            transition = dc.check_sleep_wake(nstate, phase, hour)
+            transition = dc.check_sleep_wake(nstate)  # 阈值版涌现作息（非权威 demo，未接精力积分）
             sleeping = False
             action = reason = ""
             micro = None

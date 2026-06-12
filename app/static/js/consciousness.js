@@ -192,7 +192,7 @@ function renderStep1(step) {
   if (!step) return "Step 1 未执行";
   const color = step.result === "proceed" ? "#16a34a" : "#94a3b8";
   return `<div style="padding:8px;border-left:3px solid ${color};margin-bottom:6px">
-    <b>结果：</b>${step.result} <span style="color:#64748b">(${step.reason || ""})</span>
+    <b>结果：</b>${step.result} <span style="color:var(--milk-muted)">(${step.reason || ""})</span>
   </div>`;
 }
 
@@ -211,8 +211,8 @@ function renderStep2(step) {
     ${r.reason ? `<br><b>理由：</b>${escapeHtml(r.reason)}` : ""}
     ${r.target_user_id ? `<br><b>目标：</b>${escapeHtml(r.target_user_id)}` : ""}
     ${r.urgency ? `<br><b>紧急度：</b>${r.urgency}` : ""}
-    <br><span style="color:#64748b;font-size:12px">model: ${escapeHtml(step.model || "-")}</span>
-    ${step.raw_response ? `<details style="margin-top:4px"><summary style="cursor:pointer;color:#64748b;font-size:12px">原始响应</summary><pre style="font-size:11px;white-space:pre-wrap;margin-top:4px;padding:6px;background:#f8fafc;border-radius:6px">${escapeForPre(step.raw_response)}</pre></details>` : ""}
+    <br><span style="color:var(--milk-muted);font-size:12px">model: ${escapeHtml(step.model || "-")}</span>
+    ${step.raw_response ? `<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--milk-muted);font-size:12px">原始响应</summary><pre style="font-size:11px;white-space:pre-wrap;margin-top:4px;padding:6px;background:var(--milk-surface-muted);border-radius:6px">${escapeForPre(step.raw_response)}</pre></details>` : ""}
   </div>`;
 }
 
@@ -224,7 +224,7 @@ function renderStep3(step) {
     <br><b>model：</b>${escapeHtml(step.model || "-")}
     ${step.raw_text ? `<br><b>原始文案：</b>${escapeHtml(step.raw_text)}` : ""}
     ${step.fragments_after_split?.length ? `<br><b>碎片化后（不发送）：</b><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${step.fragments_after_split.map((f, i) => `<span class="tag sent">${i + 1}. ${escapeHtml(f)}</span>`).join("")}</div>` : ""}
-    <br><span style="color:#64748b;font-size:12px;font-style:italic">will_not_send: true — 仅预览，不实际发送</span>
+    <br><span style="color:var(--milk-muted);font-size:12px;font-style:italic">will_not_send: true — 仅预览，不实际发送</span>
   </div>`;
 }
 
@@ -240,7 +240,7 @@ function renderThinkResult(data) {
 
   if (!data || !data.success) {
     box.innerHTML = `<div class="check-item" style="border-left-color:#dc2626">
-      <div class="check-name" style="color:#991b1b">执行失败</div>
+      <div class="check-name" style="color:var(--milk-red-text)">执行失败</div>
       <div class="check-detail">${escapeHtml(data?.error || "未知错误")}</div>
     </div>`;
     return;
@@ -249,7 +249,7 @@ function renderThinkResult(data) {
   const steps = data.steps || {};
   const eventsUsed = data.events_used || [];
 
-  let html = `<div style="margin-bottom:8px;color:#64748b;font-size:12px">trace_id: ${escapeHtml(data.trace_id || "-")} · 使用 ${eventsUsed.length} 个事件</div>`;
+  let html = `<div style="margin-bottom:8px;color:var(--milk-muted);font-size:12px">trace_id: ${escapeHtml(data.trace_id || "-")} · 使用 ${eventsUsed.length} 个事件</div>`;
 
   html += `<details open><summary style="cursor:pointer;font-weight:700;margin-bottom:6px">Step 1: 规则过滤</summary>${renderStep1(steps.step1_rule_filter)}</details>`;
   html += `<details open><summary style="cursor:pointer;font-weight:700;margin-bottom:6px">Step 2: LLM 判断</summary>${renderStep2(steps.step2_judge)}</details>`;
@@ -726,6 +726,55 @@ function setWorldText(id, value, fallback = "—") {
   if (element) element.textContent = value == null || value === "" ? fallback : String(value);
 }
 
+const THREAD_ICON = { loss: "💔", goal: "🎯", residue: "🌫️" };
+
+// 「心里还挂着」：把跨天牵挂渲染成带强度条的列表（intensity / 惦记天数 / 心情）
+function renderWorldThreads(threads) {
+  const list = document.getElementById("worldThreadList");
+  if (!list) return;
+  const active = (Array.isArray(threads) ? threads : [])
+    .filter((t) => t && !t.resolved)
+    .sort((a, b) => (Number(b.intensity) || 0) - (Number(a.intensity) || 0))
+    .slice(0, 5);
+  list.innerHTML = "";
+  if (!active.length) {
+    const empty = document.createElement("div");
+    empty.className = "world-thread-empty";
+    empty.textContent = "此刻没有特别惦记的事";
+    list.appendChild(empty);
+    return;
+  }
+  for (const t of active) {
+    const row = document.createElement("div");
+    row.className = `world-thread-item kind-${t.kind || "residue"}`;
+
+    const icon = document.createElement("span");
+    icon.className = "thread-icon";
+    icon.textContent = THREAD_ICON[t.kind] || "🌫️";
+    row.appendChild(icon);
+
+    const topic = document.createElement("span");
+    topic.className = "thread-topic";
+    topic.textContent = t.topic || "";
+    row.appendChild(topic);
+
+    const filled = Math.max(1, Math.min(4, Math.round((Number(t.intensity) || 0) * 4)));
+    const bar = document.createElement("span");
+    bar.className = "thread-bar";
+    bar.textContent = "●".repeat(filled) + "○".repeat(4 - filled);
+    bar.title = `惦记强度 ${(Number(t.intensity) || 0).toFixed(2)}`;
+    row.appendChild(bar);
+
+    const meta = document.createElement("span");
+    meta.className = "thread-meta";
+    if (t.kind === "goal" && Number(t.carry) > 0) meta.textContent = `惦记 ${t.carry} 天`;
+    else if (t.mood) meta.textContent = t.mood;
+    if (meta.textContent) row.appendChild(meta);
+
+    list.appendChild(row);
+  }
+}
+
 function renderWorldPlan(items) {
   const list = document.getElementById("worldPlan");
   if (!list) return;
@@ -843,7 +892,7 @@ function layoutWorldStage(state, animate) {
 export function renderWorldLive(data) {
   if (!ensureWorldPanel()) return;
   if (!data || data.success === false || !data.world) {
-    setWorldText("cWorldLiveStatus", data?.reason || "世界引擎暂无数据。可检查 Admin Token，或点击“步进一步”。");
+    setWorldText("cWorldLiveStatus", data?.reason || "世界引擎暂无数据。可检查 Admin Token，或点击“走一步”。");
     setWorldText("worldRuntimeStatus", "世界状态不可用");
     return;
   }
@@ -862,8 +911,7 @@ export function renderWorldLive(data) {
   setWorldText("worldEnergyStatus", state.energyStatus);
   setWorldText("worldChange", state.change || "世界暂时没有新的变化。");
   setWorldText("worldPendingThread", state.plan.filter((item) => !item.done).map((item) => item.intent).filter(Boolean).join("；") || "暂无");
-  setWorldText("worldCarriedThread", state.carriedOver.map((item) => item.intent || item).join("；") || "暂无");
-  setWorldText("worldGoneThread", state.gone.join("；") || "暂无");
+  renderWorldThreads(state.threads);
   setWorldText("worldChronicleRange", `今天 · ${state.time}`);
   setWorldText("worldRuntimeStatus", data.loop_enabled ? "世界循环运行中" : "常驻循环关闭 · 可手动推进");
   setWorldText("cWorldLiveStatus", data.loop_enabled ? "每 5 秒读取真实世界状态。" : "常驻循环未开启；当前显示数据库快照，可手动推进。");
@@ -902,20 +950,21 @@ export async function loadWorldLive() {
   }
 }
 
-async function worldTickOnce(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "推进中..."; }
+async function worldTickOnce(btn, wake = false) {
+  const label = wake ? "叫醒她" : "走一步";
+  if (btn) { btn.disabled = true; btn.textContent = wake ? "叫醒中..." : "推进中..."; }
   try {
     const data = await requestJson(
-      "/debug/consciousness/world-tick",
+      "/debug/consciousness/world-tick" + (wake ? "?force=wake" : ""),
       { method: "POST", headers: getAdminHeaders() },
-      "推进世界失败："
+      wake ? "叫醒失败：" : "推进世界失败："
     );
     if (data?.world) renderWorldLive({ success: true, world: data.world, loop_enabled: data.loop_enabled });
     else await loadWorldLive();
   } catch (err) {
     setWorldText("cWorldLiveStatus", err.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "步进一步"; }
+    if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }
 
@@ -935,6 +984,7 @@ function stopWorldLiveRefresh() {
     _worldLiveInterval = null;
   }
 }
+
 
 function startDesireRefresh() {
   stopDesireRefresh();
@@ -967,6 +1017,30 @@ export function onConsciousnessPanelInactive() {
 }
 
 // ── Bind ──────────────────────────────────────────────────
+
+// 总览「她此刻」桥接卡：拉 world-live 填一瞥（点击跳世界引擎）
+async function loadOverviewBridge() {
+  if (!document.getElementById("overviewBridgeCard")) return;
+  if (!getAdminHeaders()["X-Admin-Token"]) return;
+  try {
+    const data = await requestJson(
+      "/debug/consciousness/world-live",
+      { method: "GET", headers: getAdminHeaders() },
+      ""
+    );
+    const w = data?.world;
+    if (!w) return;
+    const last = w.last || {};
+    const sleeping = last.sleeping || w.energy_status === "sleeping";
+    setWorldText("overviewBridgeLine",
+      `${ROOM_NAME[w.location] || w.location || "—"} · ${sleeping ? "睡眠中" : "清醒"} · ${w.sim_time || "--:--"}`);
+    setWorldText("overviewBridgeEnergy", Math.round(Number(w.energy) || 0));
+    setWorldText("overviewBridgeMood", w.mood || "—");
+    setWorldText("overviewBridgePressure", last.pressure != null ? last.pressure : "—");
+  } catch (err) {
+    // 静默：桥接卡非关键
+  }
+}
 
 export function bindConsciousnessEvents() {
   const injectBtn = document.getElementById("cInjectBtn");
@@ -1014,6 +1088,17 @@ export function bindConsciousnessEvents() {
     worldStepBtn.dataset.bound = "true";
     worldStepBtn.addEventListener("click", () => worldTickOnce(worldStepBtn));
   }
+  const worldWakeBtn = document.getElementById("cWorldWakeBtn");
+  if (worldWakeBtn && !worldWakeBtn.dataset.bound) {
+    worldWakeBtn.dataset.bound = "true";
+    worldWakeBtn.addEventListener("click", () => worldTickOnce(worldWakeBtn, true));
+  }
+
+  // 总览桥接卡：载入一次 + 总览激活时每 6s 刷新
+  loadOverviewBridge();
+  window.setInterval(() => {
+    if (document.getElementById("overviewPanel")?.classList.contains("active")) loadOverviewBridge();
+  }, 6000);
 
   window.addEventListener("resize", () => {
     if (_latestWorldState) layoutWorldStage(_latestWorldState, false);

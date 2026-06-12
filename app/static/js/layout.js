@@ -2,13 +2,24 @@ import { createElement, setOptionalText } from "./dom.js";
 
 export const panelDefinitions = [
   ["overviewPanel", "总览"],
-  ["chatPanel", "聊天测试"],
-  ["consciousnessPanel", "意识面板"],
-  ["proactivePanel", "主动消息"],
-  ["memoryPanel", "记忆库"],
+  ["chatPanel", "聊天"],
+  ["consciousnessPanel", "大脑"],
+  ["proactivePanel", "主动"],
+  ["memoryPanel", "记忆"],
   ["configPanel", "配置"],
-  ["debugPanel", "日志 / 调试"],
+  ["debugPanel", "日志"],
 ];
+
+// 导航图标（内联 SVG，stroke=currentColor，不依赖在线图标字体）
+const NAV_ICONS = {
+  overviewPanel: '<path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 11h7v9h-7z"/><path d="M4 14h7v6H4z"/>',
+  chatPanel: '<path d="M4 6h16v10H8l-4 3z"/>',
+  consciousnessPanel: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5 3 3 0 0 0 2 4 3 3 0 0 0 5 1V4z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5 3 3 0 0 1-2 4 3 3 0 0 1-5 1"/>',
+  proactivePanel: '<path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  memoryPanel: '<path d="M6 4h11a2 2 0 0 1 2 2v14l-6-3-6 3V4z"/>',
+  configPanel: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
+  debugPanel: '<path d="M4 5h16v14H4z"/><path d="M8 9l3 3-3 3M13 15h4"/>',
+};
 
 export function getCardByElementId(id) {
   return document.getElementById(id)?.closest(".card") || null;
@@ -301,6 +312,24 @@ export function buildProactivePanel(panel, header) {
   }
   grid.appendChild(configCard);
 
+  // 板块重排：常用置顶（状态 / 待处理 / 时间线），调试下沉（判断 / 手动 / 测试 / 目标 / 历史 / 配置）。
+  // 重新 appendChild 已挂载节点会原地移动它，故此处仅按新顺序重排并插入分隔。
+  const proactiveDivider = createElement("div", "rail-divider", "调试 / 高级");
+  for (const node of [
+    statusCard,
+    pendingCard,
+    eventsCard,
+    proactiveDivider,
+    decisionCard,
+    runOnceCard,
+    testCard,
+    targetsCard,
+    history,
+    configCard,
+  ]) {
+    grid.appendChild(node);
+  }
+
   proactiveCard?.remove();
 }
 
@@ -310,111 +339,52 @@ export function buildConsciousnessPanel(panel, header) {
 
   // ── Phase 1: Body State Card ──
   const bodyCard = createElement("div", "card");
-  bodyCard.appendChild(createElement("h3", "", "身体状态 (Phase 1)"));
-  bodyCard.appendChild(createElement("div", "config-help", "energy/mood/desire 实时值，desire 每秒自动刷新。"));
+  bodyCard.appendChild(createElement("h3", "", "生命体征"));
+  bodyCard.appendChild(createElement("div", "config-help", "精力 / 情绪 / 表达欲 实时值，每秒自动刷新。"));
   const refreshRow = createElement("div", "row");
   const refreshBtn = createElement("button", "secondary auxiliary", "刷新状态");
   refreshBtn.id = "cRefreshStateBtn";
   refreshRow.appendChild(refreshBtn);
   bodyCard.appendChild(refreshRow);
 
-  const stateGrid = createElement("div", "status-grid");
-  stateGrid.style.gridTemplateColumns = "1fr";
-  stateGrid.style.gap = "12px";
+  const stateGrid = createElement("div", "vitals-grid");
 
-  // Energy
-  const energySection = createElement("div");
-  energySection.style.border = "1px solid var(--milk-border-soft)";
-  energySection.style.borderRadius = "14px";
-  energySection.style.padding = "12px";
-  energySection.style.background = "#fffbf7";
-  const energyHead = createElement("div");
-  energyHead.style.display = "flex";
-  energyHead.style.justifyContent = "space-between";
-  energyHead.style.alignItems = "center";
-  energyHead.style.marginBottom = "6px";
-  energyHead.append(
-    createElement("div", "status-label", "精力 Energy"),
-    createElement("div", "status-value", "-")
-  );
-  energyHead.lastChild.id = "cEnergyValue";
-  const energyMeta = createElement("div");
-  energyMeta.style.fontSize = "12px";
-  energyMeta.style.color = "var(--milk-muted)";
-  energyMeta.style.marginBottom = "6px";
-  energyMeta.append(
-    createElement("span", "", "状态: "),
-    createElement("span", "", "-")
-  );
-  energyMeta.lastChild.id = "cEnergyStatus";
-  const energyDesc = createElement("div");
-  energyDesc.style.fontSize = "12px";
-  energyDesc.style.color = "var(--milk-muted)";
-  energyDesc.id = "cEnergyDesc";
-  const energyBar = createElement("div");
-  energyBar.id = "cEnergyBar";
-  energySection.append(energyHead, energyMeta, energyDesc, energyBar);
-  stateGrid.appendChild(energySection);
+  const makeVital = (kind, label, valueId, barId, metaNode) => {
+    const v = createElement("div", `vital vital-${kind}`);
+    const top = createElement("div", "vital-top");
+    const num = createElement("span", "vital-num", "-");
+    num.id = valueId;
+    top.append(createElement("span", "vital-label", label), num);
+    const bar = createElement("div", "vital-bar");
+    bar.id = barId;
+    v.append(top, bar, metaNode);
+    return v;
+  };
 
-  // Mood
-  const moodSection = createElement("div");
-  moodSection.style.border = "1px solid var(--milk-border-soft)";
-  moodSection.style.borderRadius = "14px";
-  moodSection.style.padding = "12px";
-  moodSection.style.background = "#fffbf7";
-  const moodHead = createElement("div");
-  moodHead.style.display = "flex";
-  moodHead.style.justifyContent = "space-between";
-  moodHead.style.alignItems = "center";
-  moodHead.style.marginBottom = "6px";
-  moodHead.append(
-    createElement("div", "status-label", "情绪 Mood"),
-    createElement("div", "status-value", "-")
-  );
-  moodHead.lastChild.id = "cMoodValue";
-  const moodDetail = createElement("div");
-  moodDetail.style.fontSize = "12px";
-  moodDetail.style.color = "var(--milk-muted)";
-  moodDetail.style.marginBottom = "6px";
-  moodDetail.id = "cMoodDetail";
-  const moodDesc = createElement("div");
-  moodDesc.style.fontSize = "12px";
-  moodDesc.style.color = "var(--milk-muted)";
-  moodDesc.id = "cMoodDesc";
-  const moodBar = createElement("div");
-  moodBar.id = "cMoodBar";
-  moodSection.append(moodHead, moodDetail, moodDesc, moodBar);
-  stateGrid.appendChild(moodSection);
+  // 精力
+  const eMeta = createElement("div", "vital-meta");
+  const eStatus = createElement("span", "", "-");
+  eStatus.id = "cEnergyStatus";
+  const eDesc = createElement("span", "", "");
+  eDesc.id = "cEnergyDesc";
+  eMeta.append(createElement("span", "vital-meta-key", "状态 "), eStatus, document.createTextNode(" · "), eDesc);
+  stateGrid.append(makeVital("energy", "精力", "cEnergyValue", "cEnergyBar", eMeta));
 
-  // Desire
-  const desireSection = createElement("div");
-  desireSection.style.border = "1px solid var(--milk-border-soft)";
-  desireSection.style.borderRadius = "14px";
-  desireSection.style.padding = "12px";
-  desireSection.style.background = "#fffbf7";
-  const desireHead = createElement("div");
-  desireHead.style.display = "flex";
-  desireHead.style.justifyContent = "space-between";
-  desireHead.style.alignItems = "center";
-  desireHead.style.marginBottom = "6px";
-  desireHead.append(
-    createElement("div", "status-label", "表达欲 Desire"),
-    createElement("div", "status-value", "-")
-  );
-  desireHead.lastChild.id = "cDesireValue";
-  const desireExpress = createElement("div");
-  desireExpress.style.fontSize = "12px";
-  desireExpress.style.color = "var(--milk-muted)";
-  desireExpress.style.marginBottom = "6px";
-  desireExpress.append(
-    createElement("span", "", "上次表达: "),
-    createElement("span", "", "-")
-  );
-  desireExpress.lastChild.id = "cDesireExpress";
-  const desireBar = createElement("div");
-  desireBar.id = "cDesireBar";
-  desireSection.append(desireHead, desireExpress, desireBar);
-  stateGrid.appendChild(desireSection);
+  // 情绪
+  const mMeta = createElement("div", "vital-meta");
+  const mDetail = createElement("span", "", "-");
+  mDetail.id = "cMoodDetail";
+  const mDesc = createElement("span", "", "");
+  mDesc.id = "cMoodDesc";
+  mMeta.append(mDetail, document.createTextNode(" · "), mDesc);
+  stateGrid.append(makeVital("mood", "情绪", "cMoodValue", "cMoodBar", mMeta));
+
+  // 表达欲
+  const dMeta = createElement("div", "vital-meta");
+  const dExpress = createElement("span", "", "-");
+  dExpress.id = "cDesireExpress";
+  dMeta.append(createElement("span", "vital-meta-key", "上次表达 "), dExpress);
+  stateGrid.append(makeVital("desire", "表达欲", "cDesireValue", "cDesireBar", dMeta));
 
   bodyCard.appendChild(stateGrid);
 
@@ -430,45 +400,10 @@ export function buildConsciousnessPanel(panel, header) {
   bodyCard.appendChild(createElement("div", "status", ""));
   bodyCard.lastChild.id = "consciousnessStateStatus";
 
-  // Experiences
-  const expCard = createElement("div", "card");
-  expCard.appendChild(createElement("h3", "", "今日经历"));
-  const expBox = createElement("div", "small panel-list");
-  expBox.id = "cExperiences";
-  expBox.textContent = "暂无";
-  expCard.appendChild(expBox);
+  grid.append(bodyCard);
 
-  grid.append(bodyCard, expCard);
 
-  // ── Phase 2: World & Events Card ──
-  const worldCard = createElement("div", "card");
-  worldCard.appendChild(createElement("h3", "", "世界感知 (Phase 2)"));
-  worldCard.appendChild(createElement("div", "config-help", "当前天气、热搜和事件池状态。"));
-
-  const weatherGrid = createElement("div", "status-grid");
-  weatherGrid.style.gridTemplateColumns = "repeat(3, minmax(0, 1fr))";
-  appendStatusMetric(weatherGrid, "天气", "cWeatherText");
-  appendStatusMetric(weatherGrid, "温度", "cWeatherTemp");
-  appendStatusMetric(weatherGrid, "降雨", "cWeatherRain");
-  worldCard.appendChild(weatherGrid);
-
-  const topicsLabel = createElement("div", "status-label");
-  topicsLabel.style.marginTop = "10px";
-  topicsLabel.textContent = "热搜";
-  worldCard.appendChild(topicsLabel);
-  const topicsBox = createElement("div");
-  topicsBox.id = "cHotTopics";
-  topicsBox.style.marginTop = "4px";
-  topicsBox.textContent = "暂无";
-  worldCard.appendChild(topicsBox);
-
-  const worldMetaGrid = createElement("div", "status-grid");
-  worldMetaGrid.style.marginTop = "10px";
-  worldMetaGrid.style.gridTemplateColumns = "1fr 1fr";
-  appendStatusMetric(worldMetaGrid, "时间感知", "cWorldTime");
-  appendStatusMetric(worldMetaGrid, "感知时间", "cWorldPerception");
-  worldCard.appendChild(worldMetaGrid);
-
+  // ── 事件池 ──
   const eventsCard = createElement("div", "card");
   eventsCard.appendChild(createElement("h3", "", "事件池"));
   eventsCard.appendChild(createElement("div", "config-help", "event_log 中的 pending/consumed/expressed 事件。"));
@@ -479,11 +414,11 @@ export function buildConsciousnessPanel(panel, header) {
   eventsCard.appendChild(createElement("div", "status", ""));
   eventsCard.lastChild.id = "cEventStatus";
 
-  grid.append(worldCard, eventsCard);
+  grid.append(eventsCard);
 
   // ── Phase 3a: Think Card ──
   const thinkCard = createElement("div", "card");
-  thinkCard.appendChild(createElement("h3", "", "思考过程 (Phase 3a)"));
+  thinkCard.appendChild(createElement("h3", "", "思考过程"));
   thinkCard.appendChild(createElement("div", "config-help", "手动注入测试事件，触发 Neno 三步决策（规则过滤 → 判断 → 生成），结果仅预览不发送。"));
 
   // Inject form
@@ -655,7 +590,10 @@ function createWorldWorkspace() {
           <span data-world-map-room="kitchen">厨</span>
           <span data-world-map-room="balcony">台</span>
         </div>
-        <button class="world-step-button" id="cWorldStepBtn" type="button">步进一步</button>
+        <div class="world-step-controls">
+          <button class="world-step-button" id="cWorldStepBtn" type="button">走一步</button>
+          <button class="world-step-button" id="cWorldWakeBtn" type="button">叫醒她</button>
+        </div>
         <div class="world-stage-clock"><strong id="worldClock">--:--</strong><span id="worldPhase">等待世界数据</span></div>
       </div>
     </section>
@@ -688,10 +626,11 @@ function createWorldWorkspace() {
           <div class="world-moment current" id="worldCurrentMoment"><time>--:--</time>正在加载</div>
         </div>
         <div class="world-threads">
-          <span>仍在发生</span>
-          <div class="world-thread"><b>未完计划</b><span id="worldPendingThread">等待计划数据</span></div>
-          <div class="world-thread"><b>带到今天</b><span id="worldCarriedThread">暂无</span></div>
-          <div class="world-thread"><b>失去的东西</b><span id="worldGoneThread">暂无</span></div>
+          <span>心里还挂着</span>
+          <div class="world-thread-list" id="worldThreadList">
+            <div class="world-thread-empty">此刻没有特别惦记的事</div>
+          </div>
+          <div class="world-thread world-thread-pending"><b>未完计划</b><span id="worldPendingThread">等待计划数据</span></div>
         </div>
       </div>
     </section>
@@ -759,7 +698,11 @@ export function buildConsoleLayout() {
   const nav = createElement("nav", "console-nav");
   nav.setAttribute("aria-label", "Neno 测试页导航");
   for (const [panelId, label] of panelDefinitions) {
-    const button = createElement("button", "", label);
+    const button = createElement("button", "nav-btn");
+    const icon = NAV_ICONS[panelId] || "";
+    button.innerHTML =
+      `<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>` +
+      `<span>${label}</span>`;
     button.type = "button";
     button.dataset.panelTarget = panelId;
     button.addEventListener("click", () => setActivePanel(panelId));
@@ -772,15 +715,40 @@ export function buildConsoleLayout() {
   if (statsCard) {
     overview.panel.appendChild(statsCard);
   }
+  // 她此刻：桥接世界引擎的一瞥（点击跳到世界引擎 tab）
+  const bridgeCard = createElement("div", "card bridge-card");
+  bridgeCard.id = "overviewBridgeCard";
+  bridgeCard.setAttribute("role", "button");
+  bridgeCard.setAttribute("tabindex", "0");
+  const bridgeHead = createElement("div", "bridge-head");
+  bridgeHead.append(
+    createElement("span", "bridge-title", "她此刻"),
+    createElement("span", "bridge-jump", "去世界引擎 →")
+  );
+  bridgeCard.appendChild(bridgeHead);
+  const bridgeLine = createElement("div", "bridge-line", "读取世界状态…");
+  bridgeLine.id = "overviewBridgeLine";
+  bridgeCard.appendChild(bridgeLine);
+  const bridgeStats = createElement("div", "bridge-stats");
+  bridgeStats.innerHTML =
+    '<span>精力 <b id="overviewBridgeEnergy">—</b></span>' +
+    '<span>心情 <b id="overviewBridgeMood">—</b></span>' +
+    '<span>压力 <b id="overviewBridgePressure">—</b></span>';
+  bridgeCard.appendChild(bridgeStats);
+  const jumpWorld = () => document.getElementById("worldWorkspaceButton")?.click();
+  bridgeCard.addEventListener("click", jumpWorld);
+  bridgeCard.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpWorld(); } });
+  overview.panel.appendChild(bridgeCard);
+
   const quickCard = createElement("div", "card");
   quickCard.appendChild(createElement("h3", "", "快捷入口"));
   const quickActions = createElement("div", "overview-actions");
   for (const [panelId, label] of [
-    ["chatPanel", "打开聊天测试"],
-    ["consciousnessPanel", "打开意识面板"],
-    ["proactivePanel", "打开主动消息"],
-    ["memoryPanel", "打开记忆库"],
-    ["debugPanel", "打开日志 / 调试"],
+    ["chatPanel", "打开聊天"],
+    ["consciousnessPanel", "打开大脑"],
+    ["proactivePanel", "打开主动"],
+    ["memoryPanel", "打开记忆"],
+    ["debugPanel", "打开日志"],
   ]) {
     const button = createElement("button", "secondary", label);
     button.type = "button";
@@ -791,7 +759,7 @@ export function buildConsoleLayout() {
   quickCard.appendChild(quickActions);
   overview.panel.appendChild(quickCard);
 
-  const chatPanel = createPanel("chatPanel", "聊天测试", "单页完成会话切换、历史查看、真实输入预览和调试。");
+  const chatPanel = createPanel("chatPanel", "聊天", "跟她对话、切换会话、查看真实输入预览与会话调试。");
   const currentSession = createElement("div", "panel-subtitle", "当前打开 session：-");
   currentSession.id = "currentSessionStatus";
   chatPanel.header.appendChild(currentSession);
@@ -807,7 +775,7 @@ export function buildConsoleLayout() {
   appendStatusMetric(sessionSummaryGrid, "已载入消息", "currentSessionMessageCount");
   appendStatusMetric(sessionSummaryGrid, "预览入口", "currentSessionPreviewMode");
   sessionSummaryCard.appendChild(sessionSummaryGrid);
-  chatSide.appendChild(sessionSummaryCard);
+  // 当前上下文卡在下方按新顺序统一插入
   const routingCard = createElement("div", "card");
   routingCard.appendChild(createElement("h3", "", "Session Routing Control"));
   routingCard.appendChild(createElement("div", "config-help", "查询当前平台来源 routing 状态，直接设置 override 到指定 session，或 clear 恢复自动归属。只影响后续入站消息。"));
@@ -866,37 +834,26 @@ export function buildConsoleLayout() {
   routingCard.lastChild.id = "routingSourceHint";
   routingCard.appendChild(createElement("div", "small", "尚无 explain"));
   routingCard.lastChild.id = "routingExplainBox";
-  if (sessionCard) {
-    chatSide.appendChild(sessionCard);
-  }
+  // ── 重排：常用置顶（会话/上下文/Live Gate/记忆），调试下沉 ──
+  if (sessionCard) chatSide.appendChild(sessionCard);
+  chatSide.appendChild(sessionSummaryCard);
+  if (sessionDebugCard) chatSide.appendChild(sessionDebugCard);
+  if (usedMemoryCard) chatSide.appendChild(usedMemoryCard);
+  if (candidateCard) chatSide.appendChild(candidateCard);
+  chatSide.appendChild(createElement("div", "rail-divider", "调试 / 高级"));
+  if (relationshipCard) chatSide.appendChild(relationshipCard);
   chatSide.appendChild(routingCard);
-  if (relationshipCard) {
-    chatSide.appendChild(relationshipCard);
-  }
-  if (chatPreviewCard) {
-    chatSide.appendChild(chatPreviewCard);
-  }
-  if (messageDebugCard) {
-    chatSide.appendChild(messageDebugCard);
-  }
-  if (sessionDebugCard) {
-    chatSide.appendChild(sessionDebugCard);
-  }
-  if (usedMemoryCard) {
-    chatSide.appendChild(usedMemoryCard);
-  }
-  if (candidateCard) {
-    chatSide.appendChild(candidateCard);
-  }
+  if (chatPreviewCard) chatSide.appendChild(chatPreviewCard);
+  if (messageDebugCard) chatSide.appendChild(messageDebugCard);
   chatGrid.appendChild(chatSide);
   chatPanel.panel.appendChild(chatGrid);
 
-  const proactivePanel = createPanel("proactivePanel", "主动消息", "QQ 主动候选、自动状态和主动消息配置。");
+  const proactivePanel = createPanel("proactivePanel", "主动", "她主动找人聊：当前状态、待处理候选、调度时间线，调试工具在下方。");
   if (proactiveCard) {
     buildProactivePanel(proactivePanel.panel, proactivePanel.header);
   }
 
-  const consciousnessPanel = createPanel("consciousnessPanel", "意识面板", "意识引擎实时状态、世界感知与思考过程预览。");
+  const consciousnessPanel = createPanel("consciousnessPanel", "大脑", "她的生命体征、事件池与思考过程——意识引擎实时状态。");
   buildConsciousnessPanel(consciousnessPanel.panel, consciousnessPanel.header);
 
   const memoryPanel = createPanel("memoryPanel", "记忆库", "查看、编辑、启用和停用记忆。");

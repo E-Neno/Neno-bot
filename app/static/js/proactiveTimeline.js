@@ -148,9 +148,9 @@ function renderProactiveRunOnceResult(data) {
 
   const panel = document.createElement("div");
   panel.style.padding = "10px";
-  panel.style.background = "#f9f9f9";
-  panel.style.border = "1px solid #ddd";
-  panel.style.borderRadius = "4px";
+  panel.style.background = "var(--milk-surface-soft)";
+  panel.style.border = "1px solid var(--milk-border)";
+  panel.style.borderRadius = "8px";
   panel.style.marginTop = "8px";
 
   const actionLabel = proactiveRunActionLabel(data.action);
@@ -168,10 +168,10 @@ function renderProactiveRunOnceResult(data) {
   panel.innerHTML = `
     <div style="margin-bottom: 6px;"><strong>📌 当前收口：</strong>${scopeLabel}</div>
     <div style="margin-bottom: 6px;"><strong>🎯 本次目标：</strong>${targetLabel}</div>
-    <div style="margin-bottom: 6px;"><strong>🚦 执行结果：</strong>${actionLabel} <span style="color:#888;font-size:0.9em;">(dry_run_only: ${data.dry_run_only})</span></div>
+    <div style="margin-bottom: 6px;"><strong>🚦 执行结果：</strong>${actionLabel} <span style="color:var(--milk-muted);font-size:0.9em;">(dry_run_only: ${data.dry_run_only})</span></div>
     <div style="margin-bottom: 6px;"><strong>🛑 详细/阻塞：</strong>${reasonText}</div>
     <div style="margin-bottom: 6px;"><strong>🧭 能力边界：</strong>${scopeSummary}</div>
-    <div style="color: #444; font-size: 0.95em; border-top: 1px dashed #ccc; padding-top: 6px; margin-top: 6px;"><strong>💡 下一步建议：</strong>${suggestion}</div>
+    <div style="color: var(--milk-text); font-size: 0.95em; border-top: 1px dashed var(--milk-border); padding-top: 6px; margin-top: 6px;"><strong>💡 下一步建议：</strong>${suggestion}</div>
   `;
 
   result.appendChild(panel);

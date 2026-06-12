@@ -16,6 +16,7 @@ def build_chat_messages_preview_from_contexts(contexts: dict, message: str) -> d
         "system_prompt": SYSTEM_PROMPT,
         "relationship_context": contexts["relationship_context"],
         "time_context": time_context_text,
+        "self_state_context": contexts.get("self_state_context"),
         "memory_context": memory_context_text,
         "memory_contexts": contexts["memory_context"]["memory_contexts"],
         "selected_memories": contexts["memory_context"]["selected_memories"],

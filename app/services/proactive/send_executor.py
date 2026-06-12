@@ -481,3 +481,76 @@ def send_brain_intent(
         "total": len(fragments),
         "error": error_msg,
     }
+
+
+def send_world_expression(
+    session_id: str,
+    fragments: list[str],
+    trace_id: str,
+    *,
+    dry_run: bool = True,
+) -> dict:
+    """把她「醒来/空了」补的回复经 proactive 发送链路推回平台（WX/QQ）。
+
+    复用 send_brain_intent 的发送链路（精确按 session 查 target → add_proactive_candidate →
+    send_proactive_candidate），但 source='world'、不耦合 proactive_intent。
+    dry_run=True 时建候选+演练不真发（默认安全）；真发由上层 WORLD_PRESENCE_WX_AUTO_SEND 控制。
+    target 精确按 session 查，禁止取「最新目标」以免发错人。
+    """
+    parts = (session_id or "").split(":")
+    platform = parts[0] if parts else ""
+    valid_frags = [(f or "").strip() for f in fragments if (f or "").strip()]
+    if not platform or not session_id:
+        return {"success": False, "sent_count": 0, "total": len(valid_frags), "error": "invalid session_id"}
+
+    target_row = get_proactive_target_by_session(platform, session_id)
+    if not target_row:
+        add_debug_event(
+            trace_id=trace_id, module="send_world_expression", event="no_target",
+            level="warning", reason=f"no {platform} target for session {session_id}", action="dropped",
+        )
+        return {"success": False, "sent_count": 0, "total": len(valid_frags), "error": "no target for session"}
+
+    real_user_id = str(target_row.get("real_user_id") or "").strip()
+    target_hash = _target_hash_for_session(session_id)
+    target_label = _mask_identifier(real_user_id or "")
+    permission_uid = parts[2] if len(parts) >= 3 else ""
+    base_metadata = {
+        "session_id": session_id,
+        "wx_real_user_id": real_user_id or None,
+        "wx_permission_user_id": permission_uid,
+        "source": "world",
+        "world_trace_id": trace_id,
+    }
+
+    sent_count = 0
+    error_msg = None
+    for idx, fragment in enumerate(valid_frags):
+        meta = {**base_metadata, "world_fragment_index": idx, "world_fragment_count": len(valid_frags)}
+        try:
+            candidate = add_proactive_candidate(
+                platform=platform, target_hash=target_hash, target_label=target_label,
+                message=fragment, reason=f"world pending pickup ({'dry_run' if dry_run else 'send'})",
+                status="pending", source="world",
+                metadata_json=_json.dumps(meta, ensure_ascii=False),
+            )
+        except Exception as e:  # noqa: BLE001
+            error_msg = f"candidate_create_failed: {e}"[:200]
+            break
+        try:
+            send_proactive_candidate(
+                candidate_id=candidate["id"], dry_run=dry_run,
+                event_source="world", trace_id=trace_id,
+            )
+            sent_count += 1
+        except Exception as e:  # noqa: BLE001
+            error_msg = str(e)[:200]
+            break
+
+    return {
+        "success": sent_count == len(valid_frags) and bool(valid_frags),
+        "sent_count": sent_count,
+        "total": len(valid_frags),
+        "error": error_msg,
+        "dry_run": dry_run,
+    }

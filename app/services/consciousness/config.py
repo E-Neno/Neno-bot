@@ -45,6 +45,9 @@ class ConsciousnessConfig(BaseModel):
     energy_wake_value: float = 95.0
     energy_decay_rate: float = 0.04
     world_energy_drop_per_tick: float = float(os.getenv("CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK", "0.01"))
+    # 时间流速倍率：精力积分的「真实经过时间」乘此倍率。1.0=真实同步（默认）；
+    # 调高（如 10）让她活得更快、睡醒周期压缩，便于观察/调试，代价是与现实时钟脱钩。
+    world_time_scale: float = float(os.getenv("CONSCIOUSNESS_WORLD_TIME_SCALE", "1.0"))
 
     # 睡眠
     sleep_hour: int = 1

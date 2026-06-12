@@ -14,6 +14,7 @@ class EnergyState(BaseModel):
     value: float = 80.0          # 0-100
     status: str = "awake"        # awake / sleeping
     description: str = "精力还不错"
+    updated_real_ts: Optional[float] = None  # 上次精力结算的真实秒(time.time())；旧 JSON 自动 None
 
 
 # ── Mood (2-dimensional) ───────────────────────────────

@@ -154,9 +154,9 @@ export function renderProactiveAutoStatus(data) {
     const conclusion = document.createElement("div");
     conclusion.style.marginBottom = "8px";
     conclusion.style.padding = "8px";
-    conclusion.style.backgroundColor = data.can_send_now?.can_send ? "#e6f4ea" : "#f1f3f4";
-    conclusion.style.borderRadius = "4px";
-    conclusion.style.border = data.can_send_now?.can_send ? "1px solid #ceead6" : "1px solid #e0e0e0";
+    conclusion.style.backgroundColor = data.can_send_now?.can_send ? "rgba(74,150,112,0.16)" : "var(--milk-surface-soft)";
+    conclusion.style.borderRadius = "8px";
+    conclusion.style.border = data.can_send_now?.can_send ? "1px solid rgba(74,150,112,0.4)" : "1px solid var(--milk-border)";
 
     const statusText = data.can_send_now?.can_send ? "🟢 当前状态：规则允许继续判断" : "🟡 当前状态：阻塞（暂不调度发送）";
     const reasonText = data.can_send_now?.reason ? `因为：${data.can_send_now.reason}` : "";
@@ -166,12 +166,12 @@ export function renderProactiveAutoStatus(data) {
       <div style="font-weight: bold; margin-bottom: 4px;">${statusText}</div>
       <div style="margin-bottom: 4px;">📌 当前收口：${scopeLabel}</div>
       <div style="margin-bottom: 4px;">🎯 锁定目标：${targetText}</div>
-      <div style="color: #666;">🛑 阻塞原因：${reasonText || "无"}</div>
+      <div style="color: var(--milk-muted);">🛑 阻塞原因：${reasonText || "无"}</div>
     `;
     box.appendChild(conclusion);
 
     const details = document.createElement("div");
-    details.style.color = "#666";
+    details.style.color = "var(--milk-muted)";
     details.textContent = [
       `能力边界 ${scopeSummary}`,
       `当前模式 ${modeLabel}`,

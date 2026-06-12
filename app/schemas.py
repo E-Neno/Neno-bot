@@ -60,6 +60,9 @@ class PlatformMessageResponse(BaseModel):
     success: bool
     reply: str
     session_id: str
+    # Phase 5 在场模型：reply_later=她睡着/沉浸，本轮不回，等醒来/空了再补；
+    # 网桥见此应静默（不发文本、不弹失败文案）。
+    world_action: str | None = None
 
 
 class PlatformRoutingOverrideRequest(BaseModel):

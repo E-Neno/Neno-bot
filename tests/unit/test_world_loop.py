@@ -73,8 +73,15 @@ async def test_tick_advances_world_and_drops_energy(tmp_path: Path):
     store = StateStore(db=None, config=cfg)
     await store.start()
     try:
+        from app.services.consciousness.models import StateMutation
+
+        # 播种结算锚点到 10 分钟前：精力按真实时间积分，第一拍若 ts=None 不掉电（防冷启动尖刺）。
         before = await store.read()
         e0 = before.energy.value
+        seeded = before.energy.model_copy(deep=True)
+        seeded.updated_real_ts = time.time() - 600.0
+        await store.submit_mutation(StateMutation(energy=seeded, reason="seed ts"))
+        await _drain(store)
 
         loop = WorldLoop(store, cfg)
         snap = await loop.tick()
@@ -89,7 +96,7 @@ async def test_tick_advances_world_and_drops_energy(tmp_path: Path):
         assert ws.last_tick is not None
         assert ws.last_tick.get("action")
 
-        # 精力下降
+        # 精力按真实时间下降
         after = await store.read()
         assert after.energy.value < e0
     finally:
@@ -393,26 +400,36 @@ async def test_llm_disabled_still_uses_routine_every_tick(tmp_path: Path):
 # ── ② 精力重调测试 ──
 
 @pytest.mark.asyncio
-async def test_energy_uses_config_drop_per_tick(tmp_path: Path):
-    """tick 后精力下降量 == cfg.world_energy_drop_per_tick（不再是硬编码 3.0）。"""
+async def test_energy_drops_by_wallclock_elapsed(tmp_path: Path):
+    """精力按真实经过时间积分，与已废弃的 world_energy_drop_per_tick 无关。
+
+    播种锚点到 60 分钟前 → 一拍掉电应落在基础速率 × 调制的合理区间
+    （活动=1.0、mood(valence0.3)=1.0、circadian∈[1.0,1.3]）。
+    """
+    from app.services.consciousness.energy_dynamics import ENERGY_BASE_DRAIN_PER_MIN
+    from app.services.consciousness.models import StateMutation
+
     _init_db(tmp_path)
-    custom_drop = 0.07
-    cfg = ConsciousnessConfig(
-        world_llm_enabled=False,
-        world_energy_drop_per_tick=custom_drop,
-    )
+    # 故意把废弃配置设成离谱值，证明它不再影响精力推进
+    cfg = ConsciousnessConfig(world_llm_enabled=False, world_energy_drop_per_tick=3.0)
     store = StateStore(db=None, config=cfg)
     await store.start()
     try:
         before = await store.read()
         e0 = before.energy.value
+        seeded = before.energy.model_copy(deep=True)
+        seeded.updated_real_ts = time.time() - 3600.0  # 60 分钟前
+        await store.submit_mutation(StateMutation(energy=seeded, reason="seed ts"))
+        await _drain(store)
 
         loop = WorldLoop(store, cfg)
         await loop.tick()
         await _drain(store)
 
         after = await store.read()
-        actual_drop = e0 - after.energy.value
-        assert abs(actual_drop - custom_drop) < 0.001, f"expected drop={custom_drop}, got {actual_drop}"
+        drop = e0 - after.energy.value
+        base = ENERGY_BASE_DRAIN_PER_MIN * 60.0  # ≈4.68
+        # 与废弃配置 3.0 明显不同；落在 [base*1.0, base*1.3*1.2] 调制区间内
+        assert base * 0.95 <= drop <= base * 1.3 * 1.2 + 0.01, f"drop={drop}, base={base}"
     finally:
         await store.stop()

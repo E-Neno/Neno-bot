@@ -63,31 +63,29 @@ def test_phase_of_boundaries():
     assert dc.phase_of(23) == "night"
 
 
-def test_check_sleep_wake_transitions():
+def test_check_sleep_wake_thresholds():
+    """涌现作息：只看精力阈值 + status，不再受时段约束。"""
     dc = DayCycle(ConsciousnessConfig())
 
-    class _N:
-        class energy:
-            value = 10.0
-            status = "awake"
+    def _ns(value, status):
+        class _N:
+            class energy:
+                pass
+        _N.energy.value = value
+        _N.energy.status = status
+        return _N
 
-    # 夜间 + 低精力 + 醒着 → 入睡
-    assert dc.check_sleep_wake(_N, "night", 23) == "fall_asleep"
-
-    class _S:
-        class energy:
-            value = 90.0
-            status = "sleeping"
-
-    # 早晨 + 睡着 → 醒来
-    assert dc.check_sleep_wake(_S, "morning", 7) == "wake_up"
-
-    class _A:
-        class energy:
-            value = 80.0
-            status = "awake"
-
-    assert dc.check_sleep_wake(_A, "afternoon", 14) is None
+    # 醒着 + 精力跌破 20 → 入睡（任何时段）
+    assert dc.check_sleep_wake(_ns(10.0, "awake")) == "fall_asleep"
+    # 睡着 + 回血到 90 → 醒来（任何时段）
+    assert dc.check_sleep_wake(_ns(90.0, "sleeping")) == "wake_up"
+    # 醒着但精力还够 → 不转换
+    assert dc.check_sleep_wake(_ns(80.0, "awake")) is None
+    # 睡着但还没回满 → 继续睡
+    assert dc.check_sleep_wake(_ns(60.0, "sleeping")) is None
+    # 边界：恰好 20 不睡（严格小于），恰好 90 醒
+    assert dc.check_sleep_wake(_ns(20.0, "awake")) is None
+    assert dc.check_sleep_wake(_ns(89.9, "sleeping")) is None
 
 
 @pytest.mark.asyncio

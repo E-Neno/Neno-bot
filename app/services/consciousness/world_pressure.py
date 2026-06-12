@@ -28,6 +28,8 @@ _DEFAULT_SALIENCE: dict[str, float] = {
     "action_done": 20.0,
     "phase_change": 15.0,
     "plant_thirsty": 10.0,
+    # —— 牵挂系统（open thread 压力注入）——
+    "open_thread": 25.0,
 }
 
 

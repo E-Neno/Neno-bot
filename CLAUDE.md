@@ -79,4 +79,5 @@ Living World 已有正式 `WorldLoop`、SQLite 世界状态、房间物品、日
 - `world_loop.tick` 的 LLM 调用由 `world_pressure.should_wake` 门控。tick 是「真想 / 滑行接续 / 纯 mock」三分支；改动时 `world_llm_enabled=False` 路径不得引入 LLM 或改变 mock 行为。
 - 世界时钟是真实 UTC+8（`sim_minutes` 由 `datetime.now(_TZ8)` 推导）；`CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` 已废弃于时间推进，勿据它累加时间。
 - `world_salience` 表必须覆盖真实 `LifeEvent.kind`（mishap/message/weather/craving/memory），否则意外不驱动唤醒。
+- 精力是真实时间积分（`energy_dynamics.step_energy`），作息由阈值涌现（`day_cycle.check_sleep_wake` 只看精力，不看时段）。**勿**把刚性 sleep/wake 时段闸门加回来，**勿**复活 tick 量化掉电（`CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` 已废弃）。tick 内精力结算后的判睡醒/快照一律用就地内存值——`StateStore.submit_mutation` 入队异步落库，同 tick 内 `read()` 读不到刚提交的值。
 - 切 LLM 开关用 `scripts/neno-llm.ps1 on|off`；改 `.env` 后必须重启 uvicorn 才生效。
