@@ -15,7 +15,10 @@ import time
 from app.storage import db as db_storage
 from app.utils.logging_utils import log_event
 
+from .experience_recorder import ExperienceRecorder, InnerExperienceIn
 from .world_store import WorldStore
+
+_recorder = ExperienceRecorder()
 
 # 她不想现在回时输出的标记（prompt 里告诉她可以这么做）
 DEFER_MARKER = "[暂不回]"
@@ -45,6 +48,42 @@ def is_defer_reply(reply: str | None) -> bool:
         return False
     r = reply.strip()
     return DEFER_MARKER in r and len(r.replace(DEFER_MARKER, "").strip()) < 8
+
+
+def record_incoming_message_experience(
+    content: str, user_message_ids: list[int], trace_id: str | None = None,
+) -> int | None:
+    """消息进世界：把「有人找我」记成她活过的一刻经历（不进压力泵，纯经历流）。
+
+    expression_status='unspoken' = 一段她还没回应的经历，悬着；她回了再翻成 expressed。
+    同步一行 insert，所有分支(睡着/回/不回)都记——这事确实发生在她生命里了。
+    """
+    try:
+        text = str(content or "").strip().replace("\n", " ")
+        if len(text) > 60:
+            text = text[:60] + "…"
+        return _recorder._record_sync(InnerExperienceIn(
+            trace_id=trace_id or "msg", source="user_message", kind="message",
+            content=f"有人找我，说了「{text}」",
+            related_message_ids=[int(i) for i in (user_message_ids or [])],
+            expression_status="unspoken", salience=0.5,
+        ))
+    except Exception as exc:  # noqa: BLE001 — 记经历失败绝不阻断聊天
+        log_event("chat", "msg_experience_record_warning", trace_id=trace_id,
+                  error_type=type(exc).__name__, error_message=str(exc))
+        return None
+
+
+def mark_message_experience_expressed(experience_id: int | None,
+                                      trace_id: str | None = None) -> None:
+    """她回应了这条消息 → 把那段经历从 unspoken 翻成 expressed（已搭理）。"""
+    if experience_id is None:
+        return
+    try:
+        _recorder._mark_expression_status_sync(int(experience_id), "expressed", None)
+    except Exception as exc:  # noqa: BLE001
+        log_event("chat", "msg_experience_mark_warning", trace_id=trace_id,
+                  error_type=type(exc).__name__, error_message=str(exc))
 
 
 def stash_pending_message(entry: dict, *, cooldown: float = 0.0,

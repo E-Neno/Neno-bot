@@ -10,6 +10,8 @@ from app.services.consciousness.presence import (
     DEFER_COOLDOWN_SECONDS,
     is_defer_reply,
     is_physically_asleep,
+    mark_message_experience_expressed,
+    record_incoming_message_experience,
     stash_pending_message,
 )
 from app.services.relationship_service import (
@@ -84,10 +86,13 @@ def run_chat_turn(
                         metadata=meta,
                     )
                 )
+            # 消息进世界：记成她活过的一刻经历（睡着也算——醒后才注意到的一段经历）。
+            exp_id = record_incoming_message_experience(message, deferred_ids, trace_id=trace_id)
             stash_pending_message(
                 {
                     "session_id": session_id, "message": message,
                     "user_message_ids": deferred_ids, "trace_id": trace_id,
+                    "experience_id": exp_id,
                     "source": str((input_record or {}).get("source") or "chat"),
                     "platform": str((input_record or {}).get("platform") or ""),
                     "chat_type": str((input_record or {}).get("chat_type") or ""),
@@ -167,6 +172,11 @@ def run_chat_turn(
                 )
             )
 
+        # 消息进世界：把「有人找我」记成她活过的一刻经历（unspoken；她回了再翻成 expressed）。
+        msg_experience_id = record_incoming_message_experience(
+            message, user_message_ids, trace_id=trace_id
+        )
+
         model_started = time.perf_counter()
         log_event(
             "chat",
@@ -189,6 +199,7 @@ def run_chat_turn(
                 {
                     "session_id": session_id, "message": message,
                     "user_message_ids": user_message_ids, "trace_id": trace_id,
+                    "experience_id": msg_experience_id,
                     "source": str((input_record or {}).get("source") or "chat"),
                     "platform": str((input_record or {}).get("platform") or ""),
                     "chat_type": str((input_record or {}).get("chat_type") or ""),
@@ -231,6 +242,8 @@ def run_chat_turn(
             message_type="assistant",
             source=str((input_record or {}).get("source") or "chat"),
         )
+        # 她回应了这条消息 → 那段经历从 unspoken 翻成 expressed（已搭理）。
+        mark_message_experience_expressed(msg_experience_id, trace_id=trace_id)
 
         try:
             relationship_state = apply_relationship_update(session_id, message)

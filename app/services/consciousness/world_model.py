@@ -70,7 +70,7 @@ class WorldState(BaseModel):
     pressure_hour_anchor: float | None = None
     # Phase 5：睡着/沉浸时漏掉的用户消息，等她空下来/醒来再回（骑现有单行 JSON）。
     # 每条 {session_id, message, user_message_ids, trace_id, source, platform,
-    #       chat_type, user_id, received_at, received_sim_min}
+    #       chat_type, user_id, received_at, received_sim_min, reconsider_after}
     pending_messages: list[dict] = Field(default_factory=list)
 
 
@@ -222,6 +222,45 @@ def find_thread(threads: list[dict], tid: str) -> dict | None:
         if t.get("id") == tid:
             return t
     return None
+
+
+_OWE_REPLY_ID = "goal:还没回对方消息"
+
+
+def reconcile_owe_reply_thread(
+    threads: list[dict],
+    pending: list[dict] | None,
+    *,
+    now: float,
+    today: str,
+    threshold: float = 3600.0,
+    awake: bool = True,
+) -> list[dict]:
+    """没回的消息熬太久 → 她心里挂上「还没回对方消息」；欠的都清了 → 了结。纯函数。
+
+    ④ 收口：把 unspoken/pending 这个状态变成她真能感到的重量——一条未竟牵挂，会在
+    self_state 里冒出来惦记着。只在她醒着、且有 pending 超过 threshold 时挂；不靠规则判语气。
+    """
+    out = list(threads or [])
+    existing = find_thread(out, _OWE_REPLY_ID)
+    owed = [
+        p for p in (pending or [])
+        if (now - float(p.get("received_at") or now)) >= threshold
+    ]
+    if awake and owed:
+        if existing:
+            if not existing.get("resolved"):
+                existing["last_touch_day"] = today
+        else:
+            t = make_thread("goal", "还没回对方消息", day=today,
+                            intensity=0.45, mood="有点过意不去")
+            t["carry_count"] = 2  # 现成 self_state 过滤器要 carry>=2 才显；这是当下的惦记，直接算活跃
+            out.append(t)
+    else:
+        # 没有欠太久的了 → 她算「回上了/不欠了」，了结
+        if existing and not existing.get("resolved"):
+            existing["resolved"] = True
+    return out
 
 
 _PUNCT_RE = re.compile(r"[\s，。、！？,.!?…·；;：:\"'""'']+")

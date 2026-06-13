@@ -14,7 +14,7 @@ from .config import ConsciousnessConfig
 from .daily_planner import DailyPlan, DailyPlanner
 from .day_cycle import DayCycle
 from .energy_dynamics import step_energy
-from .presence import DEFER_COOLDOWN_SECONDS
+from .presence import DEFER_COOLDOWN_SECONDS, mark_message_experience_expressed
 from .experience_recorder import ExperienceRecorder, InnerExperienceIn
 from .life_events import LifeEventSource
 from .memory_recall import MemoryRecall
@@ -24,7 +24,8 @@ from .state_store import StateStore
 from .world_brain import WorldBrain
 from .world_drift import apply_drift
 from .world_model import (
-    _label_of, apply_op, find_goal_thread, find_thread, load_world_def, make_thread, objects_in_room, WorldOp, WorldState,
+    _label_of, apply_op, find_goal_thread, find_thread, load_world_def, make_thread,
+    objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
 )
 from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
 from .world_store import WorldStore
@@ -423,6 +424,15 @@ class WorldLoop:
                 await self._consume_pending(ws, nstate, action)
             except Exception as exc:  # noqa: BLE001
                 _log.warning("consume pending error: %s", exc)
+            # ④ 收口：没回的消息熬太久 → 她心里挂上「还没回对方消息」；欠的清了→了结。
+            try:
+                ws.open_threads = reconcile_owe_reply_thread(
+                    ws.open_threads or [], ws.pending_messages or [],
+                    now=time.time(), today=now8.date().isoformat(),
+                    awake=(nstate.energy.status != "sleeping"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("owe-reply thread error: %s", exc)
 
         ws.sim_minutes = sim_minutes  # 写回真实时间，不再累加
         await self._world_store.write(ws)
@@ -478,6 +488,9 @@ class WorldLoop:
                             p["reconsider_after"] = now + DEFER_COOLDOWN_SECONDS
                         ws.pending_messages = (ws.pending_messages or []) + items
                         continue
+                    # 她回应了这些消息 → 把对应的经历从 unspoken 翻成 expressed
+                    for p in items:
+                        mark_message_experience_expressed(p.get("experience_id"), trace_id=tid)
                     # 平台来源(WX/QQ)：回复经 proactive 链路推回；web/控制台只写 session（刷新可见）。
                     platform = sid.split(":")[0] if ":" in sid else str(items[-1].get("platform") or "")
                     reply = str((result or {}).get("reply") or "").strip()
