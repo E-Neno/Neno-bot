@@ -54,6 +54,32 @@ def test_rejects_move_to_unknown_room():
     assert "unknown_room" in rejected[0][1]
 
 
+# ── 刀③ 可达性守门 ──────────────────────────────────────────────────────────
+
+def test_accepts_move_to_adjacent_room():
+    wd, st = _setup()  # 在厨房；家内房间互通
+    op = WorldOp(op="move", to_room="living_room")
+    accepted, rejected = validate_ops(wd, st, [op])
+    assert accepted == [op] and rejected == []
+
+
+def test_accepts_step_out_through_entryway():
+    wd, st = _setup()
+    st.location = "living_room"
+    op = WorldOp(op="move", to_room="entryway")
+    accepted, rejected = validate_ops(wd, st, [op])
+    assert accepted == [op] and rejected == []
+
+
+def test_rejects_teleport_to_unreachable_outside():
+    wd, st = _setup()
+    st.location = "bedroom"  # 不能从卧室瞬移到咖啡馆，要先出门
+    op = WorldOp(op="move", to_room="cafe")
+    accepted, rejected = validate_ops(wd, st, [op])
+    assert accepted == []
+    assert "not_reachable" in rejected[0][1]
+
+
 # ── 竖切6：开放世界守门 ─────────────────────────────────────────────────
 
 def test_create_object_accepts_legal():

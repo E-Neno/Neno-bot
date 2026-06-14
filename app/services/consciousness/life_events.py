@@ -3,14 +3,22 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from .config import ConsciousnessConfig
-from .world_model import WorldDef, WorldOp, WorldState
+from .world_model import WorldDef, WorldOp, WorldState, is_outside
 
 EMIT_PROB = 0.30      # 普通事件触发概率（每 tick）
 MISHAP_PROB = 0.08    # 小意外（打碎东西）概率，更低
 
+# 刀③：在外面各场所带回来的一句见闻（喂回经历流；非脚本动作，只是她注意到的东西）
+_OUTING_FLAVOR: dict[str, str] = {
+    "building_entrance": "站在小区楼下，几个邻居拎着东西进进出出",
+    "convenience_store": "便利店灯很亮，关东煮的热气和饭团排在一起",
+    "cafe":              "咖啡馆里有磨豆子的声音，靠窗的人各自安静着",
+    "park":              "小公园里风把树叶吹得沙沙响，有人在遛狗",
+}
+
 
 class LifeEvent(BaseModel):
-    kind: str                 # weather/message/craving/memory/mishap
+    kind: str                 # weather/message/craving/memory/mishap/chore/small_joy/idle_thought/outing
     content: str
     mood_delta: float = 0.0   # -0.3 ~ +0.3
     world_op: WorldOp | None = None
@@ -45,7 +53,7 @@ class LifeEventSource:
         if p >= EMIT_PROB:
             return None
 
-        # 优先级派生：失去过的东西 > 早晨天气 > 低能量渴望 > 默认消息
+        # 优先级派生：失去过的东西 > 早晨天气 > 低能量渴望 > 场景小事 > 默认消息
         if world_state.gone_log:
             last = world_state.gone_log[-1]
             label = last.get("label") or last.get("object", "那个东西")
@@ -67,6 +75,37 @@ class LifeEventSource:
                 kind="craving",
                 content="突然很想喝点甜的",
                 mood_delta=0.0,
+            )
+        # 刀③：在外面 → 带回一句见闻，喂回经历流（在外面优先于家里的走神/小事）
+        if is_outside(world_def, world_state.location):
+            return LifeEvent(
+                kind="outing",
+                content=_OUTING_FLAVOR.get(world_state.location, "在外面走了走，街上的声音和家里不一样"),
+                mood_delta=0.05,
+            )
+        if (
+            world_state.location == "kitchen"
+            and world_state.object_states.get("dish_towel") == "needs_wash"
+        ):
+            return LifeEvent(
+                kind="chore",
+                content="看见擦手巾该洗了，顺手记下这件小家务",
+                mood_delta=-0.02,
+            )
+        if (
+            world_state.location == "balcony"
+            and world_state.object_states.get("plants") == "fresh"
+        ):
+            return LifeEvent(
+                kind="small_joy",
+                content="盆栽刚好精神，叶子在光里显得很亮",
+                mood_delta=0.08,
+            )
+        if phase == "evening":
+            return LifeEvent(
+                kind="idle_thought",
+                content="夜里安静下来，思绪不知不觉飘远了一会儿",
+                mood_delta=0.01,
             )
         return LifeEvent(
             kind="message",

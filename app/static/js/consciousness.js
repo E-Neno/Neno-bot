@@ -1,12 +1,36 @@
 import { getAdminHeaders, requestJson } from "./api.js";
 import { clearChildren, setBusyButton, setOptionalText } from "./dom.js";
-import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER } from "./worldViewAdapter.js";
+import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER, actionLabel } from "./worldViewAdapter.js";
 
 let _desireInterval = null;
 let _worldLiveInterval = null;
 let _worldRoomWidth = 0;
 let _lastWorldX = null;
 let _latestWorldState = null;
+// 手动镜头：null=跟着她；"home"/"outside"=手动摇到家内/外面看（点场景按钮触发）
+let _worldFocus = null;
+
+// 镜头要居中到哪个房间索引：手动 focus 优先，否则跟随她的真实位置
+function focusRoomIndex(state) {
+  if (_worldFocus === "outside") {
+    const i = ROOM_ORDER.indexOf("cafe");
+    return i >= 0 ? i : state.room;
+  }
+  if (_worldFocus === "home") {
+    return state.outside ? ROOM_ORDER.indexOf("living_room") : state.room;
+  }
+  return state.room;
+}
+
+// 点场景按钮：摇镜头到该组；再点同一个 → 回到跟随她
+function setWorldFocus(group) {
+  _worldFocus = _worldFocus === group ? null : group;
+  if (!_latestWorldState) return;
+  layoutWorldStage(_latestWorldState, true);
+  const showingOutside = _worldFocus ? _worldFocus === "outside" : _latestWorldState.outside;
+  document.getElementById("worldSceneHomeBtn")?.classList.toggle("active", !showingOutside);
+  document.getElementById("worldSceneOutBtn")?.classList.toggle("active", showingOutside);
+}
 
 // ── State rendering ───────────────────────────────────────
 
@@ -803,7 +827,7 @@ function renderWorldTimeline(state) {
     item.className = "world-moment";
     const time = document.createElement("time");
     time.textContent = activity.ago_min != null ? `${activity.ago_min} 分钟前` : "此前";
-    item.append(time, document.createTextNode(activity.action || "发生了一些事"));
+    item.append(time, document.createTextNode(actionLabel(activity.action)));
     timeline.appendChild(item);
   }
   const current = document.createElement("div");
@@ -876,15 +900,19 @@ function layoutWorldStage(state, animate) {
   neno.style.bottom = characterBottom(state);
 
   const worldWidth = _worldRoomWidth * ROOM_ORDER.length;
+  // 镜头中心：手动 focus 时摇到目标房间，否则跟着她
+  const camX = focusRoomIndex(state) * _worldRoomWidth + 0.5 * _worldRoomWidth;
   const camera = Math.max(
     -(worldWidth - viewport.clientWidth),
-    Math.min(0, -(worldX - viewport.clientWidth / 2))
+    Math.min(0, -(camX - viewport.clientWidth / 2))
   );
   strip.style.transform = `translateX(${camera}px)`;
   _lastWorldX = worldX;
 
+  // minimap 高亮：手动 focus 时标在镜头所在房间，否则标她所在
+  const mapKey = _worldFocus ? ROOM_ORDER[focusRoomIndex(state)] : state.roomKey;
   document.querySelectorAll("[data-world-map-room]").forEach((cell) => {
-    cell.classList.toggle("active", cell.dataset.worldMapRoom === state.roomKey);
+    cell.classList.toggle("active", cell.dataset.worldMapRoom === mapKey);
   });
   applyWorldLight(state);
 }
@@ -902,7 +930,14 @@ export function renderWorldLive(data) {
   layoutWorldStage(state, true);
   setWorldText("worldClock", state.time);
   setWorldText("worldPhase", state.phase || (state.sleeping ? "睡眠中" : "生活进行中"));
-  setWorldText("worldStoryTime", `${state.phase || "此刻"} ${state.time} · ${ROOM_NAME[state.roomKey]}`);
+  setWorldText("worldStoryTime", `${state.phase || "此刻"} ${state.time} · ${ROOM_NAME[state.roomKey] || state.roomKey}`);
+  // 刀③：她在外面时，舞台标题/标签/场景按钮跟着切，别再显示「家」
+  setWorldText("worldSceneTitle", state.outside ? (ROOM_NAME[state.roomKey] || state.roomKey) : "Neno 的家");
+  setWorldText("worldSceneTag", state.outside ? "场景 · 在外面" : "场景 · Neno 的家");
+  // 按钮高亮：手动摇镜头时跟 focus，否则跟她真实所在
+  const showingOutside = _worldFocus ? _worldFocus === "outside" : state.outside;
+  document.getElementById("worldSceneHomeBtn")?.classList.toggle("active", !showingOutside);
+  document.getElementById("worldSceneOutBtn")?.classList.toggle("active", showingOutside);
   setWorldText("worldStoryAction", state.action);
   setWorldText("worldStoryInner", state.inner ? `“${state.inner}”` : "她没有解释，只是继续做手上的事。");
   setWorldText("worldMoodText", `${state.mood} · ${Number(state.moodValence).toFixed(2)}`);
@@ -1092,6 +1127,18 @@ export function bindConsciousnessEvents() {
   if (worldWakeBtn && !worldWakeBtn.dataset.bound) {
     worldWakeBtn.dataset.bound = "true";
     worldWakeBtn.addEventListener("click", () => worldTickOnce(worldWakeBtn, true));
+  }
+
+  // 场景按钮：手动把镜头摇到家内 / 外面；再点同一个回到跟随她
+  const sceneHomeBtn = document.getElementById("worldSceneHomeBtn");
+  if (sceneHomeBtn && !sceneHomeBtn.dataset.bound) {
+    sceneHomeBtn.dataset.bound = "true";
+    sceneHomeBtn.addEventListener("click", () => setWorldFocus("home"));
+  }
+  const sceneOutBtn = document.getElementById("worldSceneOutBtn");
+  if (sceneOutBtn && !sceneOutBtn.dataset.bound) {
+    sceneOutBtn.dataset.bound = "true";
+    sceneOutBtn.addEventListener("click", () => setWorldFocus("outside"));
   }
 
   // 总览桥接卡：载入一次 + 总览激活时每 6s 刷新

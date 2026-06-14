@@ -33,12 +33,27 @@ from .world_store import WorldStore
 _log = logging.getLogger(__name__)
 _TZ8 = timezone(timedelta(hours=8))
 
-ROOM_LABELS = {"bedroom": "卧室", "kitchen": "厨房", "living_room": "客厅", "balcony": "阳台"}
+ROOM_LABELS = {
+    "bedroom": "卧室", "kitchen": "厨房", "living_room": "客厅", "balcony": "阳台",
+    # 刀③ 开放世界：玄关（门槛）+ 外部场所
+    "entryway": "玄关", "building_entrance": "小区楼下",
+    "convenience_store": "便利店", "cafe": "咖啡馆", "park": "小公园",
+}
 OBJ_EMOJI = {
     "bed": "🛏️", "desk": "🖊️", "bookshelf": "📚", "phone": "📱",
     "window_bed": "🪟", "lamp": "💡", "kettle": "🫖", "mug": "☕",
     "fridge": "🧊", "sofa": "🛋️", "book": "📖", "tv": "📺",
     "ceiling_light": "💡", "chair": "🪑", "plants": "🪴",
+    # 刀② 世界深度新增物品
+    "journal": "📔", "headphones": "🎧", "laundry": "🧺", "tea_tin": "🍵",
+    "cutting_board": "🔪", "dish_towel": "🧻", "record_player": "💿",
+    "floor_cushion": "🟫", "sketchbook": "🎨", "watering_can": "🪣",
+    "drying_rack": "🪜", "wind_chime": "🎐",
+    # 刀③ 外部场所物品
+    "shoe_rack": "👟", "door_keys": "🔑", "mailbox": "📮", "parcel_locker": "📦",
+    "snack_shelf": "🍫", "register": "🛒", "cafe_counter": "☕",
+    "window_seat": "🪑", "coffee_cup": "🥤", "park_bench": "🪑",
+    "old_tree": "🌳", "street_lamp": "🏮",
 }
 PHASE_ZH = {"morning": "上午", "afternoon": "下午", "evening": "傍晚", "night": "夜里"}
 START_SIM_MINUTES = 7 * 60
@@ -359,9 +374,13 @@ class WorldLoop:
                 else:
                     op_log.append({"r": "reject", "t": op.object or op.to_room, "s": rej[0][1]})
 
-            sim.recent_actions = (sim.recent_actions + [{"action": action, "ago_min": 0}])[-8:]
-            for r in sim.recent_actions[:-1]:
+            # 先让已有条目「变久」，再决定是否记新动作
+            for r in sim.recent_actions:
                 r["ago_min"] = r.get("ago_min", 0) + step
+            # 滑行接续在重复同一个动作时不重复记账，否则长卷会显示「连开 6 次灯」
+            # （glide 只是继续手上的事，不是又做了一遍）
+            if not sim.recent_actions or sim.recent_actions[-1].get("action") != action:
+                sim.recent_actions = (sim.recent_actions + [{"action": action, "ago_min": 0}])[-8:]
             sim.sim_minutes = sim_minutes
             # 持久化压力状态
             sim.pressure_value = pressure.value

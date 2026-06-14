@@ -555,8 +555,8 @@ function createWorldWorkspace() {
   workspace.innerHTML = `
     <aside class="world-scene-rail">
       <div class="world-rail-label">世界场景</div>
-      <button class="world-scene-button active" type="button"><strong>家</strong><span>当前场景</span></button>
-      <button class="world-scene-button future" type="button"><strong>街区</strong><span>后续开放</span></button>
+      <button class="world-scene-button active" id="worldSceneHomeBtn" type="button"><strong>家</strong><span>四个房间</span></button>
+      <button class="world-scene-button" id="worldSceneOutBtn" type="button"><strong>外面</strong><span>玄关·楼下·店·公园</span></button>
       <button class="world-scene-button future" type="button"><strong>地图</strong><span>后续开放</span></button>
       <div class="world-rail-spacer"></div>
       <div class="world-rail-foot">场景<br>登记册</div>
@@ -571,6 +571,11 @@ function createWorldWorkspace() {
             <div class="world-steam" id="worldSteam"><i></i><i></i><i></i></div>
           </article>
           <article class="world-room balcony" data-world-room="balcony"><span class="world-room-label">阳台</span></article>
+          <article class="world-room entryway" data-world-room="entryway"><span class="world-room-label">玄关</span></article>
+          <article class="world-room building_entrance" data-world-room="building_entrance"><span class="world-room-label">小区楼下</span></article>
+          <article class="world-room cafe" data-world-room="cafe"><span class="world-room-label">咖啡馆</span></article>
+          <article class="world-room convenience_store" data-world-room="convenience_store"><span class="world-room-label">便利店</span></article>
+          <article class="world-room park" data-world-room="park"><span class="world-room-label">小公园</span></article>
           <div class="world-neno" id="worldNeno">
             <div class="world-thought" id="worldThought"></div>
             <img src="/static/img/world/neno-idle-v1.png" alt="Neno">
@@ -583,12 +588,18 @@ function createWorldWorkspace() {
         </div>
         <div class="world-air-motion" id="worldAirMotion" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="world-vignette"></div>
-        <div class="world-stage-meta"><small>场景 · Neno 的家</small><h1>Neno 的家</h1></div>
+        <div class="world-stage-meta"><small id="worldSceneTag">场景 · Neno 的家</small><h1 id="worldSceneTitle">Neno 的家</h1></div>
         <div class="world-minimap" aria-label="房间位置">
           <span data-world-map-room="bedroom">卧</span>
           <span class="active" data-world-map-room="living_room">厅</span>
           <span data-world-map-room="kitchen">厨</span>
           <span data-world-map-room="balcony">台</span>
+          <span class="world-map-gap" aria-hidden="true">·</span>
+          <span data-world-map-room="entryway">关</span>
+          <span data-world-map-room="building_entrance">楼</span>
+          <span data-world-map-room="cafe">啡</span>
+          <span data-world-map-room="convenience_store">店</span>
+          <span data-world-map-room="park">园</span>
         </div>
         <div class="world-step-controls">
           <button class="world-step-button" id="cWorldStepBtn" type="button">走一步</button>

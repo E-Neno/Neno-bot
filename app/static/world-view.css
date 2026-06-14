@@ -237,6 +237,13 @@ body.world-console-active {
 .world-room.living_room { background-image:url("/static/img/world/room-living-v1.png"); }
 .world-room.kitchen { background-image:url("/static/img/world/room-kitchen-v1.png"); }
 .world-room.balcony { background-image:url("/static/img/world/room-balcony-v1.png"); }
+/* 刀③ 开放世界：玄关 + 外部场所（矢量场景插画，可日后替换为 PNG） */
+.world-room.entryway { background-image:url("/static/img/world/scene-entryway-v1.svg"); }
+.world-room.building_entrance { background-image:url("/static/img/world/scene-building-entrance-v1.svg"); }
+.world-room.cafe { background-image:url("/static/img/world/scene-cafe-v1.svg"); }
+.world-room.convenience_store { background-image:url("/static/img/world/scene-convenience-store-v1.svg"); }
+.world-room.park { background-image:url("/static/img/world/scene-park-v1.svg"); }
+.world-minimap .world-map-gap { opacity:0.35; pointer-events:none; padding:0 2px; }
 
 .world-daylight,
 .world-lamp-glow {

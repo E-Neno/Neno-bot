@@ -11,7 +11,7 @@ from app.llm.openrouter_client import chat_with_openrouter
 from .config import ConsciousnessConfig
 from .world_model import (
     ActionPlan, WorldDef, WorldOp, WorldState,
-    objects_in_room, legal_states_of,
+    objects_in_room, legal_states_of, reachable_rooms, is_outside,
 )
 
 _log = logging.getLogger(__name__)
@@ -151,13 +151,15 @@ class WorldBrain:
             lines.append(f"[失去过] {gone}")
 
         lines.append(f"当前房间：{room}")
+        if is_outside(self._world_def, room):
+            lines.append("（你现在在外面，已经出了家门，不在家里）")
         lines.append("当前房间里的物品（key / 当前状态 / 合法状态）：")
         for o in objects_in_room(self._world_def, state, room):
             legal = "、".join(legal_states_of(self._world_def, state, o))
             cur = state.object_states.get(o, "?")
             lines.append(f"  - {o} / {cur} / [{legal}]")
-        other_rooms = [r for r in self._world_def.rooms if r != room]
-        lines.append("可移动到的房间：" + "、".join(other_rooms))
+        other_rooms = reachable_rooms(self._world_def, state, room)
+        lines.append("现在一步能去的地方（只能去这些）：" + "、".join(other_rooms))
         cats = "、".join(self._world_def.categories.keys())
         lines.append(f"想买东西可用 create_object（类别须属于：{cats}），会花钱；想扔掉东西用 destroy_object。")
         lines.append("\n请决定 Neno 接下来自然会做的一件事，只输出 JSON。")

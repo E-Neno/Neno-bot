@@ -28,6 +28,10 @@ class WorldDef(BaseModel):
     categories: dict[str, CategoryDef]
     rooms: dict[str, dict]  # {"bedroom": {"objects": [...]}}
     objects: dict[str, ObjectDef]
+    # 刀③ 开放世界：可达图（无向，每条边只写一次）+ 哪些房间算「在外面」。
+    # 旧 JSON 缺这两个字段时自动补空 → reachable_rooms 退回「全连通」旧行为，不破坏老世界。
+    adjacency: dict[str, list[str]] = Field(default_factory=dict)
+    outside: list[str] = Field(default_factory=list)
 
     def legal_states(self, obj: str) -> list[str]:
         cat = self.objects[obj].category
@@ -191,6 +195,29 @@ def objects_in_room(world_def: WorldDef, state: WorldState, room: str) -> list[s
 
 def room_count(world_def: WorldDef, state: WorldState, room: str) -> int:
     return len(objects_in_room(world_def, state, room))
+
+
+# ── 刀③ 可达性 / 在外面 ──────────────────────────────────────────────────────
+
+def reachable_rooms(world_def: WorldDef, state: WorldState, room: str) -> list[str]:
+    """从 room 一步可达的房间（无向图）。
+
+    adjacency 为空时退回旧行为「除当前房间外全部可达」，老世界/老测试不受影响。
+    state 入参保留以备将来动态可达（如锁门），当前未用。
+    """
+    adj = world_def.adjacency
+    if not adj:
+        return [r for r in world_def.rooms if r != room]
+    out: set[str] = set(adj.get(room, []))
+    for src, nbrs in adj.items():          # 无向：反向边也算可达
+        if room in nbrs:
+            out.add(src)
+    return [r for r in world_def.rooms if r in out and r != room]
+
+
+def is_outside(world_def: WorldDef, room: str) -> bool:
+    """该房间是否算「在外面」（出了家门）。"""
+    return room in set(world_def.outside or [])
 
 
 # ── 牵挂工具（第一刀：跨天 open thread）──────────────────────────────────────

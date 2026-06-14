@@ -58,6 +58,26 @@ def test_world_snapshot_adapter_maps_backend_shape():
     assert "kettle warm→boiling" in result["change"]
 
 
+def test_world_snapshot_adapter_renders_outside_places_without_clamping():
+    """刀③：她在咖啡馆时不再被钳回客厅，且带 outside 标记。"""
+    module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()
+    script = f"""
+      import {{ mapWorldSnapshot, ROOM_ORDER }} from {json.dumps(module_uri)};
+      const cafe = mapWorldSnapshot({{ location: "cafe", last: {{ action: "发呆" }} }});
+      const home = mapWorldSnapshot({{ location: "bedroom", last: {{ action: "rest" }} }});
+      console.log(JSON.stringify({{
+        cafeKey: cafe.roomKey, cafeOutside: cafe.outside, cafeRoom: cafe.room,
+        homeOutside: home.outside, kitchenIndex: ROOM_ORDER.indexOf("kitchen"),
+      }}));
+    """
+    result = _run_node_module(script)
+    assert result["cafeKey"] == "cafe"          # 不再 fallback 到 living_room
+    assert result["cafeOutside"] is True
+    assert result["cafeRoom"] > 3               # 排在家内 4 房间之后
+    assert result["homeOutside"] is False
+    assert result["kitchenIndex"] == 2          # 家内顺序不变（布局/旧测试依赖）
+
+
 def test_world_snapshot_adapter_supports_chinese_walk_and_sleep_actions():
     module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()
     script = f"""
@@ -210,3 +230,21 @@ def test_world_view_assets_are_served_from_static_directory():
         path = world_assets / filename
         assert path.is_file()
         assert path.stat().st_size > 0
+
+
+def test_world_view_external_scene_assets_exist():
+    """刀③：5 个外部场景插画（矢量）已就位，CSS 引用不空。"""
+    world_assets = STATIC / "img" / "world"
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    for filename, room in (
+        ("scene-entryway-v1.svg", "entryway"),
+        ("scene-building-entrance-v1.svg", "building_entrance"),
+        ("scene-cafe-v1.svg", "cafe"),
+        ("scene-convenience-store-v1.svg", "convenience_store"),
+        ("scene-park-v1.svg", "park"),
+    ):
+        path = world_assets / filename
+        assert path.is_file() and path.stat().st_size > 0, f"缺场景资产 {filename}"
+        assert filename in css, f"CSS 未引用 {filename}"
+        assert f'data-world-room="{room}"' in layout, f"场景条缺 {room}"

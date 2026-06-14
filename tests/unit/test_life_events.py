@@ -73,6 +73,69 @@ def test_low_energy_emits_craving():
     assert ev.kind == "craving"
 
 
+def test_kitchen_needs_wash_emits_chore():
+    wd, st = _setup(location="kitchen")
+    st.object_states["dish_towel"] = "needs_wash"
+
+    ev = _src().maybe_emit(
+        world_def=wd,
+        world_state=st,
+        nstate=_N,
+        phase="afternoon",
+        rng=_RNG(0.2),
+    )
+
+    assert ev.kind == "chore"
+    assert "擦手巾" in ev.content
+    assert ev.world_op is None
+
+
+def test_fresh_balcony_plants_emit_small_joy():
+    wd, st = _setup(location="balcony")
+
+    ev = _src().maybe_emit(
+        world_def=wd,
+        world_state=st,
+        nstate=_N,
+        phase="afternoon",
+        rng=_RNG(0.2),
+    )
+
+    assert ev.kind == "small_joy"
+    assert ev.mood_delta > 0
+    assert ev.world_op is None
+
+
+def test_evening_emits_idle_thought():
+    wd, st = _setup(location="bedroom")
+
+    ev = _src().maybe_emit(
+        world_def=wd,
+        world_state=st,
+        nstate=_N,
+        phase="evening",
+        rng=_RNG(0.2),
+    )
+
+    assert ev.kind == "idle_thought"
+    assert ev.world_op is None
+
+
+def test_outside_emits_outing():
+    wd, st = _setup(location="cafe")  # 在外面（咖啡馆）
+    ev = _src().maybe_emit(world_def=wd, world_state=st, nstate=_N, phase="afternoon", rng=_RNG(0.2))
+    assert ev.kind == "outing"
+    assert "咖啡馆" in ev.content
+    assert ev.world_op is None
+
+
+def test_outing_beats_evening_idle_thought():
+    """在外面优先于家里的傍晚走神：傍晚在公园应记 outing 而非 idle_thought。"""
+    wd, st = _setup(location="park")
+    ev = _src().maybe_emit(world_def=wd, world_state=st, nstate=_N, phase="evening", rng=_RNG(0.2))
+    assert ev.kind == "outing"
+
+
 def test_default_emits_message():
     wd, st = _setup()
     ev = _src().maybe_emit(world_def=wd, world_state=st, nstate=_N, phase="afternoon", rng=_RNG(0.2))

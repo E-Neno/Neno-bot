@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .world_model import (
     WorldDef, WorldState, WorldOp,
-    obj_exists, obj_room, legal_states_of, room_count,
+    obj_exists, obj_room, legal_states_of, room_count, reachable_rooms,
 )
 
 ROOM_CAP = 15  # 单房间软上限，防止开放世界无限膨胀
@@ -38,6 +38,9 @@ def _check(world_def: WorldDef, state: WorldState, op: WorldOp) -> str | None:
     if op.op == "move":
         if op.to_room not in world_def.rooms:
             return "unknown_room"
+        # 刀③：只能去当前房间一步可达的地方（出门要过玄关，不能从公园瞬移回冰箱）
+        if op.to_room not in reachable_rooms(world_def, state, state.location):
+            return "not_reachable"
         return None
 
     if op.op == "create_object":

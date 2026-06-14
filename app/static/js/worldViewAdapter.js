@@ -1,10 +1,20 @@
-export const ROOM_ORDER = ["bedroom", "living_room", "kitchen", "balcony"];
+// 前 4 个是家内房间，顺序不可变（kitchen 必须是 index 2，前端测试与布局依赖）。
+// 刀③ 外部场所追加在后面：玄关(门槛) → 小区楼下(hub) → 咖啡馆/便利店/公园。
+export const ROOM_ORDER = [
+  "bedroom", "living_room", "kitchen", "balcony",
+  "entryway", "building_entrance", "cafe", "convenience_store", "park",
+];
 
 export const ROOM_NAME = {
   bedroom: "卧室",
   living_room: "客厅",
   kitchen: "厨房",
   balcony: "阳台",
+  entryway: "玄关",
+  building_entrance: "小区楼下",
+  cafe: "咖啡馆",
+  convenience_store: "便利店",
+  park: "小公园",
 };
 
 export const DEFAULT_X = {
@@ -12,7 +22,17 @@ export const DEFAULT_X = {
   living_room: 0.52,
   kitchen: 0.42,
   balcony: 0.72,
+  entryway: 0.50,
+  building_entrance: 0.50,
+  cafe: 0.46,
+  convenience_store: 0.50,
+  park: 0.54,
 };
+
+// 哪些场景算「在外面」（出了家门）——前端据此显示外出标记。
+export const OUTSIDE_ROOMS = new Set([
+  "building_entrance", "cafe", "convenience_store", "park",
+]);
 
 const ACTION_ZH = {
   read_book: "读书",
@@ -26,7 +46,33 @@ const ACTION_ZH = {
   look_window: "望向窗外",
   sleep: "睡觉",
   organize: "整理",
+  // 世界 LLM 偶尔吐英文动作 key，这里兜底翻译，免得长卷显示生肉
+  turn_on_light: "开灯",
+  turn_off_light: "关灯",
+  turn_on_tv: "打开电视",
+  turn_off_tv: "关掉电视",
+  listen_music: "听音乐",
+  play_music: "放音乐",
+  use_phone: "看手机",
+  check_phone: "看手机",
+  move_to_kitchen: "去厨房",
+  move_to_living_room: "去客厅",
+  move_to_bedroom: "回卧室",
+  move_to_balcony: "去阳台",
+  go_out: "出门",
+  walk: "走动",
+  nap: "小憩",
+  tidy_up: "收拾",
+  wash_dishes: "洗碗",
+  draw: "画画",
+  sketch: "画速写",
 };
+
+// snake_case 英文 key 兜底：表里没有时，至少去掉下划线显示得像句话
+function humanizeKey(value) {
+  if (/^[a-z][a-z0-9_]*$/.test(value)) return value.replace(/_/g, " ");
+  return value;
+}
 
 const SEAT_ANCHOR = {
   read_book: { kind: "seat", object: "sofa", x: 0.52, y: 0.72 },
@@ -37,7 +83,8 @@ const SEAT_ANCHOR = {
 const LIGHT_KEYS = new Set(["lamp", "ceiling_light", "floor_lamp", "desk_lamp", "bedside_lamp"]);
 
 export function actionLabel(action) {
-  return ACTION_ZH[action] || action || "发呆";
+  if (!action) return "发呆";
+  return ACTION_ZH[action] || humanizeKey(action);
 }
 
 export function poseOf(action) {
@@ -98,6 +145,7 @@ export function mapWorldSnapshot(world = {}) {
   return {
     room,
     roomKey,
+    outside: OUTSIDE_ROOMS.has(roomKey),
     x: anchor?.x ?? DEFAULT_X[roomKey] ?? 0.5,
     y: anchor?.y ?? 0.50,
     anchor,
