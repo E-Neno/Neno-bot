@@ -1020,7 +1020,17 @@ function renderWorldObjects(state) {
       el.style.top = `${slot.y}%`;
       el.style.fontSize = `${slot.size || 22}px`;
       const glyph = el.querySelector(".wo-glyph");
-      glyph.textContent = fx.emoji || o.emoji || "";
+      if (fx.img) {                                  // 有真实抠图贴片
+        if (glyph.dataset.img !== fx.img) {
+          glyph.innerHTML = `<img class="wo-img" src="${fx.img}" alt="">`;
+          glyph.dataset.img = fx.img;
+        }
+        el.classList.add("has-img");
+      } else {                                        // 回退 emoji
+        if (glyph.dataset.img) { glyph.innerHTML = ""; glyph.dataset.img = ""; }
+        glyph.textContent = fx.emoji || o.emoji || "";
+        el.classList.remove("has-img");
+      }
       glyph.style.transform = fx.tip ? "rotate(72deg) translateY(4px)" : "rotate(0)";
       el.style.opacity = fx.dim && !_editMode ? "0.5" : "1";
       el.querySelector(".wo-tag").textContent = _editMode ? key : "";

@@ -243,6 +243,7 @@ body.world-console-active {
 .world-object { position:absolute; transform:translate(-50%,-50%); line-height:1; transition:opacity .6s ease; }
 .wo-juice, .wo-idle, .wo-glyph { display:inline-block; }
 .wo-glyph { transition:transform .5s ease; }
+.wo-img { display:block; height:3em; width:auto; pointer-events:none; }
 .wo-idle.wo-breathe { animation:wo-breathe 3.6s ease-in-out infinite; }
 .wo-idle.wo-sway { animation:wo-sway 4.2s ease-in-out infinite; transform-origin:50% 100%; }
 .wo-idle.wo-swing { animation:wo-swing 3.4s ease-in-out infinite; transform-origin:50% 0; }

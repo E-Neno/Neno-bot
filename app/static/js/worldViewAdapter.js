@@ -71,9 +71,27 @@ const STATE_FX = {
   sketchbook:    { closed: { dim: true }, finished: { dim: true } },
 };
 
-// 给定物品 key 和当前状态，返回该状态的视觉覆盖（没有就空对象）。
+// 真实抠图贴片：把物品/状态映射到真实 PNG（透明底）。有图就用图、没图回退 emoji。
+// 一个个加，不用一次配满。格式：
+//   kettle: { _base: "/static/img/world/obj/kettle.png", boiling: "/static/img/world/obj/kettle-boiling.png" }
+// _base 是默认图（所有状态），具体状态可单独覆盖（如 boiling 那张带蒸汽的）。
+const OBJECT_IMG = {
+  // 例（出了图再填）：
+  // kettle: { _base: "/static/img/world/obj/kettle.png", boiling: "/static/img/world/obj/kettle-boiling.png" },
+  // plants: { _base: "/static/img/world/obj/plant-fresh.png", wilting: "/static/img/world/obj/plant-wilting.png", dead: "/static/img/world/obj/plant-dead.png" },
+};
+
+function objectImg(key, state) {
+  const conf = OBJECT_IMG[key];
+  if (!conf) return null;
+  return conf[state] || conf._base || null;
+}
+
+// 给定物品 key 和当前状态，返回该状态的视觉覆盖（emoji 覆盖 / 真实贴片 / 效果）。
 export function objectFx(key, state) {
-  return (STATE_FX[key] && STATE_FX[key][state]) || {};
+  const fx = (STATE_FX[key] && STATE_FX[key][state]) || {};
+  const img = objectImg(key, state);
+  return img ? { ...fx, img } : fx;
 }
 
 // 自动布局：按类别把物品分到不同高度带（灯在顶、家具在中下、地毯杂物在地面），
