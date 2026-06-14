@@ -124,6 +124,27 @@ export function autoLayout(objects) {
   return out;
 }
 
+// ── 2D 引擎数据契约（Phaser 用）─────────────────────────────────────────────
+// 组件层内的前后深度（数字大=更靠前/更近）。结构件靠后、小物件靠前。codex Phase 2 可细化。
+export const CATEGORY_DEPTH = {
+  window: 1, decor: 1, rack: 2, light: 2,
+  furniture: 3, appliance: 3,
+  plant: 4, nature: 4, textile: 4,
+  fixture: 5, device: 5, media: 5, book: 5,
+  drinkware: 6, pantry: 6, household: 6,
+};
+// 组件带基准深度 20，角色 50，活光顶层 60；prop 深度永远 < 角色。
+export function objectDepth(category, yFraction) {
+  const tier = CATEGORY_DEPTH[category] ?? 3;
+  return 20 + tier * 2 + (yFraction || 0) * 4;  // tier 打底 + y 越低越靠前
+}
+
+// 物理件：key -> { type:"pendulum"|"cloth"|"drop", ...params }。codex Phase 3 填，引擎据此挂 Matter。
+export const PHYSICS = {
+  // 例：wind_chime: { type: "pendulum", length: 70 },
+  //     curtain:    { type: "cloth" },
+};
+
 const ACTION_ZH = {
   read_book: "读书",
   make_tea: "泡茶",
