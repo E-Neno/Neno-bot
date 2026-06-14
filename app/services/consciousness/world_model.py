@@ -76,6 +76,9 @@ class WorldState(BaseModel):
     # 每条 {session_id, message, user_message_ids, trace_id, source, platform,
     #       chat_type, user_id, received_at, received_sim_min, reconsider_after}
     pending_messages: list[dict] = Field(default_factory=list)
+    # 活泼度信号（不写决策，只给 LLM 当"感觉"）：在同一房间连续多少拍、上次出门是哪天。
+    room_streak: int = 0
+    last_outing_day: str = ""
 
 
 WorldOpType = Literal["set_state", "move", "create_object", "destroy_object"]

@@ -34,6 +34,48 @@ export const OUTSIDE_ROOMS = new Set([
   "building_entrance", "cafe", "convenience_store", "park",
 ]);
 
+// ── 反应式物品层（第一刀：厨房）─────────────────────────────────────────────
+// 每个房间里"会变状态、值得画出来"的物品摆哪。x/y 是房间内百分比，size 是字号(px)，
+// idle 是常驻微动。坐标先手调，日后可做拖拽编辑器。其余房间暂不配 = 不渲染物品层。
+export const OBJECT_SLOTS = {
+  kitchen: {
+    fridge:        { x: 15, y: 52, size: 46 },
+    kettle:        { x: 36, y: 62, size: 30, idle: "breathe" },
+    mug:           { x: 50, y: 66, size: 24, idle: "breathe" },
+    tea_tin:       { x: 62, y: 64, size: 22 },
+    cutting_board: { x: 75, y: 67, size: 26 },
+    dish_towel:    { x: 87, y: 60, size: 22, idle: "sway" },
+  },
+  living_room: {
+    ceiling_light: { x: 50, y: 13, size: 26, idle: "swing" },
+    tv:            { x: 84, y: 54, size: 32 },
+    record_player: { x: 90, y: 42, size: 22 },
+    sketchbook:    { x: 30, y: 70, size: 20, idle: "breathe" },
+    book:          { x: 47, y: 73, size: 20 },
+    floor_cushion: { x: 64, y: 78, size: 26 },
+  },
+};
+
+// 物品在某状态下的视觉差异（只写"和默认不一样"的：换 emoji / 加蒸汽 / 倒下 / 变暗）。
+// 默认字形用快照里 object.emoji；这里只覆盖。
+const STATE_FX = {
+  kettle:        { boiling: { steam: true } },
+  mug:           { broken: { tip: true }, dirty: { dim: true } },
+  tea_tin:       { empty: { dim: true } },
+  dish_towel:    { needs_wash: { dim: true } },
+  plants:        { wilting: { emoji: "🥀" }, dead: { emoji: "🥀", dim: true } },
+  ceiling_light: { off: { dim: true } },
+  lamp:          { off: { dim: true } },
+  record_player: { off: { dim: true }, paused: { dim: true } },
+  book:          { closed: { dim: true }, finished: { dim: true } },
+  sketchbook:    { closed: { dim: true }, finished: { dim: true } },
+};
+
+// 给定物品 key 和当前状态，返回该状态的视觉覆盖（没有就空对象）。
+export function objectFx(key, state) {
+  return (STATE_FX[key] && STATE_FX[key][state]) || {};
+}
+
 const ACTION_ZH = {
   read_book: "读书",
   make_tea: "泡茶",

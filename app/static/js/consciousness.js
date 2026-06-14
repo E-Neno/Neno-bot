@@ -1,6 +1,6 @@
 import { getAdminHeaders, requestJson } from "./api.js";
 import { clearChildren, setBusyButton, setOptionalText } from "./dom.js";
-import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER, actionLabel } from "./worldViewAdapter.js";
+import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER, actionLabel, OBJECT_SLOTS, objectFx } from "./worldViewAdapter.js";
 
 let _desireInterval = null;
 let _worldLiveInterval = null;
@@ -965,9 +965,61 @@ export function renderWorldLive(data) {
     const pct = Math.max(0, Math.min(100, Number(state.pressure) || 0));
     pBar.style.width = `${pct}%`;
   }
-  document.getElementById("worldSteam")?.classList.toggle("on", state.steam);
+  // 旧的单点厨房蒸汽改由反应式物品层接管（见 renderWorldObjects），这里不再单独开
+  document.getElementById("worldSteam")?.classList.remove("on");
+  renderWorldObjects(state);
   renderWorldPlan(state.plan);
   renderWorldTimeline(state);
+}
+
+// ── 反应式物品层：每个房间按快照里物品的 state 画出/更新物品，状态变了给点手感 ──
+const _objPrevState = {};
+function renderWorldObjects(state) {
+  const rooms = state.rooms || {};
+  for (const [room, slots] of Object.entries(OBJECT_SLOTS)) {
+    const roomEl = document.querySelector(`[data-world-room="${room}"]`);
+    if (!roomEl) continue;
+    let layer = roomEl.querySelector(".world-obj-layer");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "world-obj-layer";
+      roomEl.appendChild(layer);
+    }
+    const byKey = {};
+    for (const o of rooms[room]?.objects || []) byKey[o.key] = o;
+    for (const [key, slot] of Object.entries(slots)) {
+      const o = byKey[key];
+      if (!o) continue;
+      const fx = objectFx(key, o.state);
+      let el = layer.querySelector(`[data-obj="${key}"]`);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "world-object";
+        el.dataset.obj = key;
+        el.style.left = `${slot.x}%`;
+        el.style.top = `${slot.y}%`;
+        el.style.fontSize = `${slot.size || 26}px`;
+        const idleName = slot.idle || "breathe";  // 默认都呼吸，让场景整体"活着"
+        const delay = ([...key].reduce((a, c) => a + c.charCodeAt(0), 0) % 24) / 10;  // 错开节奏
+        el.innerHTML = `<span class="wo-juice"><span class="wo-idle wo-${idleName}" style="animation-delay:${delay}s"><span class="wo-steam"></span><span class="wo-glyph"></span></span></span>`;
+        layer.appendChild(el);
+      }
+      const glyph = el.querySelector(".wo-glyph");
+      glyph.textContent = fx.emoji || o.emoji || "";
+      glyph.style.transform = fx.tip ? "rotate(72deg) translateY(4px)" : "rotate(0)";
+      el.style.opacity = fx.dim ? "0.5" : "1";
+      el.querySelector(".wo-steam").innerHTML = fx.steam ? "<i></i><i></i><i></i>" : "";
+      // 状态变了 → 弹一下（juice），让"她操作了"有反馈
+      const pk = `${room}.${key}`;
+      if (_objPrevState[pk] !== undefined && _objPrevState[pk] !== o.state) {
+        const j = el.querySelector(".wo-juice");
+        j.classList.remove("wo-bump");
+        void j.offsetWidth;
+        j.classList.add("wo-bump");
+      }
+      _objPrevState[pk] = o.state;
+    }
+  }
 }
 
 export async function loadWorldLive() {

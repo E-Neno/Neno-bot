@@ -34,9 +34,20 @@ class WorldStore:
             state = WorldState.model_validate(data)
             if not state.object_states:  # 空也视为需种子
                 raise ValueError("empty world state")
+            self._backfill_object_states(state)
             return state
         except Exception:
             return seed_world_state(self._world_def)  # 坏 JSON 降级
+
+    def _backfill_object_states(self, state: WorldState) -> None:
+        """老世界在 world_def 加了新物品后，持久化状态里缺这些物品的态。
+        给"def 里有、没被扔掉、状态缺失"的物品补默认态——否则它们永远是"?"，
+        相关事件（如 chore 看 dish_towel==needs_wash）和 drift 都失效。下次 tick 落库。"""
+        for name in self._world_def.objects:
+            if name in state.removed:
+                continue
+            if name not in state.object_states:
+                state.object_states[name] = self._world_def.default_state(name)
 
     def _write_sync(self, state: WorldState) -> None:
         state.updated_at = datetime.now(timezone.utc).isoformat()

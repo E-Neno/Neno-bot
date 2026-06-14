@@ -24,7 +24,7 @@ from .state_store import StateStore
 from .world_brain import WorldBrain
 from .world_drift import apply_drift
 from .world_model import (
-    _label_of, apply_op, find_goal_thread, find_thread, load_world_def, make_thread,
+    _label_of, apply_op, find_goal_thread, find_thread, is_outside, load_world_def, make_thread,
     objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
 )
 from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
@@ -325,10 +325,17 @@ class WorldLoop:
                         (t["kind"] == "goal" and t.get("carry_count", 0) >= 2)
                     )
                 ]
+                # 活泼度信号：在一个屋待久了/今天没出门 → 给她"有点闷"的感觉（决定仍由她做）
+                _today = now8.date().isoformat()
+                _restless = []
+                if (ws.room_streak or 0) >= 6:
+                    _restless.append(f"你在{ROOM_LABELS.get(drifted.location, drifted.location)}已经待了好一会儿了")
+                if ws.last_outing_day != _today and 8 <= now8.hour <= 21:
+                    _restless.append("今天还没出过门")
                 plan_obj = await self._brain.decide(
                     drifted, nstate=nstate, phase=phase, plan=plan_dp,
                     memories=memories, recent=recent_ctx, event=event,
-                    threads=active_threads,
+                    threads=active_threads, restless="；".join(_restless),
                 )
                 action, reason, micro, ops = (
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
@@ -381,6 +388,10 @@ class WorldLoop:
             # （glide 只是继续手上的事，不是又做了一遍）
             if not sim.recent_actions or sim.recent_actions[-1].get("action") != action:
                 sim.recent_actions = (sim.recent_actions + [{"action": action, "ago_min": 0}])[-8:]
+            # 活泼度记账：同屋连击 +1 / 换屋归零；在外面就刷新"今天出过门"
+            sim.room_streak = (ws.room_streak or 0) + 1 if sim.location == ws.location else 0
+            if is_outside(wd, sim.location):
+                sim.last_outing_day = today_str
             sim.sim_minutes = sim_minutes
             # 持久化压力状态
             sim.pressure_value = pressure.value

@@ -29,6 +29,8 @@ _SYSTEM_PROMPT = """你在模拟一个独居年轻女性 Neno 的日常生活。
 - 参考[精力]和[心情]决定做事的强度——精力低或心情差时倾向休息、安抚，而不是硬撑着做事。
 - 有[刚发生]的事就先回应它（开心/烦躁/好奇都可以），让情绪影响你的选择。
 - 不要重复[最近做过]里刚做过的事，让生活往前推进。
+- 别老待在一个房间里做同类的事。看到[有点闷]时，自然地换个房间，或者出门走走——
+  出门的路：先到玄关(entryway)，再到小区楼下(building_entrance)，那边能去咖啡馆/便利店/小公园。
 - 尽量推进[今日计划]里当前时段的意图；可以被世界变化临时打断，但别忘了主线。
 - 钱够且确有需要时，可以买点东西（create_object）；坏掉/不想要的东西可以扔掉（destroy_object）；不必每步都买卖。
 
@@ -80,6 +82,7 @@ class WorldBrain:
         recent=None,
         event=None,
         threads=None,
+        restless: str = "",
     ) -> str:
         """给 LLM 的世界上下文：世界约束 + 时段 + 内在状态 + 计划 + 最近行动 + 记忆。
 
@@ -139,6 +142,9 @@ class WorldBrain:
                 for m in memories
             )
             lines.append(f"[此刻想起] {mem_txt}")
+        # 活泼度：待太久/没出门的"闷"信号（只是感觉，换不换地方/出不出门她自己定）
+        if restless:
+            lines.append(f"[有点闷] {restless}")
         # 竖切6：刚发生的事件 / 钱包 / 失去过的东西
         if event is not None:
             ev_content = event.content if hasattr(event, "content") else str(event)
@@ -177,6 +183,7 @@ class WorldBrain:
         recent=None,
         event=None,
         threads=None,
+        restless: str = "",
     ) -> ActionPlan:
         if not self._config.world_llm_enabled:
             return self._mock_decide(state)
@@ -184,6 +191,7 @@ class WorldBrain:
             return await self._llm_decide(
                 state, nstate=nstate, phase=phase, plan=plan,
                 memories=memories, recent=recent, event=event, threads=threads,
+                restless=restless,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("world LLM decide failed, falling back to mock: %s", exc)
@@ -200,6 +208,7 @@ class WorldBrain:
         recent=None,
         event=None,
         threads=None,
+        restless: str = "",
     ) -> ActionPlan:
         if not OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -210,6 +219,7 @@ class WorldBrain:
                 "content": self._build_user_message(
                     state, nstate=nstate, phase=phase, plan=plan,
                     memories=memories, recent=recent, event=event, threads=threads,
+                    restless=restless,
                 ),
             },
         ]

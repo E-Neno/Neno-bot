@@ -238,6 +238,25 @@ body.world-console-active {
 .world-room.kitchen { background-image:url("/static/img/world/room-kitchen-v1.png"); }
 .world-room.balcony { background-image:url("/static/img/world/room-balcony-v1.png"); }
 /* 刀③ 开放世界：玄关 + 外部场所（矢量场景插画，可日后替换为 PNG） */
+/* 反应式物品层：物品按状态渲染 + 常驻微动 + 状态切换手感（第一刀：厨房） */
+.world-obj-layer { position:absolute; inset:0; z-index:6; pointer-events:none; }
+.world-object { position:absolute; transform:translate(-50%,-50%); line-height:1; transition:opacity .6s ease; }
+.wo-juice, .wo-idle, .wo-glyph { display:inline-block; }
+.wo-glyph { transition:transform .5s ease; }
+.wo-idle.wo-breathe { animation:wo-breathe 3.6s ease-in-out infinite; }
+.wo-idle.wo-sway { animation:wo-sway 4.2s ease-in-out infinite; transform-origin:50% 100%; }
+.wo-idle.wo-swing { animation:wo-swing 3.4s ease-in-out infinite; transform-origin:50% 0; }
+.wo-bump { animation:wo-bump .5s ease; }
+.wo-steam { position:absolute; left:50%; top:-2px; }
+.wo-steam i { position:absolute; left:0; width:3px; height:3px; border-radius:50%; background:rgba(220,226,232,.7); animation:wo-rise 1.9s infinite ease-out; }
+.wo-steam i:nth-child(2){ left:5px; animation-delay:.7s; }
+.wo-steam i:nth-child(3){ left:-4px; animation-delay:1.3s; }
+@keyframes wo-breathe { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-2.5px) scale(1.07)} }
+@keyframes wo-sway { 0%,100%{transform:rotate(-4deg)} 50%{transform:rotate(4deg)} }
+@keyframes wo-swing { 0%,100%{transform:rotate(-6deg)} 50%{transform:rotate(6deg)} }
+@keyframes wo-bump { 0%{transform:scale(1)} 40%{transform:scale(1.25)} 70%{transform:scale(.93)} 100%{transform:scale(1)} }
+@keyframes wo-rise { 0%{transform:translate(-50%,0);opacity:0} 25%{opacity:.7} 100%{transform:translate(-50%,-20px);opacity:0} }
+
 .world-room.entryway { background-image:url("/static/img/world/scene-entryway-v1.svg"); }
 .world-room.building_entrance { background-image:url("/static/img/world/scene-building-entrance-v1.svg"); }
 .world-room.cafe { background-image:url("/static/img/world/scene-cafe-v1.svg"); }
