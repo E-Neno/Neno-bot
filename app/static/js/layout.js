@@ -604,6 +604,8 @@ function createWorldWorkspace() {
         <div class="world-step-controls">
           <button class="world-step-button" id="cWorldStepBtn" type="button">走一步</button>
           <button class="world-step-button" id="cWorldWakeBtn" type="button">叫醒她</button>
+          <button class="world-step-button" id="worldEditBtn" type="button">编辑布局</button>
+          <button class="world-step-button" id="worldEditExport" type="button" style="display:none;">导出坐标</button>
         </div>
         <div class="world-stage-clock"><strong id="worldClock">--:--</strong><span id="worldPhase">等待世界数据</span></div>
       </div>

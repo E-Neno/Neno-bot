@@ -1,6 +1,6 @@
 import { getAdminHeaders, requestJson } from "./api.js";
 import { clearChildren, setBusyButton, setOptionalText } from "./dom.js";
-import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER, actionLabel, OBJECT_SLOTS, objectFx } from "./worldViewAdapter.js";
+import { mapWorldSnapshot, ROOM_NAME, ROOM_ORDER, actionLabel, OBJECT_SLOTS, objectFx, autoLayout } from "./worldViewAdapter.js";
 
 let _desireInterval = null;
 let _worldLiveInterval = null;
@@ -974,9 +974,19 @@ export function renderWorldLive(data) {
 
 // ── 反应式物品层：每个房间按快照里物品的 state 画出/更新物品，状态变了给点手感 ──
 const _objPrevState = {};
+let _editMode = false;        // 摆放编辑模式：物品可拖、未定位的进托盘、可导出坐标
+let _slots = null;            // 工作中的 slot 配置（初始从 OBJECT_SLOTS 克隆，拖动后更新）
+let _drag = null;             // 拖动中：{room, key, el}
+
+function ensureSlots() {
+  if (!_slots) _slots = JSON.parse(JSON.stringify(OBJECT_SLOTS));
+  return _slots;
+}
+
 function renderWorldObjects(state) {
+  ensureSlots();
   const rooms = state.rooms || {};
-  for (const [room, slots] of Object.entries(OBJECT_SLOTS)) {
+  for (const room of Object.keys(rooms)) {
     const roomEl = document.querySelector(`[data-world-room="${room}"]`);
     if (!roomEl) continue;
     let layer = roomEl.querySelector(".world-obj-layer");
@@ -985,33 +995,39 @@ function renderWorldObjects(state) {
       layer.className = "world-obj-layer";
       roomEl.appendChild(layer);
     }
-    const byKey = {};
-    for (const o of rooms[room]?.objects || []) byKey[o.key] = o;
-    for (const [key, slot] of Object.entries(slots)) {
-      const o = byKey[key];
-      if (!o) continue;
+    layer.classList.toggle("editing", _editMode);
+    const objs = rooms[room]?.objects || [];
+    const auto = autoLayout(objs);                 // 自动布局打底
+    const overrides = _slots[room] || {};          // 手摆/拖动覆盖
+    const present = new Set(objs.map((o) => o.key));
+    for (const o of objs) {
+      const key = o.key;
+      const slot = overrides[key] || auto[key] || { x: 50, y: 60, size: 22 };
       const fx = objectFx(key, o.state);
       let el = layer.querySelector(`[data-obj="${key}"]`);
       if (!el) {
         el = document.createElement("div");
         el.className = "world-object";
         el.dataset.obj = key;
-        el.style.left = `${slot.x}%`;
-        el.style.top = `${slot.y}%`;
-        el.style.fontSize = `${slot.size || 26}px`;
+        el.dataset.room = room;
         const idleName = slot.idle || "breathe";  // 默认都呼吸，让场景整体"活着"
         const delay = ([...key].reduce((a, c) => a + c.charCodeAt(0), 0) % 24) / 10;  // 错开节奏
-        el.innerHTML = `<span class="wo-juice"><span class="wo-idle wo-${idleName}" style="animation-delay:${delay}s"><span class="wo-steam"></span><span class="wo-glyph"></span></span></span>`;
+        el.innerHTML = `<span class="wo-juice"><span class="wo-idle wo-${idleName}" style="animation-delay:${delay}s"><span class="wo-steam"></span><span class="wo-glyph"></span></span><span class="wo-tag"></span></span>`;
+        el.addEventListener("pointerdown", onObjPointerDown);
         layer.appendChild(el);
       }
+      el.style.left = `${slot.x}%`;
+      el.style.top = `${slot.y}%`;
+      el.style.fontSize = `${slot.size || 22}px`;
       const glyph = el.querySelector(".wo-glyph");
       glyph.textContent = fx.emoji || o.emoji || "";
       glyph.style.transform = fx.tip ? "rotate(72deg) translateY(4px)" : "rotate(0)";
-      el.style.opacity = fx.dim ? "0.5" : "1";
+      el.style.opacity = fx.dim && !_editMode ? "0.5" : "1";
+      el.querySelector(".wo-tag").textContent = _editMode ? key : "";
       el.querySelector(".wo-steam").innerHTML = fx.steam ? "<i></i><i></i><i></i>" : "";
       // 状态变了 → 弹一下（juice），让"她操作了"有反馈
       const pk = `${room}.${key}`;
-      if (_objPrevState[pk] !== undefined && _objPrevState[pk] !== o.state) {
+      if (!_editMode && _objPrevState[pk] !== undefined && _objPrevState[pk] !== o.state) {
         const j = el.querySelector(".wo-juice");
         j.classList.remove("wo-bump");
         void j.offsetWidth;
@@ -1019,7 +1035,54 @@ function renderWorldObjects(state) {
       }
       _objPrevState[pk] = o.state;
     }
+    // 清理已消失（被扔掉）的物品
+    layer.querySelectorAll(".world-object").forEach((el) => {
+      if (!present.has(el.dataset.obj)) el.remove();
+    });
   }
+}
+
+// ── 摆放编辑器：拖物品定位 + 导出坐标 ──
+function onObjPointerDown(e) {
+  if (!_editMode) return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  _drag = { room: el.dataset.room, key: el.dataset.obj, el };
+  el.setPointerCapture(e.pointerId);
+  el.addEventListener("pointermove", onObjPointerMove);
+  el.addEventListener("pointerup", onObjPointerUp);
+}
+function onObjPointerMove(e) {
+  if (!_drag) return;
+  const roomEl = _drag.el.closest("[data-world-room]");
+  const r = roomEl.getBoundingClientRect();
+  const x = Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100));
+  const y = Math.max(0, Math.min(100, ((e.clientY - r.top) / r.height) * 100));
+  _slots[_drag.room][_drag.key].x = Math.round(x * 10) / 10;
+  _slots[_drag.room][_drag.key].y = Math.round(y * 10) / 10;
+  _drag.el.style.left = `${x}%`;
+  _drag.el.style.top = `${y}%`;
+}
+function onObjPointerUp(e) {
+  if (!_drag) return;
+  _drag.el.removeEventListener("pointermove", onObjPointerMove);
+  _drag.el.removeEventListener("pointerup", onObjPointerUp);
+  _drag = null;
+}
+function toggleWorldEdit() {
+  _editMode = !_editMode;
+  document.getElementById("worldEditBtn")?.classList.toggle("active", _editMode);
+  document.getElementById("worldEditExport")?.style.setProperty("display", _editMode ? "inline-flex" : "none");
+  if (_latestWorldState) renderWorldObjects(_latestWorldState);
+}
+function exportWorldSlots() {
+  ensureSlots();
+  const text = "export const OBJECT_SLOTS = " + JSON.stringify(_slots, null, 2) + ";";
+  navigator.clipboard?.writeText(text).then(
+    () => setWorldText("cWorldLiveStatus", "已复制 OBJECT_SLOTS 到剪贴板，贴给我即可"),
+    () => {}
+  );
+  console.log(text);
 }
 
 export async function loadWorldLive() {
@@ -1191,6 +1254,18 @@ export function bindConsciousnessEvents() {
   if (sceneOutBtn && !sceneOutBtn.dataset.bound) {
     sceneOutBtn.dataset.bound = "true";
     sceneOutBtn.addEventListener("click", () => setWorldFocus("outside"));
+  }
+
+  // 摆放编辑器开关 + 导出
+  const editBtn = document.getElementById("worldEditBtn");
+  if (editBtn && !editBtn.dataset.bound) {
+    editBtn.dataset.bound = "true";
+    editBtn.addEventListener("click", () => toggleWorldEdit());
+  }
+  const exportBtn = document.getElementById("worldEditExport");
+  if (exportBtn && !exportBtn.dataset.bound) {
+    exportBtn.dataset.bound = "true";
+    exportBtn.addEventListener("click", () => exportWorldSlots());
   }
 
   // 总览桥接卡：载入一次 + 总览激活时每 6s 刷新

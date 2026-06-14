@@ -76,6 +76,36 @@ export function objectFx(key, state) {
   return (STATE_FX[key] && STATE_FX[key][state]) || {};
 }
 
+// 自动布局：按类别把物品分到不同高度带（灯在顶、家具在中下、地毯杂物在地面），
+// 同一带里横向均匀铺开。没配 slot 的物品据此自动落位，省去手摆 100+ 个。
+const TIER_Y = {
+  light: 13, window: 28, decor: 33,
+  plant: 50, nature: 50,
+  device: 55, media: 55, book: 55, drinkware: 57, pantry: 57, household: 57, fixture: 55,
+  appliance: 60, furniture: 66,
+  textile: 80, rack: 80,
+};
+const TIER_DEFAULT = 62;
+
+export function autoLayout(objects) {
+  const count = {};
+  for (const o of objects) {
+    const y = TIER_Y[o.category] ?? TIER_DEFAULT;
+    count[y] = (count[y] || 0) + 1;
+  }
+  const idx = {};
+  const out = {};
+  for (const o of objects) {
+    const y = TIER_Y[o.category] ?? TIER_DEFAULT;
+    const n = count[y];
+    const i = idx[y] || 0;
+    idx[y] = i + 1;
+    const x = n === 1 ? 50 : 8 + (i / (n - 1)) * 84;
+    out[o.key] = { x: Math.round(x * 10) / 10, y, size: 22 };
+  }
+  return out;
+}
+
 const ACTION_ZH = {
   read_book: "读书",
   make_tea: "泡茶",

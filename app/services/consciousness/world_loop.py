@@ -25,7 +25,7 @@ from .world_brain import WorldBrain
 from .world_drift import apply_drift
 from .world_model import (
     _label_of, apply_op, find_goal_thread, find_thread, is_outside, load_world_def, make_thread,
-    objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
+    obj_category, objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
 )
 from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
 from .world_store import WorldStore
@@ -54,6 +54,31 @@ OBJ_EMOJI = {
     "snack_shelf": "🍫", "register": "🛒", "cafe_counter": "☕",
     "window_seat": "🪑", "coffee_cup": "🥤", "park_bench": "🪑",
     "old_tree": "🌳", "street_lamp": "🏮",
+    # 世界扩容：家内房间
+    "wardrobe": "👗", "bedside_table": "🗄️", "alarm_clock": "⏰", "mirror": "🪞",
+    "blanket": "🛌", "pillow": "🛏️", "storage_box": "📦", "photo_frame": "🖼️",
+    "curtain": "🪟", "stove": "🔥", "rice_cooker": "🍚", "frying_pan": "🍳",
+    "saucepan": "🥘", "knife_set": "🔪", "bowl": "🥣", "plate": "🍽️",
+    "chopsticks": "🥢", "spice_rack": "🧂", "oil_bottle": "🫗", "sink": "🚰",
+    "trash_bin": "🗑️", "coffee_table": "🫖", "side_table": "🪑", "rug": "🟫",
+    "curtains_living": "🪟", "remote_control": "🎛️", "speaker": "🔊",
+    "game_console": "🎮", "magazine_rack": "📰", "wall_clock": "🕰️",
+    "vase": "🏺", "reading_lamp": "💡", "flower_pot": "🌷", "herb_planter": "🌿",
+    "succulent": "🌵", "garden_shears": "✂️", "plant_stand": "🪴",
+    "outdoor_table": "🪑", "storage_cabinet": "🗄️", "broom": "🧹",
+    "dustpan": "🧹", "clothespin_basket": "🧺", "balcony_light": "💡",
+    "rain_gauge": "🌧️", "bird_feeder": "🌾",
+    # 世界扩容：玄关与外部场所
+    "coat_rack": "🧥", "umbrella_stand": "🌂", "doormat": "🟫",
+    "entry_mirror": "🪞", "intercom": "📟", "reusable_bag": "🛍️",
+    "notice_board": "📌", "elevator": "🛗", "stairwell_light": "💡",
+    "security_camera": "📹", "lobby_bench": "🪑", "recycling_bins": "♻️",
+    "drink_cooler": "🥤", "instant_noodle_shelf": "🍜", "fruit_basket": "🍎",
+    "freezer_case": "🧊", "shopping_basket": "🛒", "receipt_printer": "🧾",
+    "espresso_machine": "☕", "pastry_case": "🥐", "menu_board": "📋",
+    "cafe_table": "🪑", "sugar_jar": "🫙", "walking_path": "🚶",
+    "flower_bed": "🌼", "playground": "🛝", "drinking_fountain": "🚰",
+    "park_trash_can": "🗑️",
 }
 PHASE_ZH = {"morning": "上午", "afternoon": "下午", "evening": "傍晚", "night": "夜里"}
 START_SIM_MINUTES = 7 * 60
@@ -110,7 +135,8 @@ def build_snapshot(wd, state: WorldState, nstate) -> dict:
             "objects": [
                 {"key": o, "label": _obj_label(wd, state, o),
                  "emoji": OBJ_EMOJI.get(o, "🆕" if o in state.dyn_objects else "▫️"),
-                 "state": state.object_states.get(o, "?")}
+                 "state": state.object_states.get(o, "?"),
+                 "category": obj_category(wd, state, o) or ""}
                 for o in objects_in_room(wd, state, room)
             ],
         }

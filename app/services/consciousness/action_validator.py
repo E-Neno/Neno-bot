@@ -5,7 +5,7 @@ from .world_model import (
     obj_exists, obj_room, legal_states_of, room_count, reachable_rooms,
 )
 
-ROOM_CAP = 15  # 单房间软上限，防止开放世界无限膨胀
+ROOM_CAP = 30  # 单房间软上限，防止开放世界无限膨胀
 
 
 def validate_ops(
