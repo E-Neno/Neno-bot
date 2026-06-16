@@ -24,7 +24,13 @@ def _patch_turn_dependencies(monkeypatch):
 
     def fake_generate_chat_reply(messages: list[dict], trace_id: str | None = None) -> str:
         del trace_id
-        return f"reply:{messages[-1]['content']}"
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            text = str(content[-1].get("text", ""))
+            message = text.split("【对方刚说】\n", 1)[-1]
+        else:
+            message = str(content)
+        return f"reply:{message}"
 
     monkeypatch.setattr(turn_orchestrator, "generate_chat_reply", fake_generate_chat_reply)
     monkeypatch.setattr(turn_orchestrator, "process_memory_candidate", lambda *args, **kwargs: _memory_result())

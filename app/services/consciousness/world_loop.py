@@ -7,6 +7,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 from app.config import WORLD_PRESENCE_GATE_ENABLED, WORLD_PRESENCE_WX_AUTO_SEND
+from app.utils.logging_utils import log_event
 
 from .action_validator import validate_ops
 from .activity_episode_store import ActivityEpisodeStore
@@ -22,6 +23,7 @@ from .models import StateMutation
 from .reflection_engine import ReflectionEngine
 from .state_store import StateStore
 from .world_brain import WorldBrain
+from .self_context import maybe_update_self_context
 from .world_drift import apply_drift
 from .world_model import (
     _label_of, apply_op, find_goal_thread, find_thread, is_outside, load_world_def, make_thread,
@@ -491,6 +493,19 @@ class WorldLoop:
                 _log.warning("owe-reply thread error: %s", exc)
 
         ws.sim_minutes = sim_minutes  # 写回真实时间，不再累加
+        try:
+            await maybe_update_self_context(
+                ws, nstate, cfg, trace_id="life_world"
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "consciousness",
+                "self_context_warning",
+                trace_id="life_world",
+                level="warning",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
         await self._world_store.write(ws)
         return build_snapshot(wd, ws, nstate)
 

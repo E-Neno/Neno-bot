@@ -79,6 +79,10 @@ class WorldState(BaseModel):
     # 活泼度信号（不写决策，只给 LLM 当"感觉"）：在同一房间连续多少拍、上次出门是哪天。
     room_streak: int = 0
     last_outing_day: str = ""
+    # 刀① 阶段 1+2：由已落账状态派生的只读自我语境，旧 JSON 自动补默认。
+    self_context: str = ""
+    self_context_basis: dict | None = None
+    self_context_updated_at: str = ""
 
 
 WorldOpType = Literal["set_state", "move", "create_object", "destroy_object"]

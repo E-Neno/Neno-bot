@@ -5,10 +5,11 @@ import json
 import logging
 import re
 
-from app.config import OPENROUTER_API_KEY, OPENROUTER_URL
+from app.config import NENO_SEED, OPENROUTER_API_KEY, OPENROUTER_URL
 from app.llm.openrouter_client import chat_with_openrouter
 
 from .config import ConsciousnessConfig
+from .self_context import render_seed_context
 from .world_model import (
     ActionPlan, WorldDef, WorldOp, WorldState,
     objects_in_room, legal_states_of, reachable_rooms, is_outside,
@@ -91,6 +92,11 @@ class WorldBrain:
         room = state.location
         objs = self._world_def.rooms.get(room, {}).get("objects", [])
         lines: list[str] = []
+        seed_context = render_seed_context(NENO_SEED)
+        if seed_context:
+            lines.append(f"[不变的自我种子] {seed_context}")
+        if state.self_context.strip():
+            lines.append(f"[此刻的你] {state.self_context.strip()}")
         if phase:
             lines.append(f"[时段] {phase}")
         if nstate is not None:

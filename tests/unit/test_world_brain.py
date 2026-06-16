@@ -120,6 +120,18 @@ def test_prompt_includes_state_memory_plan_recent():
     assert "afternoon" in user_msg       # 时段进了 prompt
 
 
+def test_prompt_always_includes_seed_and_optional_self_context():
+    wd, brain = _brain(True)
+    st = seed_world_state(wd)
+    without_context = brain._build_user_message(st)
+    assert "18" in without_context
+    assert "活泼" in without_context
+
+    st.self_context = "你现在窝在客厅画画，心情很松。"
+    with_context = brain._build_user_message(st)
+    assert "你现在窝在客厅画画，心情很松。" in with_context
+
+
 def test_decide_backward_compatible_without_context():
     # 不传新参数仍可工作（竖切1/3 兼容）
     wd, brain = _brain(False)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from app.storage import db as db_storage
 from app.services.consciousness.models import NenoState
@@ -30,11 +31,18 @@ def _write_agent_state(energy_value: float, status: str, mood_label: str = "平�
     )
 
 
-def _write_world_state(location: str, action: str, threads: list[dict]) -> None:
+def _write_world_state(
+    location: str,
+    action: str,
+    threads: list[dict],
+    *,
+    self_context: str = "",
+) -> None:
     ws = seed_world_state(load_world_def())
     ws.location = location
     ws.last_tick = {"action": action}
     ws.open_threads = threads
+    ws.self_context = self_context
     now = datetime.now(timezone.utc).isoformat()
     db_storage.execute_write(
         "INSERT INTO life_world_state (id, state_json, updated_at) VALUES (1, ?, ?) "
@@ -55,6 +63,8 @@ def test_awake_state_renders_place_and_activity(tmp_path: Path):
     assert "翻开书" in block
     assert "懒洋洋" in block
     assert "睡" not in block.split("\n")[1]  # 醒着不该说在睡
+    assert "18" in block
+    assert "活泼" in block
 
 
 def test_sleeping_state_renders_woken(tmp_path: Path):
@@ -67,6 +77,39 @@ def test_sleeping_state_renders_woken(tmp_path: Path):
     assert block is not None
     assert "睡着了" in block
     assert "吵醒" in block or "睡眼惺忪" in block
+
+
+def test_sleeping_state_keeps_persisted_self_context_and_live_sleep_status(tmp_path: Path):
+    _init_db(tmp_path)
+    _write_agent_state(30.0, "sleeping")
+    _write_world_state(
+        "bedroom",
+        "睡着",
+        threads=[],
+        self_context="你今晚画了很久，后来回到卧室歇下。",
+    )
+
+    from app.services.chat.self_state_context import build_self_state_context
+    block = build_self_state_context()
+    assert "你今晚画了很久" in block
+    assert "睡着了" in block
+
+
+def test_persisted_self_context_replaces_manual_life_summary(tmp_path: Path):
+    _init_db(tmp_path)
+    _write_agent_state(80.0, "awake", mood_label="平静")
+    _write_world_state(
+        "living_room",
+        "翻开书",
+        threads=[],
+        self_context="你现在窝在客厅画画，心情很松。",
+    )
+
+    from app.services.chat.self_state_context import build_self_state_context
+    block = build_self_state_context()
+    assert "你现在窝在客厅画画，心情很松。" in block
+    assert "刚在翻开书" not in block
+    assert "18" in block
 
 
 def test_active_threads_surface(tmp_path: Path):
@@ -85,17 +128,54 @@ def test_active_threads_surface(tmp_path: Path):
     assert "随便一个" not in block        # carry<2 的 goal 不上
 
 
-def test_disabled_returns_none(tmp_path: Path, monkeypatch):
+def test_life_state_disabled_still_returns_seed(tmp_path: Path, monkeypatch):
     _init_db(tmp_path)
     _write_agent_state(80.0, "awake")
     import app.config as cfg
     monkeypatch.setattr(cfg, "CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED", False)
 
     from app.services.chat.self_state_context import build_self_state_context
-    assert build_self_state_context() is None
+    block = build_self_state_context()
+    assert block is not None
+    assert "18" in block
+    assert "活泼" in block
+    assert "现在的你在" not in block
 
 
-def test_no_state_returns_none(tmp_path: Path):
+def test_state_read_failure_still_returns_seed_and_logs_warning(tmp_path: Path):
+    _init_db(tmp_path)
+    from app.services.chat import self_state_context as module
+
+    with patch.object(
+        module.db_storage, "fetch_one", side_effect=RuntimeError("db unavailable")
+    ), patch.object(module, "log_event") as logged:
+        block = module.build_self_state_context(trace_id="seed-fallback")
+
+    assert block is not None
+    assert "18" in block
+    assert "活泼" in block
+    logged.assert_called_once()
+
+
+def test_no_state_still_returns_deterministic_seed(tmp_path: Path):
     _init_db(tmp_path)  # 空库，没有 agent_state 行
     from app.services.chat.self_state_context import build_self_state_context
-    assert build_self_state_context() is None
+    block = build_self_state_context()
+    assert block is not None
+    assert "18" in block
+    assert "活泼" in block
+    assert "现在的你在家里" not in block
+
+
+def test_presence_gate_and_defer_marker_remain(tmp_path: Path, monkeypatch):
+    _init_db(tmp_path)
+    _write_agent_state(80.0, "awake")
+    _write_world_state("living_room", "画画", threads=[], self_context="你在客厅画画。")
+    import app.config as cfg
+    monkeypatch.setattr(cfg, "WORLD_PRESENCE_GATE_ENABLED", True)
+
+    from app.services.chat.self_state_context import build_self_state_context
+    from app.services.consciousness.presence import DEFER_MARKER
+    block = build_self_state_context()
+    assert DEFER_MARKER in block
+    assert "只" in block and "输出" in block

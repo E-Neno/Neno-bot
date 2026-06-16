@@ -48,57 +48,77 @@ def _active_threads(threads: list[dict]) -> list[str]:
 
 
 def build_self_state_context(trace_id: str | None = None) -> str | None:
-    """渲染「你此刻的真实状态」系统块；无状态或出错返回 None（聊天照常）。"""
-    try:
-        from app.config import CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED
-        if not CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED:
-            return None
+    """渲染确定性种子 + 生活语境 + 实时睡醒/presence 系统块。"""
+    from app.config import CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED, NENO_SEED
+    from app.services.consciousness.self_context import render_seed_context
 
+    lines = ["=== 你此刻的真实状态（你正过着的生活，不是设定）==="]
+    seed_context = render_seed_context(NENO_SEED)
+    if seed_context:
+        lines.append(seed_context)
+    seed_fallback = "\n".join(lines) if seed_context else None
+
+    # 这个开关只关闭生活状态接读；确定性种子始终保留。
+    if not CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED:
+        return seed_fallback
+
+    try:
         # 精力 / 情绪 ← agent_state
         a_row = db_storage.fetch_one(
             "SELECT state_json FROM agent_state WHERE id = 1 LIMIT 1"
         )
-        if not a_row:
-            return None
-        astate = json.loads(a_row["state_json"])
-        energy = astate.get("energy", {}) or {}
-        e_val = float(energy.get("value", 80.0))
-        e_status = str(energy.get("status", "awake"))
-        mood_label = str((astate.get("mood", {}) or {}).get("label", "")).strip()
+        has_agent_state = bool(a_row)
+        e_val = 80.0
+        e_status = "awake"
+        mood_label = ""
+        if a_row:
+            astate = json.loads(a_row["state_json"])
+            energy = astate.get("energy", {}) or {}
+            e_val = float(energy.get("value", 80.0))
+            e_status = str(energy.get("status", "awake"))
+            mood_label = str((astate.get("mood", {}) or {}).get("label", "")).strip()
 
         # 所在 / 正在做 / 牵挂 ← life_world_state
         location = ""
         doing = ""
         threads: list[dict] = []
+        persisted_self_context = ""
         w_row = db_storage.fetch_one(
             "SELECT state_json FROM life_world_state WHERE id = 1 LIMIT 1"
         )
+        has_world_state = bool(w_row)
         if w_row:
             wstate = json.loads(w_row["state_json"])
             location = str(wstate.get("location", ""))
             last_tick = wstate.get("last_tick") or {}
             doing = str(last_tick.get("action", "")).strip()
             threads = wstate.get("open_threads") or []
+            persisted_self_context = str(wstate.get("self_context", "")).strip()
 
         place_zh = _ROOM_ZH.get(location, "家里")
         energy_phrase = _energy_phrase(e_val, e_status)
 
-        lines = ["=== 你此刻的真实状态（你正过着的生活，不是设定）==="]
-        if e_status == "sleeping":
+        if persisted_self_context:
+            lines.append(persisted_self_context)
+
+        # 实时睡醒判断不能依赖可能有刷新延迟的 self_context；作为独立层叠加。
+        if has_agent_state and e_status == "sleeping":
             lines.append(f"现在的你其实在{place_zh}睡着了。对方这条消息是把你吵醒/睡眼惺忪时看到的——")
             lines.append("可以迷糊、慢半拍、或埋怨被吵，按真实反应来，别装作一直精神地在等消息。")
-        else:
+        elif not persisted_self_context and (has_agent_state or has_world_state):
             bits = [f"现在的你在{place_zh}"]
             if doing and doing not in ("醒来", "发呆"):
                 bits.append(f"刚在{doing}")
-            bits.append(energy_phrase)
-            if mood_label:
+            if has_agent_state:
+                bits.append(energy_phrase)
+            if has_agent_state and mood_label:
                 bits.append(f"心情{mood_label}")
             lines.append("，".join(bits) + "。")
 
-        care = _active_threads(threads)
-        if care:
-            lines.append("心里还隐隐挂着：" + "、".join(care) + "。")
+        if not persisted_self_context:
+            care = _active_threads(threads)
+            if care:
+                lines.append("心里还隐隐挂着：" + "、".join(care) + "。")
 
         lines.append(
             "聊到你的近况、在干嘛、状态时，自然顺着这个真实情况来，别跳出去现编另一套；"
@@ -123,4 +143,4 @@ def build_self_state_context(trace_id: str | None = None) -> str | None:
             error_type=type(exc).__name__,
             error_message=str(exc),
         )
-        return None
+        return seed_fallback

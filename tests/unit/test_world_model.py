@@ -22,6 +22,18 @@ def test_seed_state_uses_defaults():
     assert st.location in wd.rooms
 
 
+def test_old_world_state_data_gets_self_context_defaults():
+    from app.services.consciousness.world_model import WorldState
+
+    st = WorldState.model_validate({
+        "location": "bedroom",
+        "object_states": {"bed": "made"},
+    })
+    assert st.self_context == ""
+    assert st.self_context_basis is None
+    assert st.self_context_updated_at == ""
+
+
 def test_apply_set_state_returns_changed_copy():
     wd = load_world_def()
     st = seed_world_state(wd)

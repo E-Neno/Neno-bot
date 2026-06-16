@@ -75,6 +75,13 @@ class ConsciousnessConfig(BaseModel):
     world_sim_minutes_per_tick: int = int(os.getenv("CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK", "30"))
     world_model: str = os.getenv("OPENROUTER_WORLD_MODEL", "openai/gpt-4o-mini")
     world_llm_timeout_seconds: float = float(os.getenv("CONSCIOUSNESS_WORLD_LLM_TIMEOUT", "20"))
+    self_context_llm_enabled: bool = _env_bool("CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED", False)
+    self_context_min_interval: int = int(os.getenv("CONSCIOUSNESS_SELF_CONTEXT_MIN_INTERVAL", "600"))
+    self_context_max_interval: int = int(os.getenv("CONSCIOUSNESS_SELF_CONTEXT_MAX_INTERVAL", "10800"))
+    self_context_model: str = os.getenv("OPENROUTER_SELF_CONTEXT_MODEL", "openai/gpt-4o-mini")
+    self_context_llm_timeout_seconds: float = float(
+        os.getenv("CONSCIOUSNESS_SELF_CONTEXT_LLM_TIMEOUT", "20")
+    )
     world_kettle_cool_minutes: int = 30
     world_plant_dry_minutes: int = 2880  # 2 天
     world_plant_wilt_minutes: int = 1440  # 再 1 天

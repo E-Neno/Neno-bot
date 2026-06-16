@@ -1,4 +1,5 @@
 import os
+import json as _json
 from datetime import time
 
 from app.prompt.prompt_loader import load_text
@@ -54,6 +55,10 @@ MEMORY_LIMIT = int(os.getenv("MEMORY_LIMIT", "3"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "").strip()
 SYSTEM_PROMPT = load_text("prompts/system.txt")
+try:
+    NENO_SEED = _json.loads(load_text("prompts/seed.json"))
+except Exception:  # 文件缺失或损坏时降级，不让配置导入阻断应用
+    NENO_SEED = {}
 
 # Phase 5：把 Neno 真实生活状态（精力/情绪/在干嘛/牵挂）注入主聊天系统提示。
 # read-only 零模型成本；置 false 可退回纯人设无状态聊天。

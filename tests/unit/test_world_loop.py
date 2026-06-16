@@ -397,6 +397,64 @@ async def test_llm_disabled_still_uses_routine_every_tick(tmp_path: Path):
         await store.stop()
 
 
+@pytest.mark.asyncio
+async def test_world_llm_disabled_self_context_enabled_still_composes(tmp_path: Path):
+    """self-context 是独立旁路；世界决策关时仍可组写，routine 行为不变。"""
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=False,
+        self_context_llm_enabled=True,
+        self_context_min_interval=0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        loop = WorldLoop(store, cfg)
+        with patch(
+            "app.services.consciousness.self_context.OPENROUTER_API_KEY", "test-key"
+        ), patch(
+            "app.services.consciousness.self_context.chat_with_openrouter",
+            return_value="你现在在客厅读书。",
+        ) as compose:
+            snap = await loop.tick()
+        await _drain(store)
+
+        compose.assert_called_once()
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.self_context == "你现在在客厅读书。"
+        assert ws.self_context_basis is not None
+        assert ws.self_context_updated_at
+        assert snap["last"]["action"]  # routine 仍正常决定动作
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_self_context_unexpected_failure_does_not_block_tick(tmp_path: Path):
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=False,
+        self_context_llm_enabled=True,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        loop = WorldLoop(store, cfg)
+        with patch(
+            "app.services.consciousness.world_loop.maybe_update_self_context",
+            side_effect=RuntimeError("unexpected compose failure"),
+        ):
+            snap = await loop.tick()
+
+        assert snap["last"]["action"]
+        ws = await WorldStore(load_world_def()).read()
+        assert ws.last_tick is not None
+        assert ws.self_context == ""
+        assert ws.self_context_basis is None
+    finally:
+        await store.stop()
+
+
 # ── ② 精力重调测试 ──
 
 @pytest.mark.asyncio

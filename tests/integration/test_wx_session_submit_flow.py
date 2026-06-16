@@ -46,7 +46,13 @@ def _patch_turn_dependencies(monkeypatch, *, window_seconds: float = 0.05, reply
             max_active = max(max_active, active)
         try:
             time.sleep(reply_sleep)
-            return f"reply:{messages[-1]['content']}"
+            content = messages[-1]["content"]
+            if isinstance(content, list):
+                text = str(content[-1].get("text", ""))
+                message = text.split("【对方刚说】\n", 1)[-1]
+            else:
+                message = str(content)
+            return f"reply:{message}"
         finally:
             with lock:
                 active -= 1
