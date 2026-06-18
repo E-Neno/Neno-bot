@@ -58,6 +58,35 @@ def test_world_snapshot_adapter_maps_backend_shape():
     assert "kettle warm→boiling" in result["change"]
 
 
+def test_world_snapshot_adapter_prefers_backend_action_labels():
+    module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()
+    script = f"""
+      import {{ mapWorldSnapshot }} from {json.dumps(module_uri)};
+      const result = mapWorldSnapshot({{
+        location: "building_entrance",
+        last: {{
+          action: "move to building_entrance",
+          action_label: "\\u524d\\u5f80\\u5c0f\\u533a\\u697c\\u4e0b"
+        }},
+        recent: [
+          {{
+            action: "move to cafe",
+            action_label: "\\u524d\\u5f80\\u5496\\u5561\\u9986",
+            ago_min: 10
+          }}
+        ]
+      }});
+      console.log(JSON.stringify(result));
+    """
+
+    result = _run_node_module(script)
+
+    assert result["action"] == "前往小区楼下"
+    assert result["thought"] == "前往小区楼下"
+    assert result["moment"] == "前往小区楼下"
+    assert result["recent"][0]["action_label"] == "前往咖啡馆"
+
+
 def test_world_snapshot_adapter_renders_outside_places_without_clamping():
     """刀③：她在咖啡馆时不再被钳回客厅，且带 outside 标记。"""
     module_uri = (STATIC / "js" / "worldViewAdapter.js").as_uri()

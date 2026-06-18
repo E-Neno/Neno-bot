@@ -827,7 +827,7 @@ function renderWorldTimeline(state) {
     item.className = "world-moment";
     const time = document.createElement("time");
     time.textContent = activity.ago_min != null ? `${activity.ago_min} 分钟前` : "此前";
-    item.append(time, document.createTextNode(actionLabel(activity.action)));
+    item.append(time, document.createTextNode(activity.action_label || actionLabel(activity.action)));
     timeline.appendChild(item);
   }
   const current = document.createElement("div");
