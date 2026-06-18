@@ -7,8 +7,6 @@ from app.services.chat.llm_gateway import generate_chat_reply
 from app.services.chat.memory_candidate_service import process_memory_candidate
 from app.services.chat.preview_service import build_chat_messages_preview_from_contexts
 from app.services.consciousness.presence import (
-    DEFER_COOLDOWN_SECONDS,
-    is_defer_reply,
     is_physically_asleep,
     mark_message_experience_expressed,
     record_incoming_message_experience,
@@ -63,7 +61,6 @@ def run_chat_turn(
         )
 
         # ── ④ 物理门（唯一硬门）：她睡着 = 真没看见 → 攒着，连记忆抽取都不调 LLM。──
-        # 醒着不在这里判「要不要回」；那交给对话 LLM 临场决定（见下方生成后的 [暂不回] 处理）。
         if WORLD_PRESENCE_GATE_ENABLED and is_physically_asleep(trace_id=trace_id):
             deferred_ids: list[int] = []
             deferred_records = persist_user_messages or [
@@ -193,47 +190,6 @@ def run_chat_turn(
             latency_ms=int((time.perf_counter() - model_started) * 1000),
         )
 
-        # ④：她临场选择不回（输出 [暂不回]）→ 攒着等缓过来由 world_loop 重新考虑，不写 assistant。
-        if WORLD_PRESENCE_GATE_ENABLED and is_defer_reply(reply):
-            stash_pending_message(
-                {
-                    "session_id": session_id, "message": message,
-                    "user_message_ids": user_message_ids, "trace_id": trace_id,
-                    "experience_id": msg_experience_id,
-                    "source": str((input_record or {}).get("source") or "chat"),
-                    "platform": str((input_record or {}).get("platform") or ""),
-                    "chat_type": str((input_record or {}).get("chat_type") or ""),
-                    "user_id": str((input_record or {}).get("user_id") or ""),
-                },
-                cooldown=DEFER_COOLDOWN_SECONDS,  # 她主动暂不回 → 冷却，别每拍再拿 Opus 问
-                trace_id=trace_id,
-            )
-            log_event("chat", "presence_deferred", trace_id=trace_id,
-                      session_id=session_id, reason="she_declined")
-            try:
-                relationship_state = apply_relationship_update(session_id, message)
-            except Exception:  # noqa: BLE001
-                relationship_state = None
-            return {
-                "trace_id": trace_id,
-                "user_message_id": user_message_ids[0] if user_message_ids else None,
-                "user_message_ids": user_message_ids,
-                "assistant_message_id": None,
-                "message_type": str((input_record or {}).get("message_type") or "text"),
-                "source": str((input_record or {}).get("source") or "chat"),
-                "reply": "",
-                "world_action": "reply_later",
-                "world_reason": "she_declined",
-                "candidate_memory": memory_result["candidate_memory"],
-                "candidate_memory_debug": memory_result.get("candidate_memory_debug"),
-                "candidate_memory_decision": memory_result["candidate_memory_decision"],
-                "auto_added": memory_result["auto_added_memory"],
-                "auto_added_memory": memory_result["auto_added_memory"],
-                "used_memories": used_memories,
-                "relationship_state": relationship_state,
-                "relationship_context": relationship_context,
-            }
-
         assistant_message_id = add_message(
             session_id,
             "assistant",
@@ -339,10 +295,6 @@ def run_chat_turn_from_persisted_user_messages(
         self_state_context=contexts.get("self_state_context"),
     )
     reply = generate_chat_reply(messages, trace_id=trace_id)
-    # ④：重新考虑后她还是选择不回（[暂不回]）→ 不写 assistant，告诉 world_loop 再攒一会儿。
-    if is_defer_reply(reply):
-        return {"trace_id": trace_id, "reply": "", "deferred": True,
-                "assistant_message_id": None, "used_memories": used_memories}
     assistant_message_id = add_message(
         session_id, "assistant", reply, trace_id=trace_id,
         message_type="assistant", source=source,

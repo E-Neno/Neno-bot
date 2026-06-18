@@ -92,12 +92,20 @@ def build_time_context(session_id: str) -> dict:
 
 
 def build_time_context_message(time_context: dict) -> str:
-    return "\n".join(
-        [
-            "时间上下文：",
-            f"当前本地时间：{time_context['now_local']}",
-            f"当前时段：{time_context['time_segment']}",
-            f"距离上次聊天：{time_context['gap_text']}",
-            f"是否跨天：{'是' if time_context['is_new_day'] else '否'}",
-        ]
-    )
+    segment = str(time_context.get("time_segment") or "").strip() or "这会儿"
+    minutes = time_context.get("gap_minutes")
+    if minutes is None:
+        gap = "这是第一次聊"
+    else:
+        minutes = int(minutes)
+        if minutes < 10:
+            gap = "刚聊过没多久"
+        elif minutes < 60:
+            gap = "隔了一小会儿没聊"
+        elif minutes < 24 * 60:
+            hours = max(1, minutes // 60)
+            gap = f"隔了{hours}小时没聊"
+        else:
+            days = max(1, minutes // (24 * 60))
+            gap = f"隔了{days}天没聊"
+    return f"现在{segment}，{gap}。"

@@ -66,6 +66,24 @@ def test_build_snapshot_shape():
     assert snap["money"] == 120
 
 
+def test_build_snapshot_adds_action_labels_for_last_and_recent_actions():
+    wd = load_world_def()
+    st = seed_world_state(wd)
+    st.last_tick = {"action": "move to building_entrance", "action_label": None}
+    st.recent_actions = [
+        {"action": "move to cafe", "ago_min": 10},
+        {"action": "check_notice_board", "action_label": None, "ago_min": 0},
+        {"action": "move", "ago_min": 0},
+    ]
+
+    snap = build_snapshot(wd, st, None)
+
+    assert snap["last"]["action_label"] == "前往小区楼下"
+    assert snap["recent"][0]["action_label"] == "前往咖啡馆"
+    assert snap["recent"][1]["action_label"] == "查看公告栏"
+    assert snap["recent"][2]["action_label"] == "走动"
+
+
 @pytest.mark.asyncio
 async def test_tick_advances_world_and_drops_energy(tmp_path: Path):
     _init_db(tmp_path)

@@ -167,7 +167,7 @@ def test_no_state_still_returns_deterministic_seed(tmp_path: Path):
     assert "现在的你在家里" not in block
 
 
-def test_presence_gate_and_defer_marker_remain(tmp_path: Path, monkeypatch):
+def test_presence_gate_no_longer_injects_defer_marker_when_awake(tmp_path: Path, monkeypatch):
     _init_db(tmp_path)
     _write_agent_state(80.0, "awake")
     _write_world_state("living_room", "画画", threads=[], self_context="你在客厅画画。")
@@ -177,5 +177,28 @@ def test_presence_gate_and_defer_marker_remain(tmp_path: Path, monkeypatch):
     from app.services.chat.self_state_context import build_self_state_context
     from app.services.consciousness.presence import DEFER_MARKER
     block = build_self_state_context()
-    assert DEFER_MARKER in block
-    assert "只" in block and "输出" in block
+    assert DEFER_MARKER not in block
+    assert "只" not in block or "输出" not in block
+
+
+def test_self_state_block_is_compact_and_has_no_old_meta_teaching(tmp_path: Path):
+    _init_db(tmp_path)
+    _write_agent_state(80.0, "awake", mood_label="平静")
+    _write_world_state(
+        "living_room",
+        "画画",
+        threads=[],
+        self_context="你现在窝在客厅画画，心情很松。",
+    )
+
+    from app.services.chat.self_state_context import build_self_state_context
+    from app.services.consciousness.presence import DEFER_MARKER
+
+    block = build_self_state_context()
+    assert block is not None
+    assert block.startswith("【此刻的你】")
+    assert "=== 你此刻的真实状态" not in block
+    assert "仅供" not in block
+    assert "别跳出去现编" not in block
+    assert "不用主动报数值" not in block
+    assert DEFER_MARKER not in block

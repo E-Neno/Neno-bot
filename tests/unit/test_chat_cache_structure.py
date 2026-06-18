@@ -71,3 +71,51 @@ def test_empty_history_no_crash_system_still_cached():
     assert _cache_blocks(msgs[0]["content"])
     # 没有历史 → 只有 system + user 两条
     assert [m["role"] for m in msgs] == ["system", "user"]
+
+
+def test_dynamic_context_is_single_tail_block_and_not_cached():
+    history = [
+        {"role": "user", "content": "上一句"},
+        {"role": "assistant", "content": "上一句回复"},
+    ]
+    time_context = {
+        "now_local": "2026-06-17 21:30",
+        "weekday": "周三",
+        "time_segment": "晚上",
+        "gap_minutes": 3,
+        "gap_text": "3分钟",
+        "is_new_day": False,
+    }
+
+    msgs, _ = build_chat_messages(
+        history=history,
+        message="在吗",
+        relationship_context="你和对方处得算熟了，像常聊的朋友。",
+        time_context=time_context,
+        self_state_context="【此刻的你】\n你叫 Neno，18 岁。\n你在客厅画画。",
+        history_digest="历史摘要片段",
+    )
+
+    dynamic_needles = [
+        "你叫 Neno",
+        "你在客厅画画",
+        "你和对方处得算熟了",
+        "现在晚上",
+    ]
+    system_text = " ".join(b["text"] for b in msgs[0]["content"])
+    history_text = " ".join(
+        block.get("text", "")
+        for msg in msgs[1:-1]
+        for block in (msg["content"] if isinstance(msg["content"], list) else [{"text": msg["content"]}])
+    )
+    user_text = "\n".join(block["text"] for block in msgs[-1]["content"])
+
+    assert msgs[-1]["role"] == "user"
+    assert user_text.startswith("【当前情境】\n【此刻的你】")
+    for needle in dynamic_needles:
+        assert needle in user_text
+        assert needle not in system_text
+        assert needle not in history_text
+    assert "时间上下文：" not in user_text
+    assert "当前本地时间" not in user_text
+    assert "是否跨天" not in user_text

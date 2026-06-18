@@ -25,15 +25,15 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 
 ## 4. Context Assembly Contract (上下文装配契约)
 
-**CRITICAL: 绝对禁止修改 `context_builder.py` 中的上下文组装顺序。**
+**CRITICAL: `context_builder.py` 的缓存前缀结构不可破——动态内容必须排在历史之后。**
 
-*   **Prompt 拼接顺序**：`SYSTEM_PROMPT` -> `history_digest` -> `relationship` -> `time` -> `memory` -> `raw history`。
-*   **Cache Prefix Stability (缓存前缀稳定规则)**：Anthropic 的 Prompt Cache 严格依赖前缀的一致性。静态设定（System）和缓变文本（Digest，每积攒 200 Token 才变化一次）必须放在最前面，并绑定 `ephemeral` 控制。
-*   **优先级抢占**：按组装顺序，排在最后的 `memory` 会凭借 LLM 的近因效应，在事实上覆盖掉排在前面的 `relationship` 所设定的宏观语调。
+*   **消息结构**：`system=[SYSTEM_PROMPT, history_digest]`（可缓存前缀，断点①）→ 原文历史（断点②打在最后一条）→ `messages[last]` 内的动态块。动态块 = `【当前情境】【此刻的你】(种子 + self_context + 关系 + 时间) + memory（独立小段）+ 【对方刚说】用户消息`。
+*   **Cache Prefix Stability (缓存前缀稳定规则)**：Anthropic 的 Prompt Cache 严格依赖前缀一致性。静态 System、缓变 Digest（每积攒 200 Token 才变化一次）放最前并绑定 `ephemeral`；**动态内容（self_context / 关系 / 时间 / memory）绝不能排在历史之前**，否则每次变化都打断「系统+历史」大前缀，缓存永久 miss。两个断点位置不可移。内部动态组成可演进，但此结构是红线。
+*   **优先级抢占**：动态块内排在后面的 `memory` 凭借 LLM 近因效应，覆盖前面的关系语调。
 
 ## 5. Memory & Relationship Model (记忆与关系模型)
 
-*   **Relationship**：宏观状态。控制 Neno 对用户的整体态度（Stage 0-4），对应 `prompts/stages/stage_X.txt`。其变更存在严格的积分漏斗。
+*   **Relationship**：宏观状态（familiarity/trust/emotional_depth/boundary 四分 + 积分漏斗，数据模型未变）。**呈现已连续化**：`build_relationship_context` 不再读 `prompts/stages/stage_X.txt`，改由分值确定性生成连续短句、并入「此刻的你」动态块（stage 文件保留未删但不再被读取）。
 *   **Memory**：微观挂件。提取的是具体事实或边界约束（如 `preference`, `boundary`）。
 *   **交互差异**：Memory 作为硬性约束，直接在 Prompt 尾部干预 LLM 表现。Relationship 仅作为基础底色。二者在 DB 中隔离，在 Prompt 中协同。
 
@@ -57,8 +57,10 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 *   **动作守门**：模型产生的 `world_ops` 必须先经过 `action_validator`，
     再由 `world_model.apply_op()` 改变世界并写回 SQLite。
 *   **独立开关**：常驻循环、世界决策模型和日计划模型分别启用；示例配置默认全关。
-*   **聊天边界**：用户消息尚未进入世界引擎。禁止通过修改主聊天 prompt 或
-    `context_builder.py` 偷接世界状态；后续入口必须继续服从 Session 串行化。
+*   **聊天边界（已演进）**：用户消息已作为 `inner_experience(kind=message)` 进入世界并汇入反思/记忆；
+    作为驱动世界行动的「意图通道」仍待实现。世界状态进主聊天**只能走 self_context 这一受控只读通道**
+    （`build_self_state_context` 读 `life_world_state.self_context`，置于 `messages[last]` 动态区、缓存安全、
+    **绝不写回自我库**）；**禁止在别处手动偷接世界状态、禁止破坏装配顺序**。入口仍须服从 Session 串行化。
 *   **完成定义**：房间、事件、日计划和 LLM 决策只构成可运行基础。
     未通过持续生活、因果延续和多日模拟验收前，不得宣称完整世界引擎完成。
 

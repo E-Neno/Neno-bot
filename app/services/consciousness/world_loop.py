@@ -25,6 +25,7 @@ from .state_store import StateStore
 from .world_brain import WorldBrain
 from .self_context import maybe_update_self_context
 from .world_drift import apply_drift
+from .world_localizer import localize_action_record, localize_last_tick
 from .world_model import (
     _label_of, apply_op, find_goal_thread, find_thread, is_outside, load_world_def, make_thread,
     obj_category, objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
@@ -146,7 +147,7 @@ def build_snapshot(wd, state: WorldState, nstate) -> dict:
     hh = (sim_minutes // 60) % 24
     mm = sim_minutes % 60
     plan = state.daily_plan or {}
-    last = state.last_tick or {}
+    last = localize_last_tick(wd, state, state.last_tick)
     snap = {
         "sim_time": f"{hh:02d}:{mm:02d}",
         "location": state.location,
@@ -154,7 +155,11 @@ def build_snapshot(wd, state: WorldState, nstate) -> dict:
         "money": state.money,
         "plan": plan.get("items", []),
         "carried_over": plan.get("carried_over", []),
-        "recent": state.recent_actions[-6:],
+        "recent": [
+            localize_action_record(wd, state, item)
+            for item in state.recent_actions[-6:]
+            if isinstance(item, dict)
+        ],
         "gone": [g.get("label") or g.get("object", "") for g in state.gone_log[-5:]],
         "threads": [
             {"kind": t["kind"], "topic": t["topic"],

@@ -49,19 +49,22 @@ def build_chat_messages(
 
     # ── 动态上下文（每次都变，放缓存断点之后）：随新用户消息一起送 ──
     ctx_parts: list[str] = []
-    if relationship_context:
-        ctx_parts.append(relationship_context)
-    if time_context:
-        ctx_parts.append(build_time_context_message(time_context))
+    self_block_parts: list[str] = []
     if self_state_context:
-        ctx_parts.append(self_state_context)
+        self_block_parts.append(self_state_context)
+    if relationship_context:
+        self_block_parts.append(relationship_context)
+    if time_context:
+        self_block_parts.append(build_time_context_message(time_context))
+    if self_block_parts:
+        ctx_parts.append("\n".join(self_block_parts))
     memory_text = build_memory_context_message(memory_context or {})
     if memory_text:
         ctx_parts.append(memory_text)
 
     if ctx_parts:
         user_content: list[dict] = [
-            {"type": "text", "text": "【当前情境，仅供你参考，不是对方说的话】\n" + "\n\n".join(ctx_parts)},
+            {"type": "text", "text": "【当前情境】\n" + "\n\n".join(ctx_parts)},
             {"type": "text", "text": "【对方刚说】\n" + message},
         ]
         messages.append({"role": "user", "content": user_content})

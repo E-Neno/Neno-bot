@@ -47,13 +47,28 @@ def _active_threads(threads: list[dict]) -> list[str]:
     return [t.get("topic", "") for t in out[:2] if t.get("topic")]
 
 
-def build_self_state_context(trace_id: str | None = None) -> str | None:
-    """渲染确定性种子 + 生活语境 + 实时睡醒/presence 系统块。"""
-    from app.config import CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED, NENO_SEED
-    from app.services.consciousness.self_context import render_seed_context
+def _render_chat_seed_context(seed: dict | None) -> str:
+    if not seed:
+        return ""
+    name = str(seed.get("name", "")).strip()
+    age = seed.get("age")
+    temperament = str(seed.get("temperament", "")).strip()
+    parts = []
+    if name and age not in (None, ""):
+        parts.append(f"你叫 {name}，{age} 岁。")
+    elif name:
+        parts.append(f"你叫 {name}。")
+    if temperament:
+        parts.append(f"气质{temperament}。")
+    return "".join(parts)
 
-    lines = ["=== 你此刻的真实状态（你正过着的生活，不是设定）==="]
-    seed_context = render_seed_context(NENO_SEED)
+
+def build_self_state_context(trace_id: str | None = None) -> str | None:
+    """渲染确定性种子 + 生活语境 + 实时睡醒状态。"""
+    from app.config import CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED, NENO_SEED
+
+    lines = ["【此刻的你】"]
+    seed_context = _render_chat_seed_context(NENO_SEED)
     if seed_context:
         lines.append(seed_context)
     seed_fallback = "\n".join(lines) if seed_context else None
@@ -120,20 +135,6 @@ def build_self_state_context(trace_id: str | None = None) -> str | None:
             if care:
                 lines.append("心里还隐隐挂着：" + "、".join(care) + "。")
 
-        lines.append(
-            "聊到你的近况、在干嘛、状态时，自然顺着这个真实情况来，别跳出去现编另一套；"
-            "但这是你的生活底色，不用主动报数值、不用刻意汇报。"
-        )
-
-        # ④：要不要现在回，由你自己临场拿捏，不是规则。允许你这次不回。
-        from app.config import WORLD_PRESENCE_GATE_ENABLED
-        if WORLD_PRESENCE_GATE_ENABLED:
-            from app.services.consciousness.presence import DEFER_MARKER
-            lines.append(
-                f"如果你此刻真的太沉浸在手上的事、心情不想搭理、或困得快撑不住——不想现在回这条，"
-                f"就**只**输出 `{DEFER_MARKER}` 这几个字，别的什么都别写，也别硬挤一句敷衍。"
-                f"等你缓过来/有空了自然会回。多数时候你是会回的，只在确实不想的时候才这样。"
-            )
         return "\n".join(lines)
     except Exception as exc:  # noqa: BLE001 — 注入失败绝不阻断聊天
         log_event(

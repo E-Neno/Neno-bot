@@ -135,10 +135,10 @@ Prompt 的顺序不是代码整洁度决定的，而是由 **Anthropic Cache Eco
 
 ## 6. Memory & Relationship Architecture (记忆与关系架构)
 
-*   **Relationship (宏观底色)**：通过积分累加划分为 `Stage 0-4`。这是长程的人设模板（“客气”到“黏人”）。
+*   **Relationship (宏观底色)**：四项积分（familiarity/trust/emotional_depth/boundary）累加表征亲近度（“客气”到“黏人”）。**呈现已连续化**——由分值确定性生成连续短句、并入「此刻的你」动态块，不再读 `prompts/stages/stage_X.txt` 离散模板（`stage` 字段保留作内部/调试用）。
 *   **Memory (微观约束)**：提取出具体的偏好和禁忌（“用户讨厌被敷衍”）。
 *   **1-Turn Lag (延迟生效法则)**：生成回复时依赖读取状态。而在回复生成**后**才去更新 Relationship 状态（提取新记忆在生成前，但当轮 prompt 不包含新记忆）。任何改变，必须在下一轮（N+1）才能被系统感知。
-*   **Priority Override (覆盖法则)**：在 `context_builder` 中，Memory 被置于 Relationship 的下方。依靠 LLM 的近因效应，具体的 Memory 事实会硬覆盖宏观的 Stage 语调设定。
+*   **Priority Override (覆盖法则)**：在 `context_builder` 的动态块中，Memory 排在关系语境的下方。依靠 LLM 的近因效应，具体的 Memory 事实会硬覆盖宏观的关系语调。
 
 ---
 

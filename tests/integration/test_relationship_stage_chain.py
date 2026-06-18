@@ -18,6 +18,7 @@ STAGE_PRESETS = [
         },
         "陌生",
         "当前阶段：陌生。",
+        "你和对方还没太熟，关系还在慢慢建立。",
     ),
     (
         {
@@ -30,6 +31,7 @@ STAGE_PRESETS = [
         },
         "稳定聊天对象",
         "当前阶段：稳定聊天对象。",
+        "你和对方开始熟起来了，聊着比一开始自然一点。",
     ),
     (
         {
@@ -42,6 +44,7 @@ STAGE_PRESETS = [
         },
         "深度陪伴",
         "当前阶段：深度陪伴。",
+        "你和对方已经很亲近了，像能说心里话的人。",
     ),
 ]
 
@@ -52,9 +55,9 @@ def fake_generate_chat_reply(messages: list[dict], trace_id: str | None = None) 
     context_text = str(content[0].get("text", "")) if isinstance(content, list) else ""
     user_text = str(content[-1].get("text", "")) if isinstance(content, list) else str(content)
     stage_by_prompt = {
-        "你和对方刚开始聊天，还不熟。": "当前阶段：陌生。",
-        "你和对方算稳定聊天对象了，互相有点了解。": "当前阶段：稳定聊天对象。",
-        "你和对方已经很熟了，不需要任何表演。": "当前阶段：深度陪伴。",
+        "你和对方还没太熟，关系还在慢慢建立。": "当前阶段：陌生。",
+        "你和对方开始熟起来了，聊着比一开始自然一点。": "当前阶段：稳定聊天对象。",
+        "你和对方已经很亲近了，像能说心里话的人。": "当前阶段：深度陪伴。",
     }
     stage_line = next(
         stage for prompt_line, stage in stage_by_prompt.items()
@@ -78,13 +81,17 @@ def fake_process_memory_candidate(message: str, trace_id: str | None = None, inp
     }
 
 
-@pytest.mark.parametrize(("preset", "stage_label", "stage_prompt_line"), STAGE_PRESETS)
+@pytest.mark.parametrize(
+    ("preset", "stage_label", "stage_prompt_line", "relationship_phrase"),
+    STAGE_PRESETS,
+)
 def test_relationship_stage_update_affects_chat_context_and_reply(
     client,
     admin_headers: dict[str, str],
     preset: dict[str, int],
     stage_label: str,
     stage_prompt_line: str,
+    relationship_phrase: str,
 ) -> None:
     session_id = f"integration-relationship-{preset['stage']}"
 
@@ -118,15 +125,7 @@ def test_relationship_stage_update_affects_chat_context_and_reply(
     payload = chat_response.json()
 
     assert payload["reply"].startswith(stage_prompt_line)
-    expected_context_first_line = {
-        0: "\u4f60\u548c\u5bf9\u65b9\u521a\u5f00\u59cb\u804a\u5929\uff0c\u8fd8\u4e0d\u719f\u3002",
-        2: "\u4f60\u548c\u5bf9\u65b9\u7b97\u7a33\u5b9a\u804a\u5929\u5bf9\u8c61\u4e86\uff0c\u4e92\u76f8\u6709\u70b9\u4e86\u89e3\u3002",
-        4: "\u4f60\u548c\u5bf9\u65b9\u5df2\u7ecf\u5f88\u719f\u4e86\uff0c\u4e0d\u9700\u8981\u4efb\u4f55\u8868\u6f14\u3002",
-    }[preset["stage"]]
-    assert (
-        payload["relationship_context"].splitlines()[0].strip()
-        == expected_context_first_line
-    )
+    assert payload["relationship_context"].strip() == relationship_phrase
     assert payload["candidate_memory"] is None
     assert payload["used_memories"] == []
 

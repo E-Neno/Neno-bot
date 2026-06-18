@@ -1,7 +1,8 @@
 # Neno Living World
 
-> 状态日期：2026-06-07  
+> 状态日期：2026-06-16  
 > 本文是当前 Living World 实现的权威说明。`PHASE_4*` 和 `docs/superpowers/plans/*` 是历史规格或实施记录，不代表当前代码状态。
+> 刀①「她自己活成自己」的方案/详规在 `docs/dao1-self-developed-life-plan.md`、`docs/dao1-stage12-brief.md`、`docs/dao1-prompt-restructure-brief.md`（实施记录，机制以本文 §5b 为准）。
 
 ## 1. 最终目标
 
@@ -97,6 +98,26 @@ flowchart LR
 8. 写回世界、压力状态、经历、episode、精力和情绪；`last_tick` 记录 `wake/wake_reason/pressure`。
 9. 返回控制台快照（世界时钟即真实 UTC+8）。
 
+## 5b. 自我与聊天读取（seed / self_context · 刀①）
+
+让 Neno「自己活成自己」：身份不在聊天 prompt 里写死，而是从世界引擎长出来、聊天只读。
+
+- **种子（`prompts/seed.json`）**：唯一预设、不可变基石。仅 4 键 `name/age/temperament/background_principle`，
+  `config.NENO_SEED` 装载。**确定性注入、不经 LLM**——self_context 关闭或未生成时仍可见，她不会因没开功能而现编。
+- **self_context（`self_context.py`）**：世界引擎用廉价 LLM（gpt-4o-mini）维护一段「此刻的你」，
+  挂在 `world_loop.tick` 尾部（用就地 `ws`/`nstate`）。**双层门控**：显著变化（换房 / 心情跨档 / 换动作 / 睡醒 hard）
+  且过最短间隔才重写。只读 种子 + 已落账世界状态 + 内在状态（关系是 chat 侧的，不在此组）。
+  存 `life_world_state` 的 `self_context` / `self_context_basis` / `self_context_updated_at`。
+  **只读派生，绝不写回自我库。**
+- **防伪边界（这一刀的命）**：进 prompt 的「她是谁」只来自 种子 / 已落账状态 / 有世界事件依据的自我事实。
+  组写器除 prompt 约束外有**硬码守门 `guard_self_context`**：输出含任何数字、内部字段、或输入里没有的高风险传记词
+  （专业/学校/家乡/职业…）→ 拒绝、保留旧值、不推进 basis。做过 ≠ 身份（反复画画推不出「设计专业」）。
+- **聊天读取（`self_state_context.py` 三层）**：① 确定性种子（始终）② self_context（空则回退手拼生活状态）
+  ③ live 睡醒 + presence。整段放 `messages[last]` 动态区，缓存安全（见 NENO.md §4）。`world_brain` 也读种子+self_context。
+- **关系连续化**：`build_relationship_context` 不再读 `prompts/stages/stage_X.txt`，改为按关系分值确定性生成连续短句、
+  并入「此刻的你」块；关系打分/积分漏斗模型未变。
+- **presence**：醒着聊天路径不再注入 `[暂不回]`；「不回」只剩物理睡眠门（睡着 → 攒 `pending_messages`、零 LLM）。
+
 ## 6. 运行开关
 
 所有可能持续写库或调用模型的能力在示例配置中默认关闭。
@@ -116,10 +137,16 @@ flowchart LR
 | `CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` | `0.01` | **已废弃于精力推进**：精力改由 `energy_dynamics.step_energy` 按真实时间积分（仿 `SIM_MIN_PER_TICK`）；配置项保留仅为兼容，WorldLoop 不再据它掉电 |
 | `OPENROUTER_WORLD_MODEL` | `openai/gpt-4o-mini` | 世界决策与计划模型 |
 | `CONSCIOUSNESS_WORLD_LLM_TIMEOUT` | `20` | 世界模型超时秒数 |
+| `CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED` | `false` | self_context 组写开关（**独立于世界 LLM**；§5b）|
+| `CONSCIOUSNESS_SELF_CONTEXT_MIN_INTERVAL` | `600` | self_context 两次重写最短真实秒间隔 |
+| `CONSCIOUSNESS_SELF_CONTEXT_MAX_INTERVAL` | `10800` | 超此秒数未刷则强制重组 |
+| `OPENROUTER_SELF_CONTEXT_MODEL` | `openai/gpt-4o-mini` | self_context 组写模型 |
+| `CONSCIOUSNESS_SELF_CONTEXT_LLM_TIMEOUT` | `20` | self_context 组写超时秒数 |
 
 注意：应用加载 `.env` 后，运行值可能与 shell 中直接实例化配置不同。启动前应通过调试端点确认 `loop_enabled`，不要仅凭代码默认值判断。
 
-**切换 LLM 开关**：用 `scripts/neno-llm.ps1 on|off|status`（改 `.env` 的 LLM/PLANNER + 重启 uvicorn）。开 LLM 时成本由预算护栏钉在约 ¥0.6/天；关时走免费 mock，世界仍持续运行。她的作息由精力阈值自然涌现（累了就睡、睡够就醒），昼夜调制把就寝软锚在夜里；睡眠时不调 LLM，故可让作息完全涌现而无需到点必睡的兜底。
+**切换 LLM 开关**：用 `scripts/neno-llm.ps1 on|off|status`（改 `.env` 的 LLM/PLANNER + 重启 uvicorn）。
+**注意**：该脚本**只管世界 LLM/PLANNER 开关，不含 `CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED`**；要开 self_context 须手设 `.env` 该键再重启 uvicorn。开 LLM 时成本由预算护栏钉在约 ¥0.6/天；关时走免费 mock，世界仍持续运行。她的作息由精力阈值自然涌现（累了就睡、睡够就醒），昼夜调制把就寝软锚在夜里；睡眠时不调 LLM，故可让作息完全涌现而无需到点必睡的兜底。
 
 ## 7. 调试端点
 
@@ -159,7 +186,8 @@ Living World 直接使用：
 4. `scripts/world_live_server.py` 仍保留独立 tick 逻辑，没有完全复用正式 `WorldLoop`，存在行为分叉风险。
 5. 旧 `LifeLoop/LifeSimulation` 与新 `WorldLoop` 并存，状态所有权还需进一步收敛。
 6. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
-7. 用户消息尚未作为世界事件进入；回复、不回复、延迟和多段回复属于后续 Phase 5。
+7. 用户消息已作为 `inner_experience(kind=message)` 进入世界并汇入反思/记忆，回复/不回复/延迟在场决策（Phase 5）已落地；
+   但消息作为**驱动世界行动的「意图通道」**仍待实现（见 dao1 方案 §6）。
 8. 已知偶发失败：`test_life_loop` / `test_reflection_engine` 中少量旧断言在 UTC+8 凌晨时段因 wallclock 跨天而 flaky（属早期 LifeLoop 遗留，非 WorldLoop 问题）。
 9. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
 10. 精力已改真实时间积分、作息改精力阈值涌现（解决「总在睡」「夜里掉不动」两个 P0），单元测试已覆盖纯函数与 tick 集成；但**涌现作息曲线与多日牵挂因果仍待真实运行时长时段验收**（需开后端连续观察就寝相位是否锚夜、不漂移）——代码就绪，体感未实测。
@@ -169,7 +197,8 @@ Living World 直接使用：
 
 ## 10. 修改红线
 
-- 不修改主聊天 prompt 或 `context_builder.py` 来偷接世界状态。
+- 世界状态进主聊天**只能走 self_context 受控只读通道**（§5b：`build_self_state_context` 读 `life_world_state.self_context`，
+  置于 `messages[last]` 动态区、缓存安全、绝不写回）；**禁止在别处手动偷接世界状态、禁止破坏 `context_builder.py` 装配顺序**（见 NENO.md §4）。
 - 不绕过 `action_validator` 直接应用 LLM 操作。
 - 不新增并行发送链路；主动发送仍必须走既有 candidate 管道。
 - 不让演示脚本成为比正式 `WorldLoop` 更权威的实现。

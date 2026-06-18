@@ -52,7 +52,7 @@ Skills 位于 `.claude/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 - **writing-plans**: 当你有规格说明或需求用于多步骤任务时使用，在动手写代码之前
 - **writing-skills**: 当创建新技能、编辑现有技能或在部署前验证技能是否有效时使用
 
-- **codegraph-query**: 轻量级代码图谱查询——通过命令行调用 cgc-query.sh 查找函数、调用关系、类结构，不启动MCP server（省228MB内存）。当需要理解代码结构、追踪调用链、修改前影响分析时使用。
+- **codegraph-query**: 轻量级代码图谱查询——通过命令行直接调用 `cgc --db kuzudb --db-path ".codegraphcontext\codegraph.kuzu"` 查找函数、调用关系、类结构，不启动 MCP server（省 228MB 内存）。当需要理解代码结构、追踪调用链、修改前影响分析时使用。
 ## 如何使用
 
 当任务匹配某个 skill 时，使用 `Skill` 工具加载对应 skill 并严格遵循其流程。绝不要用 Read 工具读取 SKILL.md 文件。
@@ -70,9 +70,11 @@ Living World 已有正式 `WorldLoop`、SQLite 世界状态、房间物品、日
 - `docs/living-world.md`
 - `NENO_ARCHITECTURE.md` §3.1
 
-不得绕过 `action_validator` 应用模型动作，不得复制第二套生产循环，不得把世界
-状态偷接到主聊天 prompt。常驻循环、世界 LLM 和日计划 LLM 的示例配置必须默认关闭。
-用户消息尚未进入世界引擎；在持续生活与多日因果验收完成前，不得宣称完整世界完成。
+不得绕过 `action_validator` 应用模型动作，不得复制第二套生产循环。世界状态进主聊天
+**只能走 self_context 受控只读通道**（`build_self_state_context`，详见 `docs/living-world.md` §5b、`NENO.md` §4/§7.1）——
+禁止在别处手动偷接、禁止破坏 `context_builder.py` 装配顺序。常驻循环、世界/日计划/self_context LLM 的示例配置必须默认关闭。
+用户消息已作为 `inner_experience` 进世界、在场决策已落地，但意图通道（消息驱动世界行动）仍未实现；
+在持续生活与多日因果验收完成前，不得宣称完整世界完成。
 
 新增硬规则（编辑世界引擎前必看）：
 
@@ -80,4 +82,5 @@ Living World 已有正式 `WorldLoop`、SQLite 世界状态、房间物品、日
 - 世界时钟是真实 UTC+8（`sim_minutes` 由 `datetime.now(_TZ8)` 推导）；`CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` 已废弃于时间推进，勿据它累加时间。
 - `world_salience` 表必须覆盖真实 `LifeEvent.kind`（mishap/message/weather/craving/memory），否则意外不驱动唤醒。
 - 精力是真实时间积分（`energy_dynamics.step_energy`），作息由阈值涌现（`day_cycle.check_sleep_wake` 只看精力，不看时段）。**勿**把刚性 sleep/wake 时段闸门加回来，**勿**复活 tick 量化掉电（`CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` 已废弃）。tick 内精力结算后的判睡醒/快照一律用就地内存值——`StateStore.submit_mutation` 入队异步落库，同 tick 内 `read()` 读不到刚提交的值。
-- 切 LLM 开关用 `scripts/neno-llm.ps1 on|off`；改 `.env` 后必须重启 uvicorn 才生效。
+- 切世界 LLM 开关用 `scripts/neno-llm.ps1 on|off`；改 `.env` 后必须重启 uvicorn 才生效。**`self_context` 是独立开关 `CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED`，neno-llm.ps1 不管它，要手设 `.env` 再重启。**
+- 聊天 prompt 是缓存敏感区（NENO.md §4）：动态内容（self_context/关系/时间/memory）只能在 `messages[last]`、排历史之后，两断点不可移；关系已连续化（不读 `prompts/stages/stage_X.txt`）。

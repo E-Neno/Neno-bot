@@ -1,6 +1,4 @@
 from typing import Any
-from pathlib import Path
-
 from app.storage.relationship import (
     ensure_relationship_state,
     get_relationship_state,
@@ -10,9 +8,7 @@ from app.storage.relationship import (
 )
 
 MAX_SCORE = 999
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-STAGE_PROMPT_DIR = PROJECT_ROOT / "prompts" / "stages"
-RELATIONSHIP_CONTEXT_FALLBACK = "保持自然、短句、克制，不要提到关系阶段或分数。"
+RELATIONSHIP_CONTEXT_FALLBACK = "你和对方还没太熟，关系还在慢慢建立。"
 
 GREETINGS = ["你好", "哈喽", "在吗", "嗯", "好", "哈哈", "哈哈哈", "？", "哦", "行"]
 PREFERENCE_KEYWORDS = ["我喜欢", "我不喜欢", "我希望", "我想要", "我讨厌"]
@@ -116,25 +112,44 @@ def apply_relationship_update(session_id: str, user_message: str) -> dict[str, A
     return with_stage_label(update_relationship_state(session_id, updated))
 
 
-def _build_relationship_context_for_stage(stage: int) -> str:
-    prompt_path = STAGE_PROMPT_DIR / f"stage_{stage}.txt"
-    try:
-        content = prompt_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return RELATIONSHIP_CONTEXT_FALLBACK
-    return content or RELATIONSHIP_CONTEXT_FALLBACK
+def _relationship_closeness(state: dict[str, Any] | None) -> float:
+    if not state:
+        return 0.0
+    conversation = min(1.0, int(state.get("conversation_count") or 0) / 240.0)
+    familiarity = min(1.0, int(state.get("familiarity_score") or 0) / 160.0)
+    trust = min(1.0, int(state.get("trust_score") or 0) / 100.0)
+    emotional = min(1.0, int(state.get("emotional_depth_score") or 0) / 90.0)
+    boundary = min(1.0, int(state.get("boundary_score") or 0) / 80.0)
+    return (
+        conversation * 0.28
+        + familiarity * 0.28
+        + trust * 0.18
+        + emotional * 0.18
+        + boundary * 0.08
+    )
+
+
+def _build_relationship_context_from_state(state: dict[str, Any] | None) -> str:
+    closeness = _relationship_closeness(state)
+    if closeness < 0.12:
+        return "你和对方还没太熟，关系还在慢慢建立。"
+    if closeness < 0.28:
+        return "你和对方开始熟起来了，聊着比一开始自然一点。"
+    if closeness < 0.50:
+        return "你和对方已经算常聊的人了，彼此有些熟悉。"
+    if closeness < 0.75:
+        return "你和对方处得挺近了，相处时更放松一点。"
+    return "你和对方已经很亲近了，像能说心里话的人。"
 
 
 def build_relationship_context(session_id: str) -> str:
     state = ensure_relationship_state(session_id)
-    stage = int(state.get("stage") or 0)
-    return _build_relationship_context_for_stage(stage)
+    return _build_relationship_context_from_state(state)
 
 
 def build_relationship_context_readonly(session_id: str) -> str:
     state = get_relationship_state(session_id)
-    stage = int(state.get("stage") or 0) if state else 0
-    return _build_relationship_context_for_stage(stage)
+    return _build_relationship_context_from_state(state)
 
 
 def get_relationship_state_for_api(session_id: str) -> dict[str, Any]:

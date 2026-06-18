@@ -1,5 +1,9 @@
 # Phase 5：对话↔世界（在场模型 Presence）
 
+> **2026-06-16 更新（刀① prompt 重构）**：`[暂不回]`（`DEFER_MARKER`）已从聊天 prompt 移除，醒着聊天路径不再消费它——
+> 「醒着但不想回」的内容感知判断作废，**presence 现仅剩物理睡眠门**（睡着→攒 `pending_messages`、零 LLM）。
+> `DEFER_MARKER`/`is_defer_reply` 常量在 `presence.py` 保留未删但不再注入/消费。本文下方含 DEFER 注入的描述为历史记录，以此条为准。详见 `docs/living-world.md` §5b。
+>
 > 取代已废弃的 `PHASE_5_IMPL_PLAN.md`（codex 的 WorldIngressGateway 规则表方案，
 > 用户判定「太生硬」作废）。
 >

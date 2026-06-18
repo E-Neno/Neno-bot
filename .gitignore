@@ -56,3 +56,6 @@ tmp/
 .claudeignore
 account-risk-check.md
 tmp/
+
+# Continue editor agent files
+.continue/

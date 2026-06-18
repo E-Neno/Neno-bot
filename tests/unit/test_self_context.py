@@ -259,6 +259,23 @@ def test_guard_rejects_unbacked_biographical_expansion():
     )
 
 
+def test_prompt_facts_keep_numbers_but_instruction_forbids_repeating_them():
+    from app.services.consciousness import self_context as module
+
+    ws, nstate = _state(action="画画")
+    nstate.energy.value = 72
+    nstate.mood.valence = -0.35
+
+    prompt_facts, _ = module._build_facts(ws, nstate)
+
+    assert "72" in prompt_facts
+    assert "-0.35" in prompt_facts
+    assert "你叫" not in prompt_facts
+    assert "气质" not in prompt_facts
+    assert "不得回写数字" in module._SYSTEM_PROMPT
+    assert "不要复述姓名" in module._SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_guard_rejection_keeps_old_context_and_basis():
     from app.services.consciousness.self_context import maybe_update_self_context

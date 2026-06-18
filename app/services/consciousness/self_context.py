@@ -15,9 +15,12 @@ HIGH_RISK_BIOGRAPHY_TERMS = (
     "专业", "大学", "学校", "学院", "家乡", "老家", "父母", "爸妈", "家人",
     "职业", "工作单位", "公司", "毕业", "上学",
 )
+RAW_INTERNAL_TERMS = ("能量值", "情绪值", "/100", "valence", "energy")
 
 _SYSTEM_PROMPT = """你负责把编号事实压缩成一段给 Neno 自己看的「此刻的你」。
 只能压缩或转述输入中明确提供的信息，信息不足就省略。
+只描述当下处境、动作、感受和牵挂，不要复述姓名、年龄或气质。
+输入里的精力和情绪数值只能帮助你理解状态，输出必须转成自然语言，不得回写数字或内部字段。
 不得补专业、学历、学校、家乡、家庭、职业、过去等未提供的身份或传记设定，
 也不得根据兴趣、动作或地点做身份推断。
 输出 2 到 4 句自然中文，使用第二人称「你」，不要标题、列表或解释。"""
@@ -56,6 +59,11 @@ def guard_self_context(output: str, input_facts: str) -> bool:
     for keyword in HIGH_RISK_BIOGRAPHY_TERMS:
         if keyword in output and keyword not in input_facts:
             return False
+    if any(char.isdigit() for char in output):
+        return False
+    for keyword in RAW_INTERNAL_TERMS:
+        if keyword in output:
+            return False
     return True
 
 
@@ -89,8 +97,6 @@ def _active_thread_facts(threads: list[dict]) -> list[str]:
 def _build_facts(ws: WorldState, nstate: NenoState) -> tuple[str, str]:
     seed = NENO_SEED or {}
     facts = [
-        f"你叫 {seed.get('name', 'Neno')}，{seed.get('age', 18)} 岁",
-        f"你的气质倾向是：{seed.get('temperament', '')}",
         f"你现在的位置是：{ws.location}",
         f"你刚才或正在做的事是：{(ws.last_tick or {}).get('action', '')}",
         f"你的精力是 {nstate.energy.value:.0f}/100，状态是 {nstate.energy.status}",
