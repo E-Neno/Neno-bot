@@ -1,15 +1,17 @@
+import threading
 import time
 from copy import deepcopy
 
 from app.config import (
     CHAT_MODEL_NAME, MIMO_API_KEY, MIMO_BASE_URL, MIMO_MODEL,
     SELECTION_LAYER_ENABLED, SELECTION_THINKING_OFF, SELECTION_TIMEOUT,
-    WORLD_PRESENCE_GATE_ENABLED,
+    VOICE_SELF_ENABLED, WORLD_PRESENCE_GATE_ENABLED,
 )
 from app.services.chat.context_builder import build_chat_messages, load_chat_contexts
 from app.services.chat.llm_gateway import generate_chat_reply
 from app.services.chat.memory_candidate_service import process_memory_candidate
 from app.services.chat.selection_layer import build_selection_guidance, select_response_sync
+from app.services.chat.voice_self import maybe_refresh_voice
 from app.services.consciousness.memory_recall import list_self_facts_sync
 from app.services.chat.preview_service import build_chat_messages_preview_from_contexts
 from app.services.consciousness.presence import (
@@ -291,6 +293,12 @@ def run_chat_turn(
         )
         # 她回应了这条消息 → 那段经历从 unspoken 翻成 expressed（已搭理）。
         mark_message_experience_expressed(msg_experience_id, trace_id=trace_id)
+
+        # 声音自我：回复落库后，后台攒够新回复就重蒸馏「她说话的样子」（fire-and-forget，不阻塞返回）。
+        if VOICE_SELF_ENABLED:
+            threading.Thread(
+                target=maybe_refresh_voice, args=(trace_id,), daemon=True
+            ).start()
 
         try:
             relationship_state = apply_relationship_update(session_id, message)

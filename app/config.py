@@ -55,6 +55,9 @@ MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 SELECTION_LAYER_ENABLED = os.getenv("CHAT_SELECTION_LAYER_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SELECTION_TIMEOUT = int(os.getenv("CHAT_SELECTION_TIMEOUT", "8"))
 SELECTION_THINKING_OFF = {"thinking": {"type": "disabled"}}  # MiMo 关思考；换 OpenRouter 模型时置空
+# 声音自我：从她真实回话里结晶「她说话的样子」喂回 prompt（风格从她怎么说话长出来，不写死）。默认关。
+VOICE_SELF_ENABLED = os.getenv("CHAT_VOICE_SELF_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+VOICE_SELF_MIN_NEW_REPLIES = int(os.getenv("CHAT_VOICE_SELF_MIN_NEW_REPLIES", "15"))  # 攒够这么多新回复才重蒸馏
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "").strip()
 MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").strip()
 MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro").strip()

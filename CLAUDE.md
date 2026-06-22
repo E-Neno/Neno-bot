@@ -83,5 +83,6 @@ Living World 已有正式 `WorldLoop`、SQLite 世界状态、房间物品、日
 - `world_salience` 表必须覆盖真实 `LifeEvent.kind`（mishap/message/weather/craving/memory），否则意外不驱动唤醒。
 - 精力是真实时间积分（`energy_dynamics.step_energy`），作息由阈值涌现（`day_cycle.check_sleep_wake` 只看精力，不看时段）。**勿**把刚性 sleep/wake 时段闸门加回来，**勿**复活 tick 量化掉电（`CONSCIOUSNESS_WORLD_ENERGY_DROP_PER_TICK` 已废弃）。tick 内精力结算后的判睡醒/快照一律用就地内存值——`StateStore.submit_mutation` 入队异步落库，同 tick 内 `read()` 读不到刚提交的值。
 - 切世界 LLM 开关用 `scripts/neno-llm.ps1 on|off`；改 `.env` 后必须重启 uvicorn 才生效。**`self_context` 是独立开关 `CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED`，neno-llm.ps1 不管它，要手设 `.env` 再重启。**
-- 聊天 prompt 是缓存敏感区（NENO.md §4）：动态内容（self_context/关系/时间/memory）只能在 `messages[last]`、排历史之后，两断点不可移；关系已连续化（不读 `prompts/stages/stage_X.txt`）。
+- 聊天 prompt 是缓存敏感区（NENO.md §4）：动态内容只能在 `messages[last]`、排历史之后，两断点不可移。动态区已**分块重构**（废 `【当前情境】` 大壳，独立标签块；**`【对方刚说】` 永远最后一块**——wx 测试切分 + 选择层 insert-before 依赖）；`system.txt` 是真人感壳（不写死风格）。关系已连续化（不读 `prompts/stages/stage_X.txt`）。
 - 刀①收尾的「做」与「沉淀」（详见 `docs/living-world.md` §5c）：新 op `relocate`/`learn` 各有一条 `action_validator` 法律，不得绕。**自我库 `subject="neno"` 只能 reflection 从落账经历结晶，聊天写不进（防伪写入路径）。意图通道严禁从聊天侧写 `WorldState`——只由 `world_loop` 读 `kind="message"` 经历当意图候选，做不做交世界 LLM（无常）。**
+- 聊天侧「真人感」栈（详见 `docs/living-world.md` §5d）：**统一判断层** `selection_layer`（醒着单条/一波都判 `should_respond`+取舍，喂她全部状态+自我库，MiMo **必须关思考** `thinking:{"type":"disabled"}` 否则 15s；兜底 fallback 全回绝不阻断）；**声音自我** `voice_self`（从她真实回话蒸馏风格，后台 daemon 刷新，`subject="neno_voice"`）；**往事** `build_past_context`（隔久了框成过去）。开关 `CHAT_SELECTION_LAYER_ENABLED`/`CHAT_VOICE_SELF_ENABLED`。

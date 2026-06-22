@@ -1,12 +1,15 @@
 from app.config import HISTORY_TOKEN_LIMIT, SYSTEM_PROMPT
 from app.services.chat.history_digest import get_history_digest_text, maybe_update_history_digest
 from app.services.chat.self_state_context import build_self_state_context
+from app.services.chat.voice_self import get_voice_context
 from app.services.memory_context_service import build_memory_context, build_memory_context_message
 from app.services.relationship_service import (
     build_relationship_context,
     build_relationship_context_readonly,
 )
-from app.services.time_context_service import build_time_context, build_time_context_message
+from app.services.time_context_service import (
+    build_past_context, build_time_context, build_time_context_message,
+)
 from app.storage.db import get_recent_messages_by_tokens
 from app.storage.relationship import ensure_relationship_state
 from app.utils.logging_utils import log_event
@@ -119,6 +122,8 @@ def load_chat_contexts(
 
     history_digest = get_history_digest_text(session_id)
     self_state_context = build_self_state_context(trace_id=trace_id)
+    voice_context = get_voice_context()  # 声音自我：她说话的样子（从她真实回话结晶）
+    past_events = build_past_context(time_context)  # 往事：隔久了就框成过去的事，别无缝接
 
     messages, used_memories = build_chat_messages(
         history=history,
@@ -128,6 +133,8 @@ def load_chat_contexts(
         memory_context=memory_context,
         history_digest=history_digest,
         self_state_context=self_state_context,
+        voice_context=voice_context,
+        past_events=past_events,
     )
     return {
         "history": history,

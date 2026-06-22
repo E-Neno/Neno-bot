@@ -27,7 +27,12 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 
 **CRITICAL: `context_builder.py` 的缓存前缀结构不可破——动态内容必须排在历史之后。**
 
-*   **消息结构**：`system=[SYSTEM_PROMPT, history_digest]`（可缓存前缀，断点①）→ 原文历史（断点②打在最后一条）→ `messages[last]` 内的动态块。动态块 = `【当前情境】【此刻的你】(种子 + self_context + 关系 + 时间) + memory（独立小段）+ 【对方刚说】用户消息`。
+*   **消息结构**：`system=[SYSTEM_PROMPT, history_digest]`（可缓存前缀，断点①）→ 原文历史（断点②打在最后一条）→ `messages[last]` 内的动态块。
+    动态块已**重构为多个独立标签块**（废了 `【当前情境】` 大壳，见 `build_chat_messages`）：
+    `【此刻的你】`(种子+self_context+睡醒+牵挂) / `【你说话的调】`(声音自我 `voice_self`) / `【你和对方】`(关系) /
+    `【往事】`(隔久了的时间框 `build_past_context`) / `【关于对方】`(memory) / `【此刻】`(时间) /
+    `【你的取舍】`(选择层指导，仅 burst) / **`【对方刚说】`（永远最后一块——wx 测试切分 + 选择层 insert-before 都依赖）**。
+    `system.txt` 已砍成真人感壳（只留底线，不写死风格；风格由 `【你说话的调】` 从她真实回话长出来）。
 *   **Cache Prefix Stability (缓存前缀稳定规则)**：Anthropic 的 Prompt Cache 严格依赖前缀一致性。静态 System、缓变 Digest（每积攒 200 Token 才变化一次）放最前并绑定 `ephemeral`；**动态内容（self_context / 关系 / 时间 / memory）绝不能排在历史之前**，否则每次变化都打断「系统+历史」大前缀，缓存永久 miss。两个断点位置不可移。内部动态组成可演进，但此结构是红线。
 *   **优先级抢占**：动态块内排在后面的 `memory` 凭借 LLM 近因效应，覆盖前面的关系语调。
 

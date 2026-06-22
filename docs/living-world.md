@@ -142,6 +142,24 @@ flowchart LR
   validator 加 `not_in_shop`（`shops` 为空的老世界不门控，退回任意房间可买）。不再家里凭空造物——
   去店里买、再 `relocate` 带回家，和移动东西天然组合。`持有`（买进她的 inventory 而非房间）仍未做。
 
+## 5d. 聊天侧「真人感」栈（统一判断 / 声音自我 / 往事 / prompt 重构）
+
+聊天回合（`turn_orchestrator`）在「读世界状态（§5b）」之上，加一层**真人感判断与表达**。物理睡眠门（presence）仍是最前的硬底。
+
+- **统一判断层（`selection_layer.py`）**：醒着时**单条/一波都走这一个 LLM 判断**（用户要"互补不分割"）——
+  把她此刻全部状态（self_state_context 在哪/在干嘛/累/心情/牵挂 + **自我库 `list_self_facts_sync`**（判「戳到她」）+ 关系 + 记忆）喂进去，
+  出极简 JSON `{focus,ignore,hooked_by,reply_strategy,should_respond}`。**模型 MiMo + 关深度思考**（`thinking:{"type":"disabled"}` 把 15s→1.3s；
+  `chat_with_openrouter` 加 `extra_body` 透传）。`should_respond=false`→**攒 pending+不回**（世界欠回复牵挂让她之后想起）；
+  要回且 burst→取舍指导 insert 进 `【对方刚说】` 之前。**兜底铁律**：关/崩/超时 → `fallback_decision` 全回，绝不阻断聊天。
+  开关 `CHAT_SELECTION_LAYER_ENABLED`。
+- **声音自我（`voice_self.py`）**：从她**真实 assistant 回话**蒸馏「她说话的样子」（MiMo 关思考），存 `long_term_memory subject="neno_voice"`
+  单条+游标，攒够 `VOICE_SELF_MIN_NEW_REPLIES` 条新回复才刷、**回复后台 daemon thread fire-and-forget** 不阻塞，喂进 `【你说话的调】`。
+  风格从她怎么说话长出来，不靠 system 写死。开关 `CHAT_VOICE_SELF_ENABLED`。
+- **往事 v1（`time_context_service.build_past_context`）**：距上次 ≥3h → `【往事】` 框成"过去的事、别无缝接旧话题"（零成本、gap 门控）。
+  解决跨天对话无时间感。更深的"旧对话→离散带时间记忆事件（b2）"未做。
+- **prompt 重构**：`system.txt` 砍成真人感壳（删写死风格、只留底线）；动态区废 `【当前情境】` 大壳，拆成独立标签块、`【对方刚说】` 永远最后
+  （见 NENO.md §4）。缓存两断点未动。
+
 ## 6. 运行开关
 
 所有可能持续写库或调用模型的能力在示例配置中默认关闭。

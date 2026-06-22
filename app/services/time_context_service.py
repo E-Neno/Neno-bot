@@ -91,6 +91,29 @@ def build_time_context(session_id: str) -> dict:
     }
 
 
+def build_past_context(time_context: dict | None) -> str:
+    """跨场提醒（C·往事 v1）：和上次聊隔了挺久 → 把上面的旧对话框成「过去的事」，
+    别无缝接着旧话题说。同一场对话内（隔得短）返 ""，不打扰。
+
+    解决「跨天对话 LLM 也接着前面说、没时间感」——给她"那是几天前的事"的感知。
+    """
+    if not time_context:
+        return ""
+    gap = time_context.get("gap_minutes")
+    if gap is None or gap < 180:  # 不到 3 小时算同一场对话，不框过去
+        return ""
+    gap_text = str(time_context.get("gap_text") or "").strip()
+    crossed = bool(time_context.get("is_new_day"))
+    bits = [f"你和对方上次说话已经隔了{gap_text}"]
+    if crossed:
+        bits.append("，中间过了一天甚至更久")
+    bits.append(
+        "。上面那些更早的话都是过去的事了——别当成刚才的对话无缝接着说，"
+        "像隔了这么久重新搭上话那样自然就行。"
+    )
+    return "".join(bits)
+
+
 def build_time_context_message(time_context: dict) -> str:
     segment = str(time_context.get("time_segment") or "").strip() or "这会儿"
     minutes = time_context.get("gap_minutes")
