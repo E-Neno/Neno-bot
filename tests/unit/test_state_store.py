@@ -284,6 +284,23 @@ class TestStateStoreBasic:
         finally:
             await fs.store.stop()
 
+    @pytest.mark.asyncio
+    async def test_stop_drains_pending_mutations_without_hanging(self, tmp_path: Path):
+        """stop() must let the single writer drain queued mutations before shutdown."""
+        data_dir = _make_test_db_dir(tmp_path)
+        fs = _fresh_state_store(data_dir)
+
+        await fs.store.start()
+        for idx in range(10):
+            await fs.store.submit_mutation(
+                StateMutation(energy=EnergyState(value=float(idx + 1)))
+            )
+
+        await asyncio.wait_for(fs.store.stop(), timeout=1.0)
+        state = await fs.store.read()
+        assert state.revision == 10
+        assert state.energy.value == 10.0
+
 
 # ── 并发写 / 乐观锁 ─────────────────────────────────────────
 

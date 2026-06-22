@@ -25,6 +25,6 @@ def require_platform_token(
     if is_loopback_client(request):
         return
     if not PLATFORM_TOKEN:
-        return
+        raise HTTPException(status_code=403, detail="PLATFORM_TOKEN not configured")
     if x_platform_token != PLATFORM_TOKEN:
         raise HTTPException(status_code=403, detail="invalid platform token")

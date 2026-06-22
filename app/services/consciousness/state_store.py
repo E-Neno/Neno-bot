@@ -46,8 +46,10 @@ class StateStore:
 
     async def stop(self) -> None:
         """优雅停止：等待队列清空后取消写者协程"""
-        self._started = False
+        if not self._started and self._writer_task is None:
+            return
         await self._queue.join()
+        self._started = False
         if self._writer_task:
             self._writer_task.cancel()
             try:

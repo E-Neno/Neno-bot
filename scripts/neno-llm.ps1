@@ -22,6 +22,8 @@ $root    = Split-Path -Parent $PSScriptRoot
 $envFile = Join-Path $root '.env'
 $venvPy  = 'C:\Users\Administrator\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe'
 $port    = 8000
+$bindHost = $env:NENO_UVICORN_HOST
+if (-not $bindHost) { $bindHost = '127.0.0.1' }
 
 function Get-EnvVal([string]$key) {
   $line = Select-String -Path $envFile -Pattern "^\s*$key\s*=" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -51,7 +53,7 @@ function Restart-Backend {
   if ($cur) { Stop-Process -Id $cur -Force; Start-Sleep -Milliseconds 700 }
   $log = Join-Path $root 'tmp\uvicorn_boot.log'
   Start-Process -FilePath $venvPy `
-    -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', "$port" `
+    -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', "$bindHost", '--port', "$port" `
     -WorkingDirectory $root -WindowStyle Hidden `
     -RedirectStandardOutput $log -RedirectStandardError "$log.err"
   Start-Sleep -Seconds 8
