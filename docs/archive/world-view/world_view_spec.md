@@ -1,7 +1,7 @@
 # 生活世界 · 可视化施工图（舞台 + 演员 / 写实的家 + 风格化的她）
 
 > 给 Codex 的施工说明。**范围仅限"生活世界"这一个可视化组件**；控制台其余排版/功能由用户和 Codex 另行商定。
-> 概念参考：`docs/world_view_follow.html`（镜头跟随单间版，**这是最终形态**）；`docs/world_view_motion.html`（早期会动占位，仅留作动效参考）。
+> 概念参考：`world_view_follow.html`（镜头跟随单间版，**这是最终形态**）；`world_view_motion.html`（早期会动占位，仅留作动效参考）。
 > 核心转变：**不是每次生成新画，而是一个固定舞台 + 一个会动的她；镜头跟着她、一次看一个房间，不再是上帝视角剖面图。**
 
 ---
@@ -261,4 +261,4 @@ room_bedroom.png  room_living.png  room_kitchen.png  room_balcony.png
 
 > **完成标准 = 你亲眼看着像她在过日子，不是接口通。** 富度没有终点，停在你满意的任意一层都成立。
 
-> 后端世界引擎（压力触发/意外/低频 LLM）是另一份解耦设计：`docs/living_world_design.md`，与本可视化互不阻塞。
+> 后端世界引擎（压力触发/意外/低频 LLM）是另一份解耦设计：`../living-world-plans/living_world_design.md`，与本可视化互不阻塞。

@@ -260,6 +260,6 @@ git diff --name-only -- app/services/session_submit_controller.py \
 
 ## 5. 执行交接
 
-计划保存于 `docs/superpowers/plans/2026-06-07-living-world-slice5-fusion.md`。
+计划已归档到 `docs/archive/superpowers-plans/2026-06-07-living-world-slice5-fusion.md`。
 
 执行方式：**CC 内联执行（superpowers:executing-plans）**，按任务1→5，每任务后跑给用户肉眼看；确定性部分钉测试，LLM 全程 mock，最后用真实模型跑"看着过一天"验收。竖切2（开放世界）与"接入聊天"为后续独立计划。

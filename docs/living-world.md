@@ -1,7 +1,7 @@
 # Neno Living World
 
 > 状态日期：2026-06-19
-> 本文是当前 Living World 实现的权威说明。`PHASE_4*` 和 `docs/superpowers/plans/*` 是历史规格或实施记录，不代表当前代码状态。
+> 本文是当前 Living World 实现的权威说明。历史规格或实施记录集中在 `docs/archive/`，不代表当前代码状态。
 > 刀①「她自己活成自己」的方案/详规在 `docs/dao1-self-developed-life-plan.md`、`docs/dao1-stage12-brief.md`、`docs/dao1-prompt-restructure-brief.md`（实施记录，机制以本文 §5b 为准）。
 
 ## 1. 最终目标

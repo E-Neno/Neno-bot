@@ -102,8 +102,8 @@ flowchart TD
 - 所有 LLM 产生的 `world_ops` 必须先通过 `action_validator`，再由纯函数
   `world_model.apply_op()` 变更世界。
 - 世界循环、世界 LLM 和日计划 LLM 是三个独立开关；仓库示例配置全部关闭。
-- 用户消息当前没有进入 Living World。后续接入必须把消息建模为外部事件，
-  不能直接改变主聊天 prompt 顺序或绕过 Session 串行模型。
+- 用户消息已经作为 `inner_experience(kind=message)` 进入 Living World，并可作为意图候选交给 `WorldLoop` 处理；
+  聊天侧仍不能直接写 `life_world_state`，也不能改变主聊天 prompt 顺序或绕过 Session 串行模型。
 
 具体组件、端点、运行参数与已知缺口见 `docs/living-world.md`。
 

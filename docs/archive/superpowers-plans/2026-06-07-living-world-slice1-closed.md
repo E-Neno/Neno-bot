@@ -855,7 +855,7 @@ git diff --name-only -- \
 
 ## 6. 执行交接
 
-计划已保存到 `docs/superpowers/plans/2026-06-07-living-world-slice1-closed.md`。
+计划已归档到 `docs/archive/superpowers-plans/2026-06-07-living-world-slice1-closed.md`。
 
 竖切1 由 **CC 内联执行**（亲手写黄金模板），不下放给 codex。建议方式：
 

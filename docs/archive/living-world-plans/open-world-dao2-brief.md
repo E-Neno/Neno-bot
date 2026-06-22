@@ -1,7 +1,7 @@
 # 刀② 世界深度 — Codex 交接 Brief
 
 > 第 4 章（开放世界）刀②。**纯数据驱动加法，不碰决策机制**。父计划见
-> `docs/open-world-plan.md`。本 brief 是给 Codex 的可执行规格。
+> `open-world-plan.md`。本 brief 是给 Codex 的可执行规格。
 
 ## 目标（一句话）
 现在世界 = 固定四房间 + 15 个物品 + 5 类生活事件，她脑子里能活的东西太少，动作翻来

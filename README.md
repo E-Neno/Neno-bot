@@ -235,6 +235,7 @@ user: self_context / 关系 / 记忆 / 时间 / 对方刚说
 | [`docs/codegraph-query-rebuild.md`](docs/codegraph-query-rebuild.md) | 本地 CodeGraph 索引重建流程 |
 | [`docs/phase5-presence.md`](docs/phase5-presence.md) | 在场/延迟回复相关设计 |
 | [`docs/wx-image-input-route-v1_1.md`](docs/wx-image-input-route-v1_1.md) | 微信图片输入链路 |
+| [`docs/archive/README.md`](docs/archive/README.md) | 历史计划、旧设计稿和被当前实现取代的资料索引 |
 
 ## 已知注意点
 
