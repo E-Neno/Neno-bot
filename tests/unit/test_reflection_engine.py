@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +17,20 @@ from app.services.consciousness.state_store import StateStore
 from app.storage import db as db_storage
 
 _TZ_8 = timezone(timedelta(hours=8))
+
+
+def _safe_now() -> datetime:
+    """今天 UTC+8 下午 2 点（换算成 UTC）。
+
+    这些 c15 测试想要「今天的活动」，用 now-数小时 造 episode 时间戳。若用真实
+    datetime.now()，当墙钟在 UTC+8 凌晨时 now-5h 会跨过午夜落到昨天，episode 就被
+    list_for_day(今天) 漏掉 → 测试时区 flaky。锚到今天 14:00 UTC+8，now-至多十几小时
+    都还在今天，run_once 默认 target_day=今天也对得上，与墙钟无关。
+    """
+    today = datetime.now(_TZ_8).date()
+    return datetime(today.year, today.month, today.day, 14, 0, tzinfo=_TZ_8).astimezone(
+        timezone.utc
+    )
 
 
 def _init_test_db(tmp_path: Path) -> Path:
@@ -274,7 +288,7 @@ async def test_c15_timeline_read_chronological_order(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读",   started_at=(now - timedelta(hours=3)).isoformat())
         _insert_episode("walking", "散步",   started_at=(now - timedelta(hours=2)).isoformat())
         _insert_episode("resting", "休息",   started_at=(now - timedelta(hours=1)).isoformat())
@@ -298,7 +312,7 @@ async def test_c15_summary_includes_first_and_last_activity(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("morning_read", "晨间阅读", started_at=(now - timedelta(hours=5)).isoformat())
         _insert_episode("evening_rest", "傍晚休息", started_at=(now - timedelta(hours=1)).isoformat())
 
@@ -319,7 +333,7 @@ async def test_c15_summary_includes_transitions_and_interrupts(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("study",  "学习", status="ended",       started_at=(now - timedelta(hours=4)).isoformat())
         _insert_episode("walk",   "散步", status="interrupted", started_at=(now - timedelta(hours=3)).isoformat())
         _insert_episode("relax",  "放松", status="active",      started_at=(now - timedelta(hours=1)).isoformat())
@@ -341,7 +355,7 @@ async def test_c15_summary_includes_main_place(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", place="study_room",
                         started_at=(now - timedelta(hours=2)).isoformat())
 
@@ -362,7 +376,7 @@ async def test_c15_microevent_and_episode_influence_residue_topic(tmp_path: Path
     recorder = ExperienceRecorder()
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", started_at=(now - timedelta(hours=2)).isoformat())
 
         # MicroEvent with high salience – should win residue topic
@@ -394,7 +408,7 @@ async def test_c15_repeated_episode_pattern_writes_long_term_memory(tmp_path: Pa
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", started_at=(now - timedelta(hours=5)).isoformat())
         _insert_episode("walking", "散步", started_at=(now - timedelta(hours=4)).isoformat())
         _insert_episode("reading", "阅读", started_at=(now - timedelta(hours=3)).isoformat())  # repeated
@@ -417,7 +431,7 @@ async def test_c15_single_ordinary_episode_no_long_term_memory(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", status="ended",
                         started_at=(now - timedelta(hours=1)).isoformat())
 
@@ -559,7 +573,7 @@ async def test_c15_medium_salience_microevent_wins_over_episode_label(tmp_path: 
     recorder = ExperienceRecorder()
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", started_at=(now - timedelta(hours=2)).isoformat())
 
         # No high-salience (>=0.7) experience; only a medium-salience MicroEvent
@@ -595,7 +609,7 @@ async def test_c15_main_place_by_frequency_not_insertion_order(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         # study_room appears once (first), quiet_room appears twice → quiet_room wins
         _insert_episode("a", "活动甲", place="study_room",
                         started_at=(now - timedelta(hours=5)).isoformat())
@@ -626,7 +640,7 @@ async def test_c15_summary_includes_transition_count(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         # 3 different activity_keys → 2 transitions (A→B, B→C)
         _insert_episode("activity_a", "活动甲",
                         started_at=(now - timedelta(hours=4)).isoformat())
@@ -653,7 +667,7 @@ async def test_c15_input_summary_stored_in_db_includes_episode_info(tmp_path: Pa
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode("reading", "阅读", place="study_room",
                         started_at=(now - timedelta(hours=2)).isoformat())
 
@@ -721,7 +735,7 @@ async def test_c15_input_summary_includes_daily_intent(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         _insert_episode(
             "memory_processing", "整理记忆",
             started_at=(now - timedelta(hours=2)).isoformat(),
@@ -750,7 +764,7 @@ async def test_c15_input_summary_missing_metadata_no_crash(tmp_path: Path):
     store = await _fresh_store(tmp_path)
     episode_store = ActivityEpisodeStore()
     try:
-        now = datetime.now(timezone.utc)
+        now = _safe_now()
         # metadata defaults to {} — daily_intent absent
         _insert_episode("reading", "阅读",
                         started_at=(now - timedelta(hours=1)).isoformat())
@@ -759,5 +773,146 @@ async def test_c15_input_summary_missing_metadata_no_crash(tmp_path: Path):
         result = await engine.run_once("trace_no_meta_crash")
 
         assert result["success"] is True, f"crash on missing metadata: {result}"
+    finally:
+        await store.stop()
+
+
+# ── 自我库（刀①阶段3）：反复经历结晶成 subject="neno" 归纳偏好 ──────────────
+# 用固定日期 + 下午安全钟点 started_at + 显式 _target_day，避开 c15 那批的时区脆弱。
+
+@pytest.mark.asyncio
+async def test_repeated_activity_crystallizes_neno_self_fact(tmp_path: Path):
+    """同一活动当天反复（≥2）→ 写一条 subject='neno' 的归纳偏好自我事实。"""
+    store = await _fresh_store(tmp_path)
+    episode_store = ActivityEpisodeStore()
+    try:
+        _insert_episode("painting", "画画", started_at="2026-06-15T14:00:00+08:00")
+        _insert_episode("walking", "散步", started_at="2026-06-15T15:00:00+08:00")
+        _insert_episode("painting", "画画", started_at="2026-06-15T16:00:00+08:00")
+
+        engine = _make_engine_with_episodes(store=store, episode_store=episode_store)
+        await engine.run_once("trace_self_fact", _target_day=date(2026, 6, 15))
+
+        rows = db_storage.fetch_all(
+            "SELECT content, tags FROM long_term_memory WHERE subject = 'neno'"
+        )
+        assert len(rows) == 1, f"应恰好结晶一条自我事实：{rows}"
+        assert "画画" in rows[0]["content"]
+        assert "像是" in rows[0]["content"]  # 对冲措辞，非身份断言
+        # 没去散步那条（只出现一次，不结晶）
+        assert "散步" not in rows[0]["content"]
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_single_activity_writes_no_self_fact(tmp_path: Path):
+    """单次活动不结晶自我事实（做过≠偏好）。"""
+    store = await _fresh_store(tmp_path)
+    episode_store = ActivityEpisodeStore()
+    try:
+        _insert_episode("painting", "画画", started_at="2026-06-15T14:00:00+08:00")
+
+        engine = _make_engine_with_episodes(store=store, episode_store=episode_store)
+        await engine.run_once("trace_self_fact_single", _target_day=date(2026, 6, 15))
+
+        rows = db_storage.fetch_all(
+            "SELECT id FROM long_term_memory WHERE subject = 'neno'"
+        )
+        assert rows == [], f"单次活动不该结晶自我事实：{rows}"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_self_fact_deduped_and_reinforced_across_days(tmp_path: Path):
+    """跨天复现：自我事实去重（只一条）、salience 被强化（随时间挣得稳定）。"""
+    store = await _fresh_store(tmp_path)
+    episode_store = ActivityEpisodeStore()
+    try:
+        engine = _make_engine_with_episodes(store=store, episode_store=episode_store)
+        # 第 1 天反复画画 → 结晶
+        _insert_episode("painting", "画画", started_at="2026-06-15T14:00:00+08:00")
+        _insert_episode("painting", "画画", started_at="2026-06-15T16:00:00+08:00")
+        await engine.run_once("d1", _target_day=date(2026, 6, 15))
+        # 第 2 天又反复画画 → 不写重复，只强化
+        _insert_episode("painting", "画画", started_at="2026-06-16T14:00:00+08:00")
+        _insert_episode("painting", "画画", started_at="2026-06-16T16:00:00+08:00")
+        await engine.run_once("d2", _target_day=date(2026, 6, 16))
+
+        rows = db_storage.fetch_all(
+            "SELECT salience FROM long_term_memory WHERE subject = 'neno'"
+        )
+        assert len(rows) == 1, f"去重失败，自我事实重复了：{rows}"
+        assert rows[0]["salience"] > 0.5, "复现应强化 salience"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_crystallized_self_fact_readable_via_list_self_facts(tmp_path: Path):
+    """结晶→读回闭环：list_self_facts 能拿到刚结晶的 subject='neno' 自我事实（喂回 self_context 的入口）。"""
+    store = await _fresh_store(tmp_path)
+    episode_store = ActivityEpisodeStore()
+    try:
+        _insert_episode("painting", "画画", started_at="2026-06-15T14:00:00+08:00")
+        _insert_episode("painting", "画画", started_at="2026-06-15T16:00:00+08:00")
+        engine = _make_engine_with_episodes(store=store, episode_store=episode_store)
+        await engine.run_once("trace_readback", _target_day=date(2026, 6, 15))
+
+        recall = MemoryRecall(db=None, config=ConsciousnessConfig())
+        facts = await recall.list_self_facts(limit=5)
+        assert any("画画" in f for f in facts), f"自我事实没读回：{facts}"
+    finally:
+        await store.stop()
+
+
+# ── 学习（刀①收尾）：learning 经历 → subject="neno" 直接事实 ──────────────────
+
+@pytest.mark.asyncio
+async def test_learning_experience_crystallizes_direct_self_fact(tmp_path: Path):
+    """单次 learning 落账经历 → 立刻结晶一条 subject='neno' 直接事实（学习有持续身份意义）。"""
+    store = await _fresh_store(tmp_path)
+    try:
+        # kind="learning" 的经历，固定安全时间戳（=14:00+08:00）
+        _insert_experience_with_ts(
+            "弹吉他", "2026-06-15T06:00:00+00:00", salience=0.6,
+            source="life_simulation", kind="learning",
+        )
+        engine = _make_engine(store=store, reflection_enabled=True)
+        await engine.run_once("trace_learn", _target_day=date(2026, 6, 15))
+
+        rows = db_storage.fetch_all(
+            "SELECT content FROM long_term_memory WHERE subject = 'neno'"
+        )
+        assert len(rows) == 1, f"学习应结晶一条直接事实：{rows}"
+        assert "弹吉他" in rows[0]["content"]
+        assert "在学" in rows[0]["content"]  # 在学/上手，不是精通
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_learning_same_topic_deduped_and_reinforced(tmp_path: Path):
+    """同一学习主题跨天复现：去重（只一条）+ 强化 salience。"""
+    store = await _fresh_store(tmp_path)
+    try:
+        engine = _make_engine(store=store, reflection_enabled=True)
+        _insert_experience_with_ts(
+            "弹吉他", "2026-06-15T06:00:00+00:00",
+            source="life_simulation", kind="learning",
+        )
+        await engine.run_once("d1", _target_day=date(2026, 6, 15))
+        _insert_experience_with_ts(
+            "弹吉他", "2026-06-16T06:00:00+00:00",
+            source="life_simulation", kind="learning",
+        )
+        await engine.run_once("d2", _target_day=date(2026, 6, 16))
+
+        rows = db_storage.fetch_all(
+            "SELECT salience FROM long_term_memory WHERE subject = 'neno'"
+        )
+        assert len(rows) == 1, f"同主题学习应去重：{rows}"
+        assert rows[0]["salience"] > 0.55, "复现应强化 salience"
     finally:
         await store.stop()

@@ -38,6 +38,7 @@
     "building_entrance": ["convenience_store", "cafe", "park"]
   },
   "outside": ["building_entrance", "convenience_store", "cafe", "park"],
+  "shops": ["convenience_store", "cafe"],
   "objects": {
     "bed":           { "category": "furniture", "label": "床" },
     "desk":          { "category": "furniture", "label": "书桌" },

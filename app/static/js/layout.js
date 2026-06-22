@@ -28,6 +28,8 @@ export function getCardByElementId(id) {
 export function createPanel(id, title, subtitle) {
   const panel = createElement("section", "console-panel");
   panel.id = id;
+  panel.dataset.panelTitle = title;
+  panel.dataset.panelSubtitle = subtitle;
 
   const header = createElement("div", "panel-header");
   const textBox = createElement("div");
@@ -60,6 +62,16 @@ export function setActivePanel(panelId) {
   const isChatPanel = panelId === "chatPanel";
   document.body.classList.toggle("chat-panel-active", isChatPanel);
   document.querySelector(".app")?.classList.toggle("chat-panel-active", isChatPanel);
+
+  const activePanel = document.getElementById(panelId);
+  const activeTitle = activePanel?.dataset.panelTitle || activePanel?.querySelector(".panel-title")?.textContent || panelId;
+  const activeSubtitle = activePanel?.dataset.panelSubtitle || activePanel?.querySelector(".panel-header .panel-subtitle")?.textContent || "";
+  setOptionalText("controlActiveTitle", activeTitle);
+  setOptionalText("controlActiveSubtitle", activeSubtitle);
+  setOptionalText("controlRailPanelName", activeTitle);
+  setOptionalText("controlSidebarPanelName", activeTitle);
+  setOptionalText("controlStageTitle", activeTitle);
+  setOptionalText("controlStageSubtitle", activeSubtitle);
 
   if (prevId && prevId !== panelId && _panelActivateCallbacks[`${prevId}:deactivate`]) {
     _panelActivateCallbacks[`${prevId}:deactivate`]();
@@ -144,7 +156,7 @@ export function buildProactivePanel(panel, header) {
   const grid = createElement("div", "console-grid");
   panel.appendChild(grid);
 
-  const testCard = createElement("div", "card");
+  const testCard = createElement("div", "control-surface");
   testCard.appendChild(createElement("h3", "", "测试区"));
   testCard.appendChild(createElement(
     "div",
@@ -166,7 +178,7 @@ export function buildProactivePanel(panel, header) {
   ));
   grid.appendChild(testCard);
 
-  const statusCard = createElement("div", "card");
+  const statusCard = createElement("div", "control-surface");
   statusCard.appendChild(createElement("h3", "", "自动区"));
   statusCard.appendChild(createElement(
     "div",
@@ -199,7 +211,7 @@ export function buildProactivePanel(panel, header) {
   statusCard.lastChild.id = "proactiveRulesSummary";
   grid.appendChild(statusCard);
 
-  const runOnceCard = createElement("div", "card");
+  const runOnceCard = createElement("div", "control-surface");
   runOnceCard.appendChild(createElement("h3", "", "手动执行自动调度"));
   runOnceCard.appendChild(createElement(
     "div",
@@ -230,7 +242,7 @@ export function buildProactivePanel(panel, header) {
   runOnceCard.lastChild.id = "proactiveRunOnceResult";
   grid.appendChild(runOnceCard);
 
-  const eventsCard = createElement("div", "card");
+  const eventsCard = createElement("div", "control-surface");
   eventsCard.appendChild(createElement("h3", "", "调度时间线"));
   eventsCard.appendChild(createElement("div", "config-help", "最近主动消息调度和手动操作事件；不显示完整 session_id/openid。"));
   if (refreshEventsButton) {
@@ -243,7 +255,7 @@ export function buildProactivePanel(panel, header) {
   eventsCard.lastChild.id = "proactiveEventList";
   grid.appendChild(eventsCard);
 
-  const targetsCard = createElement("div", "card");
+  const targetsCard = createElement("div", "control-surface");
   targetsCard.appendChild(createElement("h3", "", "主动目标"));
   targetsCard.appendChild(createElement("div", "config-help", "最近 QQ / WX 私聊会自动记录为主动目标；页面不显示完整 session_id。QQ 会显示 allowed，WX 会显示真实目标是否已保存。"));
   if (refreshTargetsButton) {
@@ -256,7 +268,7 @@ export function buildProactivePanel(panel, header) {
   targetsCard.lastChild.id = "proactiveTargetList";
   grid.appendChild(targetsCard);
 
-  const decisionCard = createElement("div", "card");
+  const decisionCard = createElement("div", "control-surface");
   decisionCard.appendChild(createElement("h3", "", "自动调度当前判断"));
   decisionCard.appendChild(createElement("div", "config-help", "check-now 只刷新后台自动调度判断，不会发送消息。"));
   decisionCard.appendChild(createElement("div", "status-value", "-"));
@@ -278,7 +290,7 @@ export function buildProactivePanel(panel, header) {
   decisionCard.lastChild.id = "proactiveCheckNowChecks";
   grid.appendChild(decisionCard);
 
-  const pendingCard = createElement("div", "card");
+  const pendingCard = createElement("div", "control-surface");
   pendingCard.appendChild(createElement("h3", "", "待处理候选 pending"));
   pendingCard.appendChild(createElement("div", "config-help", "候选支持 QQ / WX。dry_run 只验证链路；真实发送需要二次确认，成功后才写入 messages。"));
   pendingCard.appendChild(createPlatformFilter("proactiveCandidatePlatformFilter"));
@@ -294,7 +306,7 @@ export function buildProactivePanel(panel, header) {
   history.lastChild.id = "proactiveHistoryList";
   grid.appendChild(history);
 
-  const configCard = createElement("div", "card");
+  const configCard = createElement("div", "control-surface");
   configCard.appendChild(createElement("h3", "", "自动配置"));
   if (configDetails) {
     const nodes = Array.from(configDetails.childNodes);
@@ -338,7 +350,7 @@ export function buildConsciousnessPanel(panel, header) {
   panel.appendChild(grid);
 
   // ── Phase 1: Body State Card ──
-  const bodyCard = createElement("div", "card");
+  const bodyCard = createElement("div", "control-surface");
   bodyCard.appendChild(createElement("h3", "", "生命体征"));
   bodyCard.appendChild(createElement("div", "config-help", "精力 / 情绪 / 表达欲 实时值，每秒自动刷新。"));
   const refreshRow = createElement("div", "row");
@@ -404,7 +416,7 @@ export function buildConsciousnessPanel(panel, header) {
 
 
   // ── 事件池 ──
-  const eventsCard = createElement("div", "card");
+  const eventsCard = createElement("div", "control-surface");
   eventsCard.appendChild(createElement("h3", "", "事件池"));
   eventsCard.appendChild(createElement("div", "config-help", "event_log 中的 pending/consumed/expressed 事件。"));
   const eventListBox = createElement("div", "small panel-list");
@@ -417,7 +429,7 @@ export function buildConsciousnessPanel(panel, header) {
   grid.append(eventsCard);
 
   // ── Phase 3a: Think Card ──
-  const thinkCard = createElement("div", "card");
+  const thinkCard = createElement("div", "control-surface");
   thinkCard.appendChild(createElement("h3", "", "思考过程"));
   thinkCard.appendChild(createElement("div", "config-help", "手动注入测试事件，触发 Neno 三步决策（规则过滤 → 判断 → 生成），结果仅预览不发送。"));
 
@@ -474,7 +486,7 @@ export function buildConsciousnessPanel(panel, header) {
   grid.appendChild(thinkCard);
 
   // ── Phase 3b: Preflight Card ──
-  const preflightCard = createElement("div", "card");
+  const preflightCard = createElement("div", "control-surface");
   preflightCard.appendChild(createElement("h3", "", "Phase 3b 预检"));
   preflightCard.appendChild(createElement("div", "config-help", "只读检查 brain intent 发送链路就绪状态。不发送、不创建候选、不改状态。"));
 
@@ -503,7 +515,7 @@ export function buildConsciousnessPanel(panel, header) {
   grid.appendChild(preflightCard);
 
   // Phase 4: Living World read-only debug view
-  const livingCard = createElement("div", "card");
+  const livingCard = createElement("div", "control-surface");
   livingCard.appendChild(createElement("h3", "", "Phase 4 / 生活验收面板"));
   livingCard.appendChild(createElement("div", "config-help", "只读查看 Neno 此刻的虚拟生活：她在哪、在做什么、为什么这样，以及反思余波如何影响下一轮。"));
   const livingRow = createElement("div", "row");
@@ -562,6 +574,7 @@ function createWorldWorkspace() {
       <div class="world-rail-foot">场景<br>登记册</div>
     </aside>
     <section class="world-stage-card">
+      <div class="world-panel-label">LIVING WORLD</div>
       <div class="world-viewport" id="worldViewport">
         <div class="world-room-strip" id="worldRoomStrip">
           <article class="world-room bedroom" data-world-room="bedroom"><span class="world-room-label">卧室</span></article>
@@ -614,6 +627,11 @@ function createWorldWorkspace() {
       <div class="world-story-time" id="worldStoryTime">等待世界数据</div>
       <h2 id="worldStoryAction">Neno 的生活正在加载</h2>
       <blockquote id="worldStoryInner">读取真实世界快照后，这里会显示她此刻为什么这样做。</blockquote>
+      <div class="world-self" id="worldSelfBox">
+        <small>此刻的她 · 她自己感觉到的</small>
+        <p id="worldSelfContext">还没生成（self_context 开关关着，或刚启动）。</p>
+        <p class="world-self-pending" id="worldSelfPending"></p>
+      </div>
       <div class="world-mood">
         <div class="world-mood-swatch" id="worldMoodSwatch"></div>
         <div><small>此刻心情</small><strong id="worldMoodText">—</strong></div>
@@ -625,6 +643,14 @@ function createWorldWorkspace() {
       </div>
       <div class="world-plan-title">今天想做的</div>
       <ul class="world-plan" id="worldPlan"><li>等待计划数据</li></ul>
+      <div class="world-self-facts">
+        <div class="world-self-facts-title">她活成的自己 <small>从经历结晶</small></div>
+        <ul class="world-self-fact-list" id="worldSelfFacts"><li class="world-self-empty">还没沉淀出自我事实（要她真反复做点什么 + 反思跑过）。</li></ul>
+      </div>
+      <div class="world-soul-feed">
+        <div class="world-soul-feed-title">魂时刻 <small>你看得见她在活</small></div>
+        <ul class="world-soul-feed-list" id="worldSoulFeed"><li class="world-soul-empty">还没有可见的魂事件（她学了/挪了/买了、或收到你的话时，会出现在这里）。</li></ul>
+      </div>
       <div class="world-change" id="worldChange">世界暂时没有新的变化。</div>
       <div class="world-status" id="cWorldLiveStatus">等待连接真实世界引擎。</div>
     </aside>
@@ -654,9 +680,9 @@ function createWorldWorkspace() {
 function createWorkspaceTopbar() {
   const topbar = createElement("header", "world-workspace-topbar");
   topbar.innerHTML = `
-    <div class="world-brand">
+    <div class="world-brand neno-product-brand">
       <div class="world-brand-mark">N</div>
-      <div><strong>Neno Living World</strong><small>持续生活观测台</small></div>
+      <strong>Neno</strong>
     </div>
     <nav class="world-workspace-switch" aria-label="控制台工作区">
       <button class="active" id="worldWorkspaceButton" type="button">世界引擎</button>
@@ -682,6 +708,170 @@ function bindWorkspaceSwitch(worldWorkspace, controlWorkspace) {
   controlButton?.addEventListener("click", () => activate("control"));
 }
 
+function createControlCommandBar() {
+  const bar = createElement("section", "retired-command-shell");
+  const titleBox = createElement("div", "control-command-heading");
+  titleBox.append(
+    createElement("div", "control-command-kicker", "CONTROL CENTER"),
+    createElement("h1", "control-command-title", "聊天")
+  );
+  titleBox.lastChild.id = "controlActiveTitle";
+  titleBox.appendChild(createElement("p", "control-command-subtitle", "跟她对话、切换会话、查看真实输入预览与会话调试。"));
+  titleBox.lastChild.id = "controlActiveSubtitle";
+
+  const status = createElement("div", "control-command-status");
+  for (const label of ["LOCAL RUNTIME", "ADMIN GATED", "LIVE DEBUG"]) {
+    status.appendChild(createElement("span", "control-status-pill", label));
+  }
+  bar.append(titleBox, status);
+  return bar;
+}
+
+function createControlUtilityRail() {
+  const rail = createElement("aside", "retired-utility-shell");
+  const contextCard = createElement("div", "retired-rail-box");
+  contextCard.append(
+    createElement("span", "retired-rail-kicker", "ACTIVE MODULE"),
+    createElement("strong", "", "聊天"),
+    createElement("p", "", "当前只显示一个任务面板；其余模块保持在左侧导航中。")
+  );
+  contextCard.querySelector("strong").id = "controlRailPanelName";
+
+  const routeCard = createElement("div", "retired-rail-box");
+  routeCard.append(
+    createElement("span", "retired-rail-kicker", "SESSION"),
+    createElement("strong", "", "web-test"),
+    createElement("p", "", "会话、记忆、真实输入预览和调试卡片继续使用原绑定节点。")
+  );
+
+  const safetyCard = createElement("div", "retired-rail-box retired-rail-box-warn");
+  safetyCard.append(
+    createElement("span", "retired-rail-kicker", "BOUNDARY"),
+    createElement("strong", "", "UI ONLY"),
+    createElement("p", "", "这层只重写控制台结构，不改聊天 prompt、世界状态或 digest 游标。")
+  );
+  rail.append(contextCard, routeCard, safetyCard);
+  return rail;
+}
+
+function createFramerControlFrame() {
+  const sidebar = createElement("aside", "control-product-sidebar");
+  const studioBrand = createElement("div", "control-studio-brand");
+  studioBrand.append(
+    createElement("div", "control-studio-mark", "N"),
+    createElement("div", "control-studio-name")
+  );
+  studioBrand.lastChild.append(
+    createElement("strong", "", "Neno"),
+    createElement("span", "", "local runtime console")
+  );
+
+  const runtimeIdentity = createElement("div", "control-runtime-identity");
+  runtimeIdentity.append(
+    createElement("strong", "", "Neno Local Runtime"),
+    createElement("span", "", "web-test · admin · live debug")
+  );
+
+  const panelHint = createElement("div", "control-sidebar-hint");
+  panelHint.append(
+    createElement("span", "", "CURRENT"),
+    createElement("b", "", "聊天")
+  );
+  panelHint.querySelector("b").id = "controlSidebarPanelName";
+  const sidebarFooter = createElement("div", "control-sidebar-footer");
+  sidebarFooter.append(
+    createElement("span", "", "web-test"),
+    createElement("span", "", "admin"),
+    createElement("span", "", "live debug")
+  );
+  sidebar.append(studioBrand, runtimeIdentity, panelHint);
+
+  const stage = createElement("main", "control-panel-stage console-main");
+  const stageHeader = createElement("header", "control-stage-header");
+  const stageCopy = createElement("div", "control-stage-copy");
+  stageCopy.append(
+    createElement("span", "control-stage-kicker", "CONTROL CENTER"),
+    createElement("h1", "control-stage-title", "鑱婂ぉ"),
+    createElement("p", "control-stage-subtitle", "璺熷ス瀵硅瘽銆佸垏鎹細璇濄€佹煡鐪嬬湡瀹炶緭鍏ラ瑙堜笌浼氳瘽璋冭瘯銆?")
+  );
+  stageCopy.querySelector(".control-stage-title").id = "controlStageTitle";
+  stageCopy.querySelector(".control-stage-subtitle").id = "controlStageSubtitle";
+  const stageStatus = createElement("div", "control-stage-status");
+  for (const label of ["LOCAL", "GATED", "TRACE"]) {
+    stageStatus.appendChild(createElement("span", "", label));
+  }
+  stageHeader.append(stageCopy, stageStatus);
+  const workbench = createElement("div", "control-panel-deck");
+  stage.append(stageHeader, workbench);
+
+  return { sidebar, stage, workbench, sidebarFooter };
+}
+
+function adoptControlSurface(node, className = "") {
+  if (!node) {
+    return null;
+  }
+  node.classList.remove("card", "console-density-card");
+  node.classList.add("control-binding-surface");
+  for (const name of className.split(" ").filter(Boolean)) {
+    node.classList.add(name);
+  }
+  normalizeControlSurfaces(node);
+  return node;
+}
+
+function normalizeControlSurfaces(root) {
+  if (!root) {
+    return;
+  }
+  const legacyCards = root.classList?.contains("card")
+    ? [root, ...root.querySelectorAll(".card")]
+    : Array.from(root.querySelectorAll(".card"));
+  for (const card of legacyCards) {
+    card.classList.remove("card", "console-density-card");
+    card.classList.add("control-surface");
+  }
+}
+
+function appendSurface(parent, node, className = "") {
+  const surface = adoptControlSurface(node, className);
+  if (surface) {
+    parent.appendChild(surface);
+  }
+}
+
+function createRuntimeWorkbench(panel, className = "", label = "runtime") {
+  panel.classList.add("runtime-panel");
+  const header = panel.querySelector(".panel-header");
+  if (header && !header.querySelector(".runtime-module-chip")) {
+    header.prepend(createElement("div", "runtime-module-chip", label));
+  }
+
+  const workbench = createElement("div", `runtime-workbench ${className}`.trim());
+  const primary = createElement("section", "runtime-column runtime-primary");
+  const evidence = createElement("aside", "runtime-column runtime-evidence");
+  const raw = createElement("section", "runtime-column runtime-raw");
+  workbench.append(primary, evidence, raw);
+  panel.appendChild(workbench);
+  return { workbench, primary, evidence, raw };
+}
+
+function moveLoosePanelChildren(panel, runtime) {
+  const looseChildren = Array.from(panel.children).filter((child) =>
+    !child.classList.contains("panel-header") && !child.classList.contains("runtime-workbench")
+  );
+  for (const [index, child] of looseChildren.entries()) {
+    normalizeControlSurfaces(child);
+    if (index === 0) {
+      runtime.primary.appendChild(child);
+    } else if (index < 3) {
+      runtime.evidence.appendChild(child);
+    } else {
+      runtime.raw.appendChild(child);
+    }
+  }
+}
+
 export function buildConsoleLayout() {
   const app = document.querySelector(".app");
   const chat = document.querySelector(".chat");
@@ -702,7 +892,8 @@ export function buildConsoleLayout() {
   const candidateCard = getCardByElementId("candidateBox");
   const memoryCard = getCardByElementId("memoryList");
 
-  const sidebar = createElement("aside", "console-sidebar");
+  const controlFrame = createFramerControlFrame();
+  const sidebar = controlFrame.sidebar;
   const brand = createElement("div", "console-brand");
   brand.append(
     createElement("div", "console-brand-title", "Neno 控制台"),
@@ -721,15 +912,16 @@ export function buildConsoleLayout() {
     button.addEventListener("click", () => setActivePanel(panelId));
     nav.appendChild(button);
   }
-  sidebar.append(brand, nav);
+  sidebar.appendChild(nav);
+  sidebar.appendChild(controlFrame.sidebarFooter);
 
-  const main = createElement("main", "console-main");
+  const main = controlFrame.stage;
+  const panelStack = controlFrame.workbench;
   const overview = createPanel("overviewPanel", "总览", "运行状态、快捷入口和当前调试概况。");
-  if (statsCard) {
-    overview.panel.appendChild(statsCard);
-  }
+  const overviewRuntime = createRuntimeWorkbench(overview.panel, "overview-workbench", "status / launch");
+  appendSurface(overviewRuntime.primary, statsCard, "overview-stats-surface");
   // 她此刻：桥接世界引擎的一瞥（点击跳到世界引擎 tab）
-  const bridgeCard = createElement("div", "card bridge-card");
+  const bridgeCard = createElement("div", "control-surface bridge-card");
   bridgeCard.id = "overviewBridgeCard";
   bridgeCard.setAttribute("role", "button");
   bridgeCard.setAttribute("tabindex", "0");
@@ -751,9 +943,9 @@ export function buildConsoleLayout() {
   const jumpWorld = () => document.getElementById("worldWorkspaceButton")?.click();
   bridgeCard.addEventListener("click", jumpWorld);
   bridgeCard.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpWorld(); } });
-  overview.panel.appendChild(bridgeCard);
+  overviewRuntime.evidence.appendChild(bridgeCard);
 
-  const quickCard = createElement("div", "card");
+  const quickCard = createElement("div", "control-surface console-command-surface");
   quickCard.appendChild(createElement("h3", "", "快捷入口"));
   const quickActions = createElement("div", "overview-actions");
   for (const [panelId, label] of [
@@ -770,17 +962,23 @@ export function buildConsoleLayout() {
     quickActions.appendChild(button);
   }
   quickCard.appendChild(quickActions);
-  overview.panel.appendChild(quickCard);
+  overviewRuntime.raw.appendChild(quickCard);
 
   const chatPanel = createPanel("chatPanel", "聊天", "跟她对话、切换会话、查看真实输入预览与会话调试。");
   const currentSession = createElement("div", "panel-subtitle", "当前打开 session：-");
   currentSession.id = "currentSessionStatus";
   chatPanel.header.appendChild(currentSession);
-  const chatGrid = createElement("div", "console-grid two");
-  chat.classList.add("console-chat");
-  chatGrid.appendChild(chat);
-  const chatSide = createElement("div", "console-grid chat-side-column");
-  const sessionSummaryCard = createElement("div", "card");
+  const chatRuntime = createRuntimeWorkbench(chatPanel.panel, "chat-workbench", "session / trace");
+  const chatGrid = createElement("div", "runtime-strip chat-strip");
+  chatGrid.append(
+    createElement("span", "", "live session"),
+    createElement("b", "", "web-test")
+  );
+  chat.classList.add("console-chat", "control-chat-console");
+  chatRuntime.primary.appendChild(chatGrid);
+  chatRuntime.primary.appendChild(chat);
+  const chatSide = createElement("div", "runtime-stack chat-side-column");
+  const sessionSummaryCard = createElement("div", "control-surface session-summary-surface");
   sessionSummaryCard.appendChild(createElement("h3", "", "当前上下文"));
   sessionSummaryCard.appendChild(createElement("div", "config-help", "右键输入消息可查看这条真实输入对应的完整模型预览。"));
   const sessionSummaryGrid = createElement("div", "status-grid session-context-grid");
@@ -789,7 +987,7 @@ export function buildConsoleLayout() {
   appendStatusMetric(sessionSummaryGrid, "预览入口", "currentSessionPreviewMode");
   sessionSummaryCard.appendChild(sessionSummaryGrid);
   // 当前上下文卡在下方按新顺序统一插入
-  const routingCard = createElement("div", "card");
+  const routingCard = createElement("div", "control-surface routing-surface");
   routingCard.appendChild(createElement("h3", "", "Session Routing Control"));
   routingCard.appendChild(createElement("div", "config-help", "查询当前平台来源 routing 状态，直接设置 override 到指定 session，或 clear 恢复自动归属。只影响后续入站消息。"));
   const routingForm = createElement("div", "config-form");
@@ -848,41 +1046,46 @@ export function buildConsoleLayout() {
   routingCard.appendChild(createElement("div", "small", "尚无 explain"));
   routingCard.lastChild.id = "routingExplainBox";
   // ── 重排：常用置顶（会话/上下文/Live Gate/记忆），调试下沉 ──
-  if (sessionCard) chatSide.appendChild(sessionCard);
+  appendSurface(chatSide, sessionCard, "session-list-surface");
   chatSide.appendChild(sessionSummaryCard);
-  if (sessionDebugCard) chatSide.appendChild(sessionDebugCard);
-  if (usedMemoryCard) chatSide.appendChild(usedMemoryCard);
-  if (candidateCard) chatSide.appendChild(candidateCard);
+  appendSurface(chatSide, sessionDebugCard, "session-debug-surface");
+  appendSurface(chatSide, usedMemoryCard, "memory-evidence-surface");
+  appendSurface(chatSide, candidateCard, "candidate-surface");
   chatSide.appendChild(createElement("div", "rail-divider", "调试 / 高级"));
-  if (relationshipCard) chatSide.appendChild(relationshipCard);
-  chatSide.appendChild(routingCard);
-  if (chatPreviewCard) chatSide.appendChild(chatPreviewCard);
-  if (messageDebugCard) chatSide.appendChild(messageDebugCard);
-  chatGrid.appendChild(chatSide);
-  chatPanel.panel.appendChild(chatGrid);
+  chatRuntime.evidence.appendChild(chatSide);
+  const chatRaw = createElement("div", "runtime-stack chat-raw-column");
+  chatRaw.appendChild(createElement("div", "rail-divider", "璋冭瘯 / 楂樼骇"));
+  appendSurface(chatRaw, relationshipCard, "relationship-surface");
+  chatRaw.appendChild(routingCard);
+  appendSurface(chatRaw, chatPreviewCard, "chat-preview-surface");
+  appendSurface(chatRaw, messageDebugCard, "message-debug-surface");
+  chatRuntime.raw.appendChild(chatRaw);
 
   const proactivePanel = createPanel("proactivePanel", "主动", "她主动找人聊：当前状态、待处理候选、调度时间线，调试工具在下方。");
   if (proactiveCard) {
     buildProactivePanel(proactivePanel.panel, proactivePanel.header);
   }
+  const proactiveRuntime = createRuntimeWorkbench(proactivePanel.panel, "proactive-workbench", "scheduler / gate");
+  moveLoosePanelChildren(proactivePanel.panel, proactiveRuntime);
 
   const consciousnessPanel = createPanel("consciousnessPanel", "大脑", "她的生命体征、事件池与思考过程——意识引擎实时状态。");
   buildConsciousnessPanel(consciousnessPanel.panel, consciousnessPanel.header);
+  const consciousnessRuntime = createRuntimeWorkbench(consciousnessPanel.panel, "consciousness-workbench", "state / mind");
+  moveLoosePanelChildren(consciousnessPanel.panel, consciousnessRuntime);
 
   const memoryPanel = createPanel("memoryPanel", "记忆库", "查看、编辑、启用和停用记忆。");
-  if (memoryCard) {
-    memoryPanel.panel.appendChild(memoryCard);
-  }
+  const memoryRuntime = createRuntimeWorkbench(memoryPanel.panel, "memory-workbench", "memory / policy");
+  appendSurface(memoryRuntime.primary, memoryCard, "memory-list-surface");
 
   const configPanel = createPanel("configPanel", "配置", "Admin Token 和模型/上下文配置。");
-  if (configCard) {
-    configPanel.panel.appendChild(configCard);
-  }
+  const configRuntime = createRuntimeWorkbench(configPanel.panel, "config-workbench", "config / model");
+  appendSurface(configRuntime.primary, configCard, "config-form-surface");
 
   const debugPanel = createPanel("debugPanel", "日志 / 调试", "查看最近结构化事件、错误和 trace 链路。");
-  const debugGrid = createElement("div", "console-grid");
+  const debugRuntime = createRuntimeWorkbench(debugPanel.panel, "debug-workbench", "events / trace");
+  const debugGrid = createElement("div", "runtime-strip debug-summary-strip");
 
-  const diagnosisCard = createElement("div", "card");
+  const diagnosisCard = createElement("div", "control-surface diagnosis-surface");
   diagnosisCard.appendChild(createElement("h3", "", "当前诊断"));
   const diagnosisActions = createElement("div", "row");
   const refreshDiagnosisButton = createElement("button", "secondary auxiliary", "刷新诊断");
@@ -897,7 +1100,7 @@ export function buildConsoleLayout() {
   diagnosisCard.lastChild.id = "debugDiagnosisStatus";
   debugGrid.appendChild(diagnosisCard);
 
-  const debugSummaryCard = createElement("div", "card");
+  const debugSummaryCard = createElement("div", "control-surface debug-summary-surface");
   debugSummaryCard.appendChild(createElement("h3", "", "事件摘要"));
   const debugSummaryGrid = createElement("div", "status-grid");
   appendStatusMetric(debugSummaryGrid, "最近事件", "debugTotalReturned");
@@ -910,7 +1113,7 @@ export function buildConsoleLayout() {
   debugSummaryCard.appendChild(debugSummaryGrid);
   debugGrid.appendChild(debugSummaryCard);
 
-  const debugFilterCard = createElement("div", "card");
+  const debugFilterCard = createElement("div", "control-surface debug-filter-surface");
   debugFilterCard.appendChild(createElement("h3", "", "筛选"));
   const debugFilterForm = createElement("div", "config-form debug-filter-grid");
   const moduleField = createElement("div", "config-field");
@@ -957,17 +1160,16 @@ export function buildConsoleLayout() {
   debugActions.appendChild(refreshDebugButton);
   debugFilterCard.append(debugFilterForm, debugActions, createElement("div", "status"));
   debugFilterCard.lastChild.id = "debugStatus";
-  debugGrid.appendChild(debugFilterCard);
+  debugRuntime.evidence.appendChild(debugFilterCard);
 
-  const debugEventsCard = createElement("div", "card");
+  const debugEventsCard = createElement("div", "control-surface debug-events-surface");
   debugEventsCard.appendChild(createElement("h3", "", "事件列表"));
   debugEventsCard.appendChild(createElement("div", "debug-event-list", "还没加载"));
   debugEventsCard.lastChild.id = "debugEventList";
-  debugGrid.appendChild(debugEventsCard);
+  debugRuntime.raw.appendChild(debugEventsCard);
+  debugRuntime.primary.appendChild(debugGrid);
 
-  debugPanel.panel.appendChild(debugGrid);
-
-  main.append(
+  panelStack.append(
     overview.panel,
     chatPanel.panel,
     consciousnessPanel.panel,
@@ -976,8 +1178,9 @@ export function buildConsoleLayout() {
     configPanel.panel,
     debugPanel.panel
   );
+  main.appendChild(panelStack);
 
-  const controlWorkspace = createElement("section", "control-workspace workspace-hidden");
+  const controlWorkspace = createElement("section", "control-workspace workspace-hidden control-framer-shell control-studio-shell");
   controlWorkspace.id = "controlWorkspace";
   controlWorkspace.append(sidebar, main);
   const worldWorkspace = createWorldWorkspace();
@@ -985,7 +1188,7 @@ export function buildConsoleLayout() {
 
   side.remove();
   document.body.classList.add("world-console-active");
-  app.classList.add("app-shell", "world-console-shell");
+  app.className = `${app.className} app-shell world-console-shell observatory-shell`.trim();
   app.replaceChildren(topbar, worldWorkspace, controlWorkspace);
   bindWorkspaceSwitch(worldWorkspace, controlWorkspace);
   setActivePanel("chatPanel");

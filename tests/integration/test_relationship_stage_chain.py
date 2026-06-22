@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
+from app.services.chat.selection_layer import fallback_decision
+
 
 MESSAGE = "今天有点烦"
 STAGE_PRESETS = [
@@ -52,7 +54,8 @@ STAGE_PRESETS = [
 def fake_generate_chat_reply(messages: list[dict], trace_id: str | None = None) -> str:
     del trace_id
     content = messages[-1]["content"]
-    context_text = str(content[0].get("text", "")) if isinstance(content, list) else ""
+    # 关系现在在独立的「【你和对方】」块（不再「当前情境」大壳）→ 搜所有动态块
+    context_text = " ".join(str(b.get("text", "")) for b in content) if isinstance(content, list) else ""
     user_text = str(content[-1].get("text", "")) if isinstance(content, list) else str(content)
     stage_by_prompt = {
         "你和对方还没太熟，关系还在慢慢建立。": "当前阶段：陌生。",
@@ -115,6 +118,9 @@ def test_relationship_stage_update_affects_chat_context_and_reply(
     ), patch(
         "app.services.chat.turn_orchestrator.process_memory_candidate",
         side_effect=fake_process_memory_candidate,
+    ), patch(
+        "app.services.chat.turn_orchestrator.select_response_sync",
+        side_effect=lambda messages, *args, **kwargs: fallback_decision(messages),
     ):
         chat_response = client.post(
             "/chat",

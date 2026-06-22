@@ -94,7 +94,11 @@ def _active_thread_facts(threads: list[dict]) -> list[str]:
     return facts[:3]
 
 
-def _build_facts(ws: WorldState, nstate: NenoState) -> tuple[str, str]:
+def _build_facts(
+    ws: WorldState,
+    nstate: NenoState,
+    self_facts: list[str] | None = None,
+) -> tuple[str, str]:
     seed = NENO_SEED or {}
     facts = [
         f"你现在的位置是：{ws.location}",
@@ -110,6 +114,11 @@ def _build_facts(ws: WorldState, nstate: NenoState) -> tuple[str, str]:
     if recent:
         facts.append("你最近做过：" + "、".join(recent))
     facts.extend(_active_thread_facts(ws.open_threads or []))
+    # 自我库（4 号输入）：reflection 从落账经历结晶的归纳偏好，算合法输入事实。
+    for fact in (self_facts or [])[:4]:
+        text = str(fact).strip()
+        if text:
+            facts.append(f"关于你自己：{text}")
 
     numbered = "\n".join(
         f"事实{index}: {fact}" for index, fact in enumerate(facts, start=1) if fact
@@ -129,8 +138,12 @@ async def maybe_update_self_context(
     *,
     trace_id: str | None = None,
     now: datetime | None = None,
+    self_facts: list[str] | None = None,
 ) -> bool:
-    """按独立门控组写 self_context；成功时就地更新 ws，失败时保持原值。"""
+    """按独立门控组写 self_context；成功时就地更新 ws，失败时保持原值。
+
+    self_facts：自我库（阶段3）结晶的 subject="neno" 归纳偏好，作为只读 4 号输入并入组写。
+    """
     if not config.self_context_llm_enabled:
         return False
 
@@ -162,7 +175,7 @@ async def maybe_update_self_context(
     if not eligible:
         return False
 
-    prompt_facts, guard_facts = _build_facts(ws, nstate)
+    prompt_facts, guard_facts = _build_facts(ws, nstate, self_facts=self_facts)
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": prompt_facts},

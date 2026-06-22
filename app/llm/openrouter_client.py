@@ -19,6 +19,7 @@ def chat_with_openrouter(
     messages: list,
     timeout: int = 60,
     trace_id: str | None = None,
+    extra_body: dict | None = None,
 ) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -31,6 +32,9 @@ def chat_with_openrouter(
     }
     if model_name.startswith("anthropic/"):
         payload["provider"] = {"order": ["Anthropic"]}
+    if extra_body:
+        # 厂商特定参数（如 MiMo 关深度思考 thinking={"type":"disabled"} 把 15s 压到 ~1.2s）
+        payload.update(extra_body)
 
     started = time.perf_counter()
     log_event(

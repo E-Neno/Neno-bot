@@ -58,11 +58,15 @@ def test_dynamic_context_rides_user_turn_uncached():
     assert not _cache_blocks(user["content"])
 
 
-def test_no_dynamic_context_plain_user_string():
+def test_no_dynamic_context_message_block_only():
     msgs, _ = build_chat_messages(history=[], message="在吗")
     user = msgs[-1]
     assert user["role"] == "user"
-    assert user["content"] == "在吗"  # 无动态上下文 → 纯字符串
+    # 无动态上下文 → 块列表里只剩「对方刚说」一块，不带缓存断点
+    assert isinstance(user["content"], list)
+    assert len(user["content"]) == 1
+    assert user["content"][0]["text"] == "【对方刚说】\n在吗"
+    assert not _cache_blocks(user["content"])
 
 
 def test_empty_history_no_crash_system_still_cached():
@@ -73,7 +77,7 @@ def test_empty_history_no_crash_system_still_cached():
     assert [m["role"] for m in msgs] == ["system", "user"]
 
 
-def test_dynamic_context_is_single_tail_block_and_not_cached():
+def test_dynamic_context_is_labeled_blocks_and_not_cached():
     history = [
         {"role": "user", "content": "上一句"},
         {"role": "assistant", "content": "上一句回复"},
@@ -110,12 +114,17 @@ def test_dynamic_context_is_single_tail_block_and_not_cached():
     )
     user_text = "\n".join(block["text"] for block in msgs[-1]["content"])
 
+    user_blocks = msgs[-1]["content"]
     assert msgs[-1]["role"] == "user"
-    assert user_text.startswith("【当前情境】\n【此刻的你】")
+    # 动态区拆成多个带标签的块（不再「当前情境」大壳）；第一块是此刻的你、最后一块永远是对方刚说
+    assert user_blocks[0]["text"].startswith("【此刻的你】")
+    assert user_blocks[-1]["text"].startswith("【对方刚说】")
+    assert len(user_blocks) >= 3  # 此刻的你 / 你和对方 / 此刻 / 对方刚说 …多块
     for needle in dynamic_needles:
         assert needle in user_text
-        assert needle not in system_text
-        assert needle not in history_text
+        assert needle not in system_text       # 缓存不变量：动态内容不漏进 system 前缀
+        assert needle not in history_text       # 也不漏进历史
+    assert not _cache_blocks(user_blocks)       # 动态块一律不带缓存断点
     assert "时间上下文：" not in user_text
     assert "当前本地时间" not in user_text
     assert "是否跨天" not in user_text

@@ -20,6 +20,8 @@ def build_chat_messages(
     memory_context: dict | None = None,
     history_digest: str | None = None,
     self_state_context: str | None = None,
+    voice_context: str | None = None,
+    past_events: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     # ── 稳定前缀（可缓存）：系统人设 + 历史摘要，缓存断点打在末尾 ──
     # 这段几乎不变，单独成缓存块。
@@ -47,30 +49,28 @@ def build_chat_messages(
             ]
     messages.extend(hist)
 
-    # ── 动态上下文（每次都变，放缓存断点之后）：随新用户消息一起送 ──
-    ctx_parts: list[str] = []
-    self_block_parts: list[str] = []
-    if self_state_context:
-        self_block_parts.append(self_state_context)
-    if relationship_context:
-        self_block_parts.append(relationship_context)
+    # ── 动态上下文（每次都变，放缓存断点之后）：每块一个独立标签、空则跳过。──
+    # 不再用「当前情境」大壳；【对方刚说】永远是最后一块（wx 测试 + 选择层指导 insert-before 都依赖）。
+    blocks: list[dict] = []
+
+    def _add(label: str, body: str | None) -> None:
+        text = (body or "").strip()
+        if text:
+            blocks.append({"type": "text", "text": f"{label}\n{text}"})
+
+    # self_state_context 自带「【此刻的你】」头，直接放（不重复套标签）
+    if self_state_context and self_state_context.strip():
+        blocks.append({"type": "text", "text": self_state_context.strip()})
+    _add("【你说话的调】", voice_context)        # D·声音自我（暂空，下一步填）
+    _add("【你和对方】", relationship_context)
+    _add("【往事】", past_events)                 # C·历史世界事件（暂空，下一步填）
+    _add("【关于对方】", build_memory_context_message(memory_context or {}))
     if time_context:
-        self_block_parts.append(build_time_context_message(time_context))
-    if self_block_parts:
-        ctx_parts.append("\n".join(self_block_parts))
-    memory_text = build_memory_context_message(memory_context or {})
-    if memory_text:
-        ctx_parts.append(memory_text)
+        _add("【此刻】", build_time_context_message(time_context))
+    # 这波消息：永远最后一块
+    blocks.append({"type": "text", "text": "【对方刚说】\n" + message})
 
-    if ctx_parts:
-        user_content: list[dict] = [
-            {"type": "text", "text": "【当前情境】\n" + "\n\n".join(ctx_parts)},
-            {"type": "text", "text": "【对方刚说】\n" + message},
-        ]
-        messages.append({"role": "user", "content": user_content})
-    else:
-        messages.append({"role": "user", "content": message})
-
+    messages.append({"role": "user", "content": blocks})
     used_memories = list((memory_context or {}).get("selected_memories") or [])
     return messages, used_memories
 

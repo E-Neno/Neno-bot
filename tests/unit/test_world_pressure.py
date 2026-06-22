@@ -21,7 +21,13 @@ from app.services.consciousness.world_pressure import (
 
 @pytest.fixture()
 def config() -> ConsciousnessConfig:
-    return ConsciousnessConfig()
+    return ConsciousnessConfig(
+        world_pressure_threshold=100.0,
+        world_wake_min_gap_seconds=60.0,
+        world_wake_budget_per_hour=12,
+        world_boredom_drip=1.0,
+        world_salience={},
+    )
 
 
 @pytest.fixture()

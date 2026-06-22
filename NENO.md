@@ -57,8 +57,9 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 *   **动作守门**：模型产生的 `world_ops` 必须先经过 `action_validator`，
     再由 `world_model.apply_op()` 改变世界并写回 SQLite。
 *   **独立开关**：常驻循环、世界决策模型和日计划模型分别启用；示例配置默认全关。
-*   **聊天边界（已演进）**：用户消息已作为 `inner_experience(kind=message)` 进入世界并汇入反思/记忆；
-    作为驱动世界行动的「意图通道」仍待实现。世界状态进主聊天**只能走 self_context 这一受控只读通道**
+*   **聊天边界（已演进）**：用户消息作为 `inner_experience(kind=message)` 进入世界并汇入反思/记忆；
+    「意图通道」（消息驱动世界行动）已落地——由 `world_loop` 读消息经历当意图候选、做不做交世界 LLM，
+    **聊天侧不写 `WorldState`**（详见 `docs/living-world.md` §5c）。世界状态进主聊天**只能走 self_context 这一受控只读通道**
     （`build_self_state_context` 读 `life_world_state.self_context`，置于 `messages[last]` 动态区、缓存安全、
     **绝不写回自我库**）；**禁止在别处手动偷接世界状态、禁止破坏装配顺序**。入口仍须服从 Session 串行化。
 *   **完成定义**：房间、事件、日计划和 LLM 决策只构成可运行基础。

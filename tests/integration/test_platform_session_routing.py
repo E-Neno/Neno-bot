@@ -4,6 +4,7 @@ import app.security as security
 from app.routers import platform as platform_router
 from app.services.relationship_service import get_relationship_state_for_api
 from app.storage.db import get_session_messages
+from app.services.chat.selection_layer import fallback_decision
 
 
 def _memory_result() -> dict:
@@ -34,6 +35,7 @@ def _patch_turn_dependencies(monkeypatch):
 
     monkeypatch.setattr(turn_orchestrator, "generate_chat_reply", fake_generate_chat_reply)
     monkeypatch.setattr(turn_orchestrator, "process_memory_candidate", lambda *args, **kwargs: _memory_result())
+    monkeypatch.setattr(turn_orchestrator, "select_response_sync", lambda messages, *args, **kwargs: fallback_decision(messages))
     monkeypatch.setattr(platform_router, "record_platform_proactive_target", lambda **kwargs: None)
     monkeypatch.setattr(security, "is_loopback_client", lambda request: True)
 

@@ -32,6 +32,9 @@ class WorldDef(BaseModel):
     # 旧 JSON 缺这两个字段时自动补空 → reachable_rooms 退回「全连通」旧行为，不破坏老世界。
     adjacency: dict[str, list[str]] = Field(default_factory=dict)
     outside: list[str] = Field(default_factory=list)
+    # 买东西（刀①收尾）：哪些房间是店——只有人在店里才能 create_object（买）。
+    # 旧 JSON 缺这字段时自动补空 → is_shop 恒 False，create_object 退回「任意房间可买」旧行为。
+    shops: list[str] = Field(default_factory=list)
 
     def legal_states(self, obj: str) -> list[str]:
         cat = self.objects[obj].category
@@ -62,6 +65,10 @@ class WorldState(BaseModel):
     money: int = 120
     dyn_objects: dict[str, dict] = Field(default_factory=dict)  # {name:{category,room,label}}
     removed: list[str] = Field(default_factory=list)  # 被扔掉的静态物品 key（渲染跳过）
+    # 移动东西（意图通道第一刀）：静态物品被挪到别的房间的覆盖表 {obj: room}。
+    # 静态物品的房间在不可变 JSON 里定义，relocate 用这张表覆盖；空表=都在定义房间（旧数据自动如此）。
+    # 动态物品的房间存在 dyn_objects[name].room 里，不走这张表。
+    obj_room_overrides: dict[str, str] = Field(default_factory=dict)
     gone_log: list[dict] = Field(default_factory=list)  # [{object,label,cause,when}]
     # 竖切7：最近一步快照（持久化，端点只读 DB 即可还原"她刚在干嘛"）
     last_tick: dict | None = None
@@ -83,9 +90,18 @@ class WorldState(BaseModel):
     self_context: str = ""
     self_context_basis: dict | None = None
     self_context_updated_at: str = ""
+    # 意图通道（刀① capstone）：已被她"看见过"的最后一条用户消息经历时间戳。
+    # world_loop 只把 cursor 之后的新消息当意图候选喂给世界 LLM，喂过就推进，避免反复重做。
+    # 写只在 world_loop（拥有 WorldState 读改写），聊天侧不碰，无并发竞争。旧 JSON 自动补 ""。
+    intent_cursor: str = ""
+    # 观测性「魂事件流」：让慢热机制可见（你的话到她那了/她学了/挪了/买了）。环形缓冲，最近若干条。
+    # 每条 {kind, text, when}。只由 world_loop 追加（拥有 WorldState 写）；自我事实结晶在读端从记忆派生，不进这里。
+    soul_events: list[dict] = Field(default_factory=list)
 
 
-WorldOpType = Literal["set_state", "move", "create_object", "destroy_object"]
+WorldOpType = Literal[
+    "set_state", "move", "create_object", "destroy_object", "relocate", "learn",
+]
 
 
 class WorldOp(BaseModel):
@@ -100,6 +116,8 @@ class WorldOp(BaseModel):
     label: str = ""
     cost: int = 0
     cause: str = ""
+    # 学习（刀①收尾）：learn 用——她在学/上手的东西，落账后结晶成直接自我事实
+    topic: str = ""
 
 
 class ActionPlan(BaseModel):
@@ -128,6 +146,16 @@ def apply_op(world_def: WorldDef, state: WorldState, op: WorldOp) -> WorldState:
         new.object_states[op.object] = op.state
     elif op.op == "move":
         new.location = op.to_room
+    elif op.op == "relocate":
+        name = op.object
+        if name in new.dyn_objects:
+            new.dyn_objects[name]["room"] = op.to_room
+        elif world_def.room_of(name) == op.to_room:
+            new.obj_room_overrides.pop(name, None)  # 挪回老家 → 清掉覆盖，口径干净
+        else:
+            new.obj_room_overrides[name] = op.to_room
+    elif op.op == "learn":
+        pass  # 学习是心智动作，不改物理世界；落账走 world_loop 记 learning experience
     elif op.op == "create_object":
         cat = op.category
         new.dyn_objects[op.object] = {
@@ -181,6 +209,8 @@ def obj_category(world_def: WorldDef, state: WorldState, name: str) -> str | Non
 def obj_room(world_def: WorldDef, state: WorldState, name: str) -> str | None:
     if name in state.dyn_objects:
         return state.dyn_objects[name].get("room")
+    if name in state.obj_room_overrides:  # 移动东西：静态物品被挪过
+        return state.obj_room_overrides[name]
     return world_def.room_of(name)
 
 
@@ -192,9 +222,17 @@ def legal_states_of(world_def: WorldDef, state: WorldState, name: str) -> list[s
 
 
 def objects_in_room(world_def: WorldDef, state: WorldState, room: str) -> list[str]:
+    overrides = state.obj_room_overrides
+    # 本房间定义的静态物品，去掉被扔掉的、被挪走的
     items = [
         o for o in world_def.rooms.get(room, {}).get("objects", [])
-        if o not in state.removed
+        if o not in state.removed and overrides.get(o, room) == room
+    ]
+    # 被挪进本房间的静态物品（定义房间在别处）
+    items += [
+        o for o, r in overrides.items()
+        if r == room and o not in state.removed
+        and o in world_def.objects and world_def.room_of(o) != room
     ]
     items += [n for n, meta in state.dyn_objects.items() if meta.get("room") == room]
     return items
@@ -227,6 +265,36 @@ def is_outside(world_def: WorldDef, room: str) -> bool:
     return room in set(world_def.outside or [])
 
 
+def is_shop(world_def: WorldDef, room: str) -> bool:
+    """该房间是否是店（只有人在店里才能买东西）。shops 为空时恒 False（退回旧「任意房间可买」）。"""
+    return room in set(world_def.shops or [])
+
+
+def next_step_toward(world_def: WorldDef, state: WorldState, src: str, dst: str) -> str | None:
+    """BFS：从 src 朝 dst 走的最短路下一跳房间。已在 dst / 无路 → None。
+
+    用 `reachable_rooms` 当邻接（含出门要过玄关那套门控）。给「困了不在卧室先回卧室」用。
+    """
+    if src == dst:
+        return None
+    from collections import deque
+    visited = {src}
+    queue: deque[tuple[str, str]] = deque()  # (room, 第一步)
+    for nb in reachable_rooms(world_def, state, src):
+        if nb not in visited:
+            visited.add(nb)
+            queue.append((nb, nb))
+    while queue:
+        room, first = queue.popleft()
+        if room == dst:
+            return first
+        for nb in reachable_rooms(world_def, state, room):
+            if nb not in visited:
+                visited.add(nb)
+                queue.append((nb, first))
+    return None
+
+
 # ── 牵挂工具（第一刀：跨天 open thread）──────────────────────────────────────
 
 def make_thread(kind: str, topic: str, *, day: str, intensity: float, mood: str = "") -> dict:
@@ -256,6 +324,21 @@ def find_thread(threads: list[dict], tid: str) -> dict | None:
         if t.get("id") == tid:
             return t
     return None
+
+
+def push_soul_event(events: list[dict], kind: str, text: str, *, when: str, cap: int = 15) -> list[dict]:
+    """往魂事件流追加一条（环形缓冲）。纯函数。
+
+    连续重复（同 kind+text）不重记——滑行接续/反复同一动作不该刷屏。
+    """
+    out = list(events or [])
+    text = str(text or "").strip()
+    if not text:
+        return out
+    if out and out[-1].get("kind") == kind and out[-1].get("text") == text:
+        return out
+    out.append({"kind": kind, "text": text, "when": when})
+    return out[-cap:]
 
 
 _OWE_REPLY_ID = "goal:还没回对方消息"

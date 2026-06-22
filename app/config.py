@@ -50,6 +50,11 @@ OPENROUTER_PROXY = os.getenv("OPENROUTER_PROXY", "").strip() or None
 CHAT_MODEL_NAME = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
 VISION_MODEL_NAME = os.getenv("OPENROUTER_VISION_MODEL", CHAT_MODEL_NAME)
 MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
+# 理解+选择层（真人感取舍）：极简 JSON 决策，要快。用 MiMo（复用上面 MIMO_* 凭据）+ 关深度思考
+# （thinking={"type":"disabled"} 把 ~15s 压到 ~1.2s，决策质量不变）。默认关（示例配置惯例）。
+SELECTION_LAYER_ENABLED = os.getenv("CHAT_SELECTION_LAYER_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+SELECTION_TIMEOUT = int(os.getenv("CHAT_SELECTION_TIMEOUT", "8"))
+SELECTION_THINKING_OFF = {"thinking": {"type": "disabled"}}  # MiMo 关思考；换 OpenRouter 模型时置空
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "").strip()
 MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").strip()
 MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro").strip()

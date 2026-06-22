@@ -13,6 +13,10 @@ from .config import ConsciousnessConfig
 from .experience_recorder import ExperienceRecorder
 from .memory_recall import MemoryRecall
 from .models import LifeResidue, StateMutation
+from .self_facts import (
+    guard_self_fact, learn_fact_content, learn_fact_tag,
+    self_fact_content, self_fact_tag,
+)
 from .state_store import StateStore
 
 if TYPE_CHECKING:
@@ -151,6 +155,12 @@ class ReflectionEngine:
                 salience=float(memory.get("salience", 0.5)),
             )
 
+        # 自我库（刀①阶段3）：反复经历结晶成 subject="neno" 归纳偏好。
+        # 放在普通记忆落库之后，写库/去重/强化/防身份膨胀守门都在这一步。
+        await self._crystallize_self_facts(output.get("self_fact_candidates", []))
+        # 学习（刀①收尾）：当天 learning 经历结晶成 subject="neno" 直接事实。
+        await self._crystallize_learn_facts(output.get("learn_fact_candidates", []))
+
         feedback = output.get("state_feedback", {})
         life_residue_data = feedback.get("life_residue") or {}
         await self._state_store.submit_mutation(
@@ -183,6 +193,64 @@ class ReflectionEngine:
             )
         return _deterministic_output(experiences, episodes=episodes or [], state=state)
 
+    async def _crystallize_self_facts(
+        self, candidates: list[dict[str, Any]]
+    ) -> None:
+        """反复经历 → subject="neno" 归纳偏好。写一次去重、复现强化、防身份膨胀。
+
+        防伪：只接 reflection 看到的落账活动统计，聊天进不来。做过≠身份——
+        守门器挡身份/传记词与数字；过不了的候选直接跳过，不留旧值之外的脏数据。
+        """
+        for cand in candidates or []:
+            key = str(cand.get("key", "")).strip()
+            if not key:
+                continue
+            label = str(cand.get("label", "") or key).strip()
+            tag = self_fact_tag(key)
+            existing_id = await asyncio.to_thread(_find_self_fact_id, tag)
+            if existing_id is not None:
+                # 复现 → 强化（随时间挣得稳定），不写重复
+                await self._recall.update_salience(existing_id, 0.05)
+                continue
+            content = self_fact_content(label)
+            if not guard_self_fact(content):
+                _log.warning("self_fact guard rejected crystallization: %r", content)
+                continue
+            await self._recall.add_memory(
+                content=content,
+                tags=["self", "neno", "preference", tag],
+                subject="neno",
+                salience=0.5,
+            )
+
+    async def _crystallize_learn_facts(
+        self, candidates: list[dict[str, Any]]
+    ) -> None:
+        """学习落账经历 → subject="neno" 直接事实「你最近在学着上手 X」。
+
+        学习是有持续身份意义的直接事实，单次即可结晶（不必反复）；按主题去重、
+        复现强化。守门挡身份/学历词——学某事推不出科班/专业。
+        """
+        for cand in candidates or []:
+            topic = str(cand.get("topic", "")).strip()
+            if not topic:
+                continue
+            tag = learn_fact_tag(topic)
+            existing_id = await asyncio.to_thread(_find_self_fact_id, tag)
+            if existing_id is not None:
+                await self._recall.update_salience(existing_id, 0.05)
+                continue
+            content = learn_fact_content(topic)
+            if not guard_self_fact(content):
+                _log.warning("learn_fact guard rejected crystallization: %r", content)
+                continue
+            await self._recall.add_memory(
+                content=content,
+                tags=["self", "neno", "learning", tag],
+                subject="neno",
+                salience=0.55,
+            )
+
 
 # ── Deterministic reflection (C1.5 upgraded) ─────────────────────────────
 
@@ -208,6 +276,12 @@ def _deterministic_output(
     episodes = episodes or []
     recent = experiences[:3]
     high_salience = [e for e in experiences if float(e.get("salience") or 0.0) >= 0.7]
+    # 学习直接事实候选：当天 kind="learning" 的落账经历（单次即可结晶，去重在 run_once）
+    learn_fact_candidates = [
+        {"topic": str(e.get("content", "")).strip()}
+        for e in experiences
+        if e.get("kind") == "learning" and str(e.get("content", "")).strip()
+    ]
 
     # ── 1. Build summary ──────────────────────────────────────────────────
     summary_parts: list[str] = []
@@ -308,6 +382,9 @@ def _deterministic_output(
 
     # ── 3. Long-term memories ─────────────────────────────────────────────
     memories: list[dict[str, Any]] = []
+    # 自我库候选（刀①阶段3）：反复活动 → 归纳偏好结晶 subject="neno"。
+    # 单列出来不受 memories[:2] 展示截断影响；写库/去重/强化在 run_once。
+    self_fact_candidates: list[dict[str, Any]] = []
 
     if episodes:
         # 3a. Repeated activity patterns (same activity_key ≥ 2 times)
@@ -327,10 +404,11 @@ def _deterministic_output(
             )
             memories.append({
                 "content": f"今天多次回到「{label}」（{cnt} 次），可能是一种习惯模式",
-                "tags": ["life", "pattern", "repeated_activity"],
+                "tags": ["life", "pattern", "repeated_activity", self_fact_tag(key)],
                 "subject": "",
                 "salience": 0.7,
             })
+            self_fact_candidates.append({"key": key, "label": label, "count": cnt})
 
         # 3b. Frequent interrupts (≥ 2)
         total_interrupts = sum(
@@ -381,6 +459,8 @@ def _deterministic_output(
     return {
         "summary": summary,
         "memories": memories[:2],
+        "self_fact_candidates": self_fact_candidates,
+        "learn_fact_candidates": learn_fact_candidates,
         "state_feedback": {
             "mood_valence_delta": 0.02 if (experiences or episodes) else 0.0,
             "desire_pulse": 0.0,
@@ -452,6 +532,18 @@ def _input_summary(
         for exp in experiences[:20]
     )
     return "\n".join(parts)
+
+
+def _find_self_fact_id(tag: str) -> int | None:
+    """查 subject="neno" 且带指定 activity 标签的已有自我事实 id（去重定位）。
+
+    匹配带引号的 JSON 标签形式 `"activity:key"`，避免 activity:read 误命中 activity:reading。
+    """
+    rows = db_storage.fetch_all(
+        "SELECT id FROM long_term_memory WHERE subject = 'neno' AND tags LIKE ? LIMIT 1",
+        (f'%"{tag}"%',),
+    )
+    return int(rows[0]["id"]) if rows else None
 
 
 def _insert_reflection_run(

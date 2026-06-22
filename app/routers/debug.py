@@ -845,6 +845,7 @@ async def consciousness_world_live():
     """
     try:
         from app.services.consciousness.config import ConsciousnessConfig
+        from app.services.consciousness.memory_recall import MemoryRecall
         from app.services.consciousness.state_store import StateStore
         from app.services.consciousness.world_store import WorldStore
         from app.services.consciousness.world_loop import build_snapshot
@@ -854,9 +855,20 @@ async def consciousness_world_live():
         wd = load_world_def()
         world_state = await WorldStore(wd).read()
         nstate = await StateStore(db=None, config=cfg).read()  # read() 纯 DB 读，无需 start()
+        # 「魂」层：自我库（reflection 结晶的 subject="neno" 自我事实）只读召回；失败返 []
+        try:
+            self_facts = await MemoryRecall(db=None, config=cfg).list_self_facts(limit=6)
+        except Exception:  # noqa: BLE001 — 只读面板，召回失败不影响世界快照
+            self_facts = []
         return {
             "success": True,
             "world": build_snapshot(wd, world_state, nstate),
+            "self": {
+                "context": (world_state.self_context or "").strip(),
+                "facts": self_facts,
+                "pending_count": len(world_state.pending_messages or []),
+                "events": list(reversed((world_state.soul_events or [])[-12:])),  # 魂事件流，最近在前
+            },
             "loop_enabled": cfg.world_loop_enabled,
         }
     except Exception as exc:  # debug 只读不允许 500

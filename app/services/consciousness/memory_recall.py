@@ -142,6 +142,24 @@ class MemoryRecall:
             (content, tags_json, subject or "", salience, now),
         )
 
+    async def list_self_facts(self, limit: int = 5) -> list[str]:
+        """读 subject='neno' 的自我事实（按 salience 降序），喂回 self_context 当 4 号输入。
+
+        自我库（刀①阶段3）：只有 reflection 从落账经历结晶的事实会带 subject='neno'，
+        聊天写不进来。失败返回 []，不 raise。
+        """
+        try:
+            rows = await asyncio.to_thread(
+                fetch_all,
+                "SELECT content FROM long_term_memory WHERE subject = 'neno' "
+                "ORDER BY salience DESC, id DESC LIMIT ?",
+                (int(limit),),
+            )
+            return [row["content"] for row in rows] if rows else []
+        except Exception:
+            logger.exception("memory_recall.list_self_facts failed")
+            return []
+
     async def update_salience(self, memory_id: int, delta: float) -> None:
         """调整记忆重要度（梦境沉淀时用）"""
         try:
@@ -153,6 +171,24 @@ class MemoryRecall:
             )
         except Exception:
             logger.exception("memory_recall.update_salience failed")
+
+
+def list_self_facts_sync(limit: int = 6) -> list[str]:
+    """同步读 subject="neno" 的自我事实（聊天判断层用——turn_orchestrator 是 sync）。失败返 []。
+
+    供「理解+选择层」判断「戳到她」用：戳中的是她真在意/喜欢/在学的事（她活成的自己），
+    而不是泛泛"会戳到一个人"。自我库 ↔ 判断层互补。
+    """
+    try:
+        rows = fetch_all(
+            "SELECT content FROM long_term_memory WHERE subject = 'neno' "
+            "ORDER BY salience DESC, id DESC LIMIT ?",
+            (int(limit),),
+        )
+        return [row["content"] for row in rows] if rows else []
+    except Exception:
+        logger.exception("list_self_facts_sync failed")
+        return []
 
 
 def _tokenize(text: str) -> list[str]:

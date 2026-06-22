@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Callable
 
 from app.routers import platform as platform_router
+from app.services.chat.selection_layer import fallback_decision
 from app.services.relationship_service import get_relationship_state_for_api
 from app.services.session_aggregation_controller import SessionAggregationController
 from app.services.session_submit_controller import SessionSubmitController
@@ -29,7 +32,92 @@ def _post_platform_message(client, payload: dict) -> tuple[int, dict]:
     return response.status_code, response.json()
 
 
-def _patch_turn_dependencies(monkeypatch, *, window_seconds: float = 0.05, reply_sleep: float = 0.08):
+class _ManualHandle:
+    """Cancel handle returned by :class:`_ManualScheduler.call_later`."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class _ManualScheduler:
+    """Deterministic stand-in for the controller's real ``threading.Timer``.
+
+    Production seals an aggregation batch when its window elapses on the wall
+    clock. That makes the integration tests load-sensitive: whether a second
+    message joins the first batch depends on whether it allocates its ticket
+    before a real timer fires. This scheduler instead *stores* each window-seal
+    callback and fires it only when the test explicitly calls :meth:`fire_all`,
+    so batch boundaries are driven by the test rather than by thread scheduling
+    and ``time.sleep``.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending: list[tuple[_ManualHandle, Callable[[], None]]] = []
+
+    def call_later(self, delay: float, callback: Callable[[], None]) -> _ManualHandle:
+        del delay  # the window length is irrelevant under manual control
+        handle = _ManualHandle()
+        with self._lock:
+            self._pending.append((handle, callback))
+        return handle
+
+    def fire_all(self) -> int:
+        """Fire every still-pending (non-cancelled) seal callback. Returns the
+        number actually fired."""
+        with self._lock:
+            pending = self._pending
+            self._pending = []
+        fired = 0
+        for handle, callback in pending:
+            if not handle.cancelled:
+                callback()
+                fired += 1
+        return fired
+
+
+@dataclass
+class _AggregationHarness:
+    controller: SessionAggregationController
+    scheduler: _ManualScheduler
+    max_active: Callable[[], int]
+
+    def _active_sources(self, session_id: str) -> list[dict]:
+        snapshot = self.controller.get_session_snapshot(session_id=session_id)
+        return snapshot["active_sources"]
+
+    def _wait(self, predicate: Callable[[list[dict]], bool], session_id: str, *, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            sources = self._active_sources(session_id)
+            if predicate(sources):
+                return
+            time.sleep(0.005)
+        raise AssertionError(
+            f"aggregation condition not met within {timeout}s for {session_id}; "
+            f"active_sources={self._active_sources(session_id)}"
+        )
+
+    def wait_allocated(self, session_id: str, count: int) -> None:
+        """Block until at least ``count`` sources have allocated a ticket."""
+        self._wait(lambda sources: len(sources) >= count, session_id)
+
+    def wait_ready(self, session_id: str, count: int) -> None:
+        """Block until at least ``count`` active sources are ``source_ready``."""
+        self._wait(
+            lambda sources: sum(1 for s in sources if s.get("source_state") == "source_ready") >= count,
+            session_id,
+        )
+
+    def seal(self) -> int:
+        """Seal every currently-open batch deterministically."""
+        return self.scheduler.fire_all()
+
+
+def _patch_turn_dependencies(monkeypatch, *, reply_sleep: float = 0.08) -> _AggregationHarness:
     import app.security as security
     from app.services.chat import turn_orchestrator
 
@@ -57,22 +145,22 @@ def _patch_turn_dependencies(monkeypatch, *, window_seconds: float = 0.05, reply
             with lock:
                 active -= 1
 
+    scheduler = _ManualScheduler()
+    controller = SessionAggregationController(window_seconds=0.05, scheduler=scheduler)
+
     monkeypatch.setattr(turn_orchestrator, "generate_chat_reply", fake_generate_chat_reply)
     monkeypatch.setattr(turn_orchestrator, "process_memory_candidate", lambda *args, **kwargs: _memory_result())
+    monkeypatch.setattr(turn_orchestrator, "select_response_sync", lambda messages, *args, **kwargs: fallback_decision(messages))
     monkeypatch.setattr(platform_router, "record_platform_proactive_target", lambda **kwargs: None)
     monkeypatch.setattr(platform_router, "session_submit_controller", SessionSubmitController())
-    monkeypatch.setattr(
-        platform_router,
-        "session_aggregation_controller",
-        SessionAggregationController(window_seconds=window_seconds),
-    )
+    monkeypatch.setattr(platform_router, "session_aggregation_controller", controller)
     monkeypatch.setattr(security, "is_loopback_client", lambda request: True)
 
-    return lambda: max_active
+    return _AggregationHarness(controller=controller, scheduler=scheduler, max_active=lambda: max_active)
 
 
 def test_wx_image_then_text_is_aggregated_into_one_batch(client, monkeypatch, admin_headers):
-    get_max_active = _patch_turn_dependencies(monkeypatch)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-image-text"
 
     def fake_normalize_multimodal_message(*, message: str | None, attachments, trace_id: str | None = None) -> str:
@@ -96,18 +184,22 @@ def test_wx_image_then_text_is_aggregated_into_one_batch(client, monkeypatch, ad
     }
 
     with ThreadPoolExecutor(max_workers=2) as executor:
+        # 先发图片、确认它已就绪进入开放批，再发文本：保证到达序确定（图=seq1、文=seq2），
+        # 且两条都在同一个尚未封口的批里。封口由 harness.seal() 显式触发，不靠真实计时器。
         image_future = executor.submit(_post_platform_message, client, image_payload)
-        time.sleep(0.02)
+        harness.wait_ready(session_id, 1)
         text_future = executor.submit(_post_platform_message, client, text_payload)
+        harness.wait_ready(session_id, 2)
+        harness.seal()
 
-    image_status, image_data = image_future.result()
-    text_status, text_data = text_future.result()
+        image_status, image_data = image_future.result()
+        text_status, text_data = text_future.result()
 
     assert image_status == 200
     assert text_status == 200
     assert image_data["reply"] == text_data["reply"]
     assert "这是什么意思" in image_data["reply"]
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "assistant"]
@@ -126,7 +218,7 @@ def test_wx_image_then_text_is_aggregated_into_one_batch(client, monkeypatch, ad
 
 
 def test_wx_text_burst_within_window_becomes_one_batch(client, monkeypatch):
-    get_max_active = _patch_turn_dependencies(monkeypatch)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-text-burst"
 
     payloads = [
@@ -136,15 +228,18 @@ def test_wx_text_burst_within_window_becomes_one_batch(client, monkeypatch):
     ]
 
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = []
-        for payload in payloads:
+        # 逐条发出并等其就绪后再发下一条：到达序 = 发送序（seq 1/2/3），消除并发线程乱序；
+        # 三条都进同一未封口批，最后统一封口 → 一个批。
+        futures: list[Future] = []
+        for index, payload in enumerate(payloads, start=1):
             futures.append(executor.submit(_post_platform_message, client, payload))
-            time.sleep(0.015)
+            harness.wait_ready(session_id, index)
+        harness.seal()
+        results = [future.result() for future in futures]
 
-    results = [future.result() for future in futures]
     assert all(status == 200 for status, _ in results)
     assert len({data["reply"] for _, data in results}) == 1
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "user", "assistant"]
@@ -154,7 +249,7 @@ def test_wx_text_burst_within_window_becomes_one_batch(client, monkeypatch):
 
 
 def test_wx_voice_and_text_are_aggregated_together(client, monkeypatch):
-    get_max_active = _patch_turn_dependencies(monkeypatch)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-voice-text"
 
     def fake_transcribe_voice(media_path: str, trace_id: str) -> str:
@@ -179,17 +274,20 @@ def test_wx_voice_and_text_are_aggregated_together(client, monkeypatch):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         voice_future = executor.submit(_post_platform_message, client, voice_payload)
-        time.sleep(0.02)
+        harness.wait_ready(session_id, 1)
         text_future = executor.submit(_post_platform_message, client, text_payload)
+        harness.wait_ready(session_id, 2)
+        harness.seal()
 
-    voice_status, voice_data = voice_future.result()
-    text_status, text_data = text_future.result()
+        voice_status, voice_data = voice_future.result()
+        text_status, text_data = text_future.result()
+
     assert voice_status == 200
     assert text_status == 200
     assert voice_data["reply"] == text_data["reply"]
     assert "语音里说的是这个位置" in voice_data["reply"]
     assert "我是说这个地方" in voice_data["reply"]
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "assistant"]
@@ -198,23 +296,34 @@ def test_wx_voice_and_text_are_aggregated_together(client, monkeypatch):
 
 
 def test_wx_messages_outside_window_split_into_two_batches(client, monkeypatch):
-    get_max_active = _patch_turn_dependencies(monkeypatch, window_seconds=0.04)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-window-split"
 
-    first_status, first_data = _post_platform_message(
-        client,
-        {"platform": "wx", "user_id": "wx-user-window-split", "chat_type": "private", "message": "第一批"},
-    )
-    time.sleep(0.08)
-    second_status, second_data = _post_platform_message(
-        client,
-        {"platform": "wx", "user_id": "wx-user-window-split", "chat_type": "private", "message": "第二批"},
-    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # 第一条单独成批并封口提交（窗口"已过"语义由显式 seal 表达）；待其彻底完成后再发第二条，
+        # 第二条进新批 → 两个不同批。
+        first_future = executor.submit(
+            _post_platform_message,
+            client,
+            {"platform": "wx", "user_id": "wx-user-window-split", "chat_type": "private", "message": "第一批"},
+        )
+        harness.wait_ready(session_id, 1)
+        harness.seal()
+        first_status, first_data = first_future.result()
+
+        second_future = executor.submit(
+            _post_platform_message,
+            client,
+            {"platform": "wx", "user_id": "wx-user-window-split", "chat_type": "private", "message": "第二批"},
+        )
+        harness.wait_ready(session_id, 1)
+        harness.seal()
+        second_status, second_data = second_future.result()
 
     assert first_status == 200
     assert second_status == 200
     assert first_data["reply"] != second_data["reply"]
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "assistant", "user", "assistant"]
@@ -223,13 +332,13 @@ def test_wx_messages_outside_window_split_into_two_batches(client, monkeypatch):
 
 
 def test_wx_batch_waits_for_slow_preprocess_before_single_submit(client, monkeypatch, admin_headers):
-    get_max_active = _patch_turn_dependencies(monkeypatch, window_seconds=0.08)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-slow-preprocess"
     release_image = threading.Event()
 
     def fake_normalize_multimodal_message(*, message: str | None, attachments, trace_id: str | None = None) -> str:
         del message, attachments, trace_id
-        release_image.wait(timeout=1)
+        release_image.wait(timeout=5)
         return "[用户发送了一张图片，以下是图片理解结果]\n图片内容：慢图"
 
     monkeypatch.setattr(platform_router, "normalize_multimodal_message", fake_normalize_multimodal_message)
@@ -249,59 +358,71 @@ def test_wx_batch_waits_for_slow_preprocess_before_single_submit(client, monkeyp
     }
 
     with ThreadPoolExecutor(max_workers=2) as executor:
+        # 图片卡在慢预处理（未就绪），文本已就绪；封口后批应停在 batch_waiting_ready 等图片，
+        # 不提交。放行图片后两条合成一个批提交。
         image_future = executor.submit(_post_platform_message, client, image_payload)
-        time.sleep(0.01)
+        harness.wait_allocated(session_id, 1)
         text_future = executor.submit(_post_platform_message, client, text_payload)
-        time.sleep(0.09)
+        harness.wait_allocated(session_id, 2)
+        harness.wait_ready(session_id, 1)
+        harness.seal()
+
         snapshot_response = client.get(
             f"/debug/session-aggregation?session_id={session_id}",
             headers=admin_headers,
         )
         release_image.set()
 
+        image_status, image_data = image_future.result()
+        text_status, text_data = text_future.result()
+
     snapshot = snapshot_response.json()
     assert snapshot["active_batch_count"] == 1
     assert snapshot["active_batches"][0]["batch_state"] == "batch_waiting_ready"
     assert snapshot["active_batches"][0]["source_count"] == 2
 
-    image_status, image_data = image_future.result()
-    text_status, text_data = text_future.result()
     assert image_status == 200
     assert text_status == 200
     assert image_data["reply"] == text_data["reply"]
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "assistant"]
 
 
 def test_wx_batches_still_submit_serially_across_windows(client, monkeypatch):
-    get_max_active = _patch_turn_dependencies(monkeypatch, window_seconds=0.04, reply_sleep=0.15)
+    harness = _patch_turn_dependencies(monkeypatch, reply_sleep=0.15)
     session_id = "wx:private:wx-user-two-batches"
 
     with ThreadPoolExecutor(max_workers=3) as executor:
+        # 第一批两条合一并提交完成，再开第二批：跨批严格串行（max_active==1），
+        # 且批界确定（第一批两条同 batch_id、第二批不同）。
         first_future = executor.submit(
             _post_platform_message,
             client,
             {"platform": "wx", "user_id": "wx-user-two-batches", "chat_type": "private", "message": "第一批-1"},
         )
-        time.sleep(0.015)
+        harness.wait_ready(session_id, 1)
         second_future = executor.submit(
             _post_platform_message,
             client,
             {"platform": "wx", "user_id": "wx-user-two-batches", "chat_type": "private", "message": "第一批-2"},
         )
-        time.sleep(0.08)
+        harness.wait_ready(session_id, 2)
+        harness.seal()
+        assert first_future.result()[0] == 200
+        assert second_future.result()[0] == 200
+
         third_future = executor.submit(
             _post_platform_message,
             client,
             {"platform": "wx", "user_id": "wx-user-two-batches", "chat_type": "private", "message": "第二批-1"},
         )
+        harness.wait_ready(session_id, 1)
+        harness.seal()
+        assert third_future.result()[0] == 200
 
-    assert first_future.result()[0] == 200
-    assert second_future.result()[0] == 200
-    assert third_future.result()[0] == 200
-    assert get_max_active() == 1
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "assistant", "user", "assistant"]
@@ -310,7 +431,7 @@ def test_wx_batches_still_submit_serially_across_windows(client, monkeypatch):
 
 
 def test_wx_aggregated_trace_preview_and_delete_stay_explainable(client, monkeypatch, admin_headers):
-    get_max_active = _patch_turn_dependencies(monkeypatch)
+    harness = _patch_turn_dependencies(monkeypatch)
     session_id = "wx:private:wx-user-delete"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -319,16 +440,19 @@ def test_wx_aggregated_trace_preview_and_delete_stay_explainable(client, monkeyp
             client,
             {"platform": "wx", "user_id": "wx-user-delete", "chat_type": "private", "message": "先发图片说明"},
         )
-        time.sleep(0.02)
+        harness.wait_ready(session_id, 1)
         second_future = executor.submit(
             _post_platform_message,
             client,
             {"platform": "wx", "user_id": "wx-user-delete", "chat_type": "private", "message": "再补一句问题"},
         )
+        harness.wait_ready(session_id, 2)
+        harness.seal()
 
-    assert first_future.result()[0] == 200
-    assert second_future.result()[0] == 200
-    assert get_max_active() == 1
+        assert first_future.result()[0] == 200
+        assert second_future.result()[0] == 200
+
+    assert harness.max_active() == 1
 
     messages = get_session_messages(session_id)
     assert [item["role"] for item in messages] == ["user", "user", "assistant"]

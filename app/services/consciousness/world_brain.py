@@ -23,6 +23,8 @@ _SYSTEM_PROMPT = """你在模拟一个独居年轻女性 Neno 的日常生活。
 硬规则（必须遵守，否则动作会被丢弃）：
 - 只能操作当前房间里列出的物品；只能移动到列出的可达房间。
 - set_state 的目标状态必须是该物品列出的合法状态之一。
+- relocate（把东西挪去别的房间）只能挪当前房间里的物品，且目标房间要一步可达。
+- learn（学／练一样东西，要带 topic）：真有兴趣或在练某样东西时才用，会沉淀成「她在学的事」。
 - 一次最多 2 个动作（world_ops）。
 - 行为要贴合当前情境，自然、连贯，不要突兀（比如不要凭空出现没列出的东西）。
 
@@ -41,7 +43,9 @@ _SYSTEM_PROMPT = """你在模拟一个独居年轻女性 Neno 的日常生活。
   "reasoning": "一句话理由",
   "world_ops": [
     {"op": "set_state", "object": "物品key", "state": "目标状态"},
-    {"op": "move", "to_room": "房间key"}
+    {"op": "move", "to_room": "房间key"},
+    {"op": "relocate", "object": "物品key", "to_room": "房间key"},
+    {"op": "learn", "topic": "在学的东西"}
   ],
   "micro_event": "一句内心活动，或 null"
 }"""
@@ -84,6 +88,7 @@ class WorldBrain:
         event=None,
         threads=None,
         restless: str = "",
+        wishes=None,
     ) -> str:
         """给 LLM 的世界上下文：世界约束 + 时段 + 内在状态 + 计划 + 最近行动 + 记忆。
 
@@ -151,6 +156,11 @@ class WorldBrain:
         # 活泼度：待太久/没出门的"闷"信号（只是感觉，换不换地方/出不出门她自己定）
         if restless:
             lines.append(f"[有点闷] {restless}")
+        # 意图通道（capstone）：对方最近说的话，也许是想让你做点什么——但只是"也许"。
+        # 无常：放不放在心上、要不要做、什么时候做，全由你自己定；只是闲聊或你不想动，就不动。
+        wish_list = [str(w).strip() for w in (wishes or []) if str(w).strip()]
+        if wish_list:
+            lines.append("[对方最近说的（也许想让你做点什么，但你可以不）] " + "；".join(wish_list[-3:]))
         # 竖切6：刚发生的事件 / 钱包 / 失去过的东西
         if event is not None:
             ev_content = event.content if hasattr(event, "content") else str(event)
@@ -173,7 +183,8 @@ class WorldBrain:
         other_rooms = reachable_rooms(self._world_def, state, room)
         lines.append("现在一步能去的地方（只能去这些）：" + "、".join(other_rooms))
         cats = "、".join(self._world_def.categories.keys())
-        lines.append(f"想买东西可用 create_object（类别须属于：{cats}），会花钱；想扔掉东西用 destroy_object。")
+        lines.append(f"想买东西用 create_object（类别须属于：{cats}），会花钱——但**得先去便利店/咖啡馆**，在店里才买得到；买回的东西可再用 relocate 带回家。想扔掉东西用 destroy_object。")
+        lines.append("想把手边的东西收拾/挪到旁边房间用 relocate（只能挪当前房间里的物品，到一步可达的房间）。")
         lines.append("\n请决定 Neno 接下来自然会做的一件事，只输出 JSON。")
         return "\n".join(lines)
 
@@ -190,6 +201,7 @@ class WorldBrain:
         event=None,
         threads=None,
         restless: str = "",
+        wishes=None,
     ) -> ActionPlan:
         if not self._config.world_llm_enabled:
             return self._mock_decide(state)
@@ -197,7 +209,7 @@ class WorldBrain:
             return await self._llm_decide(
                 state, nstate=nstate, phase=phase, plan=plan,
                 memories=memories, recent=recent, event=event, threads=threads,
-                restless=restless,
+                restless=restless, wishes=wishes,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("world LLM decide failed, falling back to mock: %s", exc)
@@ -215,6 +227,7 @@ class WorldBrain:
         event=None,
         threads=None,
         restless: str = "",
+        wishes=None,
     ) -> ActionPlan:
         if not OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -225,7 +238,7 @@ class WorldBrain:
                 "content": self._build_user_message(
                     state, nstate=nstate, phase=phase, plan=plan,
                     memories=memories, recent=recent, event=event, threads=threads,
-                    restless=restless,
+                    restless=restless, wishes=wishes,
                 ),
             },
         ]

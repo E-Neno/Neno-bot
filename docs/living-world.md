@@ -1,6 +1,6 @@
 # Neno Living World
 
-> 状态日期：2026-06-16  
+> 状态日期：2026-06-19
 > 本文是当前 Living World 实现的权威说明。`PHASE_4*` 和 `docs/superpowers/plans/*` 是历史规格或实施记录，不代表当前代码状态。
 > 刀①「她自己活成自己」的方案/详规在 `docs/dao1-self-developed-life-plan.md`、`docs/dao1-stage12-brief.md`、`docs/dao1-prompt-restructure-brief.md`（实施记录，机制以本文 §5b 为准）。
 
@@ -46,8 +46,9 @@ flowchart LR
 
 | 组件 | 职责 |
 |---|---|
-| `virtual_world.json` | 四个房间、初始物品、物品类别和合法状态白名单 |
-| `world_model.py` | `WorldDef`、`WorldState`、`WorldOp`、动态物品及纯状态变换 |
+| `virtual_world.json` | 九个房间（四家内 + 玄关/楼下/便利店/咖啡馆/公园外部场所）、物品、类别和合法状态白名单、邻接图、`shops`（便利店/咖啡馆）|
+| `world_model.py` | `WorldDef`、`WorldState`、`WorldOp`（含 `relocate`/`learn`）、动态物品、`obj_room_overrides`/`intent_cursor` 等纯状态变换 |
+| `self_facts.py` | 自我库纯逻辑：归纳偏好/学习直接事实的措辞 + 防身份膨胀守门（复用 `self_context` 的传记词表）|
 | `world_store.py` | `life_world_state` 单行 JSON 的 SQLite 读写与坏数据降级 |
 | `world_drift.py` | 水壶降温、植物缺水等不依赖 Neno 意志的世界变化 |
 | `action_validator.py` | 校验位置、对象、状态、预算和创建/销毁权限 |
@@ -118,6 +119,29 @@ flowchart LR
   并入「此刻的你」块；关系打分/积分漏斗模型未变。
 - **presence**：醒着聊天路径不再注入 `[暂不回]`；「不回」只剩物理睡眠门（睡着 → 攒 `pending_messages`、零 LLM）。
 
+## 5c. 世界动作扩展、自我库结晶与意图通道（刀①收尾）
+
+在 §5b 的「读」之上补「做」与「沉淀」。四块都走现成管道（`action_validator` → `apply_op`、reflection → `long_term_memory`），不另起循环。
+
+- **移动东西（`relocate` op）**：她能把当前房间够得着的物品挪到一步可达的别的房间。静态物品房间可变靠
+  `WorldState.obj_room_overrides`（挪回定义房间自动清），动态物品改 `dyn_objects[].room`；`obj_room`/`objects_in_room`
+  认覆盖 → `build_snapshot` 自动渲染到新位置（前端零改动）。validator 守 `object_not_here/same_room/not_reachable/room_full`。
+- **学习（`learn` op）**：心智动作（`apply_op` 不改物理世界）。`world_loop` 对 accepted learn op 录一条
+  `kind="learning"` experience（照 `destroy_object` 派生范式）；reflection `_crystallize_learn_facts` 当天即结晶
+  **直接事实**「你最近在学着上手 X」（学习有持续身份意义，单次即可，不必反复）。
+- **自我库（`self_facts.py` + reflection）**：`subject="neno"` 的自我事实。两条结晶路——**归纳**：
+  `_crystallize_self_facts` 把当天反复活动结晶成偏好「X 像是你常做喜欢的事」；**直接**：上面的学习。
+  二者都**写一次去重**（按 `activity:{key}`/`learn:{topic}` 带引号标签 LIKE 定位）、复现强化 salience。
+  **防伪写入路径**：只有 reflection 从落账经历能写 `subject="neno"`，聊天写不进；`MemoryRecall.list_self_facts`
+  读回 → `self_context._build_facts(self_facts=)` 当 4 号输入 → 由 `world_loop` 在门控开时拉给组写器。
+- **意图通道（`intent_cursor` + `world_brain` wishes）**：你的话 → 意图候选 → 世界 LLM 临场决定做不做（无常）。
+  **架构铁律**：聊天侧**不写 WorldState**（避免和 `world_loop` 读改写竞争）；`world_loop` 在「真想」分支读
+  `intent_cursor` 之后的新 `kind="message"` 经历当 wishes 喂 `world_brain.decide(wishes=)`，喂过推进 cursor。
+  world_brain 用无常措辞「对方最近说的（也许想让你做点什么，但你可以不）」暴露——做不做是她的，不是命令。
+- **买东西店内门控（`create_object`）**：买（`create_object`）现在要求人在 `shops`（便利店/咖啡馆）里，
+  validator 加 `not_in_shop`（`shops` 为空的老世界不门控，退回任意房间可买）。不再家里凭空造物——
+  去店里买、再 `relocate` 带回家，和移动东西天然组合。`持有`（买进她的 inventory 而非房间）仍未做。
+
 ## 6. 运行开关
 
 所有可能持续写库或调用模型的能力在示例配置中默认关闭。
@@ -155,11 +179,14 @@ flowchart LR
 | 方法 | 路径 | 行为 |
 |---|---|---|
 | `GET` | `/debug/consciousness/living-world` | 读取旧 LifeLoop、经历、反思和长期记忆视图 |
-| `GET` | `/debug/consciousness/world-live` | 只读新世界快照，不启动写者 |
+| `GET` | `/debug/consciousness/world-live` | 只读新世界快照，不启动写者；额外含 `self` 块（`context`=self_context「此刻的你」/`facts`=自我库 `subject="neno"`/`pending_count`=睡着攒的消息数/`events`=魂事件流，最近在前）|
 | `POST` | `/debug/consciousness/world-tick` | 手动执行一次正式 `WorldLoop.tick()` 并写库 |
 
 控制台“生活世界 · 新引擎”面板展示世界时间、房间、物品、精力、情绪、
-钱包、计划、事件和最近行动。`/test` 是重写的“跟随镜头单间”可视化（`worldViewAdapter.js`
+钱包、计划、事件和最近行动，并新增「魂」层：**此刻的你**（self_context，第二人称正文加引号呈现为她的自我独白）、**她活成的自己**（自我库列表）、
+睡着攒消息提示、**魂时刻 feed**（`WorldState.soul_events`：她学了/挪了/买了、或收到你的话——让慢热机制可见，
+由 `world_loop` 在自己写 WorldState 时追加，自我事实结晶在读端从记忆派生不进此缓冲）。
+前端见 `layout.js` world-story 区 + `consciousness.js` `renderWorldSelf`。`/test` 是重写的“跟随镜头单间”可视化（`worldViewAdapter.js`
 + `world-view.css`），写实房间底图 + 风格化角色精灵，随时段调光；`last_tick.wake=true`
 那一拍她头顶冒 💭，标示这是真实 LLM 思考而非滑行 mock。
 
@@ -180,15 +207,18 @@ Living World 直接使用：
 
 这些是代码现实，不得在文档或交付中隐藏：
 
-1. 世界规模仍是四房间公寓，实体规则与长期事务深度有限。
+1. 世界已扩到九房间（含出门外部场所），但实体规则与长期事务深度仍有限——深度靠历史/关系/涌现，不靠堆物品。
 2. 确定性 fallback 仍是固定路线；真实 LLM 能增加选择，但不会自动补齐世界规则。
 3. `LifeEventSource` 当前按每 tick 概率触发，尚未实现严格的“每日事件上限”。
 4. `scripts/world_live_server.py` 仍保留独立 tick 逻辑，没有完全复用正式 `WorldLoop`，存在行为分叉风险。
 5. 旧 `LifeLoop/LifeSimulation` 与新 `WorldLoop` 并存，状态所有权还需进一步收敛。
 6. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
-7. 用户消息已作为 `inner_experience(kind=message)` 进入世界并汇入反思/记忆，回复/不回复/延迟在场决策（Phase 5）已落地；
-   但消息作为**驱动世界行动的「意图通道」**仍待实现（见 dao1 方案 §6）。
-8. 已知偶发失败：`test_life_loop` / `test_reflection_engine` 中少量旧断言在 UTC+8 凌晨时段因 wallclock 跨天而 flaky（属早期 LifeLoop 遗留，非 WorldLoop 问题）。
+7. 用户消息进世界、在场决策（Phase 5）、**意图通道（驱动世界行动）均已落地**（见 §5c）。刀①「她自己活成自己」
+   四块（移动/自我库/学习/意图通道）已实现并上线；但全是慢热机制，**真验收（她真不真/假不假）需用户连续跑数日体验**，尚未实跑。
+8. 测试时序 flaky：`test_reflection_engine` 的 c15 已修（加 `_safe_now()` 锚下午 + 显式 target_day，unit 套件稳定全绿）。
+   仍待去抖：① **`test_wx_session_submit_flow.py`** 系统性时序 flaky（真线程+实时聚合窗、负载敏感）——需给
+   `SessionAggregationController` 注入可控时钟，别 piecemeal 调 sleep（放宽默认窗会误伤跨窗测试）；
+   ② **`test_life_loop.py`** 少量断言按时段选活动（旧 LifeLoop 遗留，与 WorldLoop 无关），随墙钟时段偶发挂。
 9. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
 10. 精力已改真实时间积分、作息改精力阈值涌现（解决「总在睡」「夜里掉不动」两个 P0），单元测试已覆盖纯函数与 tick 集成；但**涌现作息曲线与多日牵挂因果仍待真实运行时长时段验收**（需开后端连续观察就寝相位是否锚夜、不漂移）——代码就绪，体感未实测。
 
@@ -199,7 +229,9 @@ Living World 直接使用：
 
 - 世界状态进主聊天**只能走 self_context 受控只读通道**（§5b：`build_self_state_context` 读 `life_world_state.self_context`，
   置于 `messages[last]` 动态区、缓存安全、绝不写回）；**禁止在别处手动偷接世界状态、禁止破坏 `context_builder.py` 装配顺序**（见 NENO.md §4）。
-- 不绕过 `action_validator` 直接应用 LLM 操作。
+- 不绕过 `action_validator` 直接应用 LLM 操作（新 op `relocate`/`learn` 也必须各有一条校验法律）。
+- **自我库写入路径**：`subject="neno"` 的自我事实只能由 reflection 从落账经历结晶，聊天/别处写不进（防伪的命）；self_context 只读、绝不写回。
+- **意图通道**：聊天侧**不写 `WorldState`**（避免与 `world_loop` 读改写竞争）；用户消息→意图候选只由 `world_loop` 读 `kind="message"` 经历完成，做不做交世界 LLM（无常）。
 - 不新增并行发送链路；主动发送仍必须走既有 candidate 管道。
 - 不让演示脚本成为比正式 `WorldLoop` 更权威的实现。
 - 不读取或提交真实 SQLite 数据、`.env`、`.codegraphcontext` 索引。

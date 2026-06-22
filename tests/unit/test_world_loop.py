@@ -174,8 +174,11 @@ async def test_pressure_gate_low_pressure_uses_routine(tmp_path: Path):
     _init_db(tmp_path)
     cfg = ConsciousnessConfig(
         world_llm_enabled=True,
+        world_planner_enabled=False,
         world_pressure_threshold=99999.0,
+        world_wake_min_gap_seconds=60.0,
         world_boredom_drip=1.0,
+        world_salience={},
     )
     store = StateStore(db=None, config=cfg)
     await store.start()

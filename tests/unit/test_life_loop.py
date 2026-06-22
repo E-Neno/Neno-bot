@@ -195,6 +195,7 @@ async def test_life_loop_enabled_records_experience_and_updates_state(tmp_path: 
             "decision_action",
         } <= rows[0]["metadata"].keys()
         assert state.life.current_activity in {
+            "desk_organizing",
             "quiet_observing",
             "thinking_of_user",
             "low_energy_resting",
@@ -482,7 +483,7 @@ async def test_self_state_shift_does_not_force_absorbed(tmp_path: Path):
 
         life = (await store.read()).life
         assert life.mode != "absorbed"
-        assert life.current_activity == "quiet_observing"
+        assert life.current_activity in {"quiet_observing", "desk_organizing"}
     finally:
         await store.stop()
 

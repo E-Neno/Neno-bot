@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import importlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -31,8 +32,19 @@ def test_seed_has_exactly_four_approved_keys():
     assert seed["temperament"] not in system_prompt
 
 
-def test_self_context_config_defaults_and_example_are_disabled():
-    cfg = ConsciousnessConfig()
+def test_self_context_config_defaults_and_example_are_disabled(monkeypatch):
+    for key in [
+        "CONSCIOUSNESS_SELF_CONTEXT_LLM_ENABLED",
+        "CONSCIOUSNESS_SELF_CONTEXT_MIN_INTERVAL",
+        "CONSCIOUSNESS_SELF_CONTEXT_MAX_INTERVAL",
+        "OPENROUTER_SELF_CONTEXT_MODEL",
+        "CONSCIOUSNESS_SELF_CONTEXT_LLM_TIMEOUT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    import app.services.consciousness.config as config_module
+
+    cfg = importlib.reload(config_module).ConsciousnessConfig()
     assert cfg.self_context_llm_enabled is False
     assert cfg.self_context_min_interval == 600
     assert cfg.self_context_max_interval == 10800
@@ -274,6 +286,46 @@ def test_prompt_facts_keep_numbers_but_instruction_forbids_repeating_them():
     assert "气质" not in prompt_facts
     assert "不得回写数字" in module._SYSTEM_PROMPT
     assert "不要复述姓名" in module._SYSTEM_PROMPT
+
+
+def test_self_facts_feed_into_facts_and_count_as_input():
+    # 自我库（阶段3）喂回：subject="neno" 自我事实进编号事实，且算合法输入（守门不误杀）
+    from app.services.consciousness import self_context as module
+
+    ws, nstate = _state(action="画画")
+    facts = ["「画画」像是你常做、喜欢上手的事。"]
+    prompt_facts, guard_facts = module._build_facts(ws, nstate, self_facts=facts)
+    assert "「画画」像是你常做" in prompt_facts
+    assert "「画画」像是你常做" in guard_facts  # 在 guard_facts 里 → 守门把它当输入，不拒
+
+
+def test_self_facts_optional_keeps_old_behaviour():
+    from app.services.consciousness import self_context as module
+
+    ws, nstate = _state(action="画画")
+    a, ga = module._build_facts(ws, nstate)
+    b, gb = module._build_facts(ws, nstate, self_facts=None)
+    assert a == b and ga == gb
+
+
+@pytest.mark.asyncio
+async def test_self_facts_passed_into_compose_prompt():
+    from app.services.consciousness.self_context import maybe_update_self_context
+
+    ws, nstate = _state()
+    cfg = ConsciousnessConfig(self_context_llm_enabled=True)
+    with patch(
+        "app.services.consciousness.self_context.OPENROUTER_API_KEY", "test-key"
+    ), patch(
+        "app.services.consciousness.self_context.chat_with_openrouter",
+        return_value="你在客厅画画，挺投入的。",
+    ) as llm:
+        await maybe_update_self_context(
+            ws, nstate, cfg,
+            self_facts=["「画画」像是你常做、喜欢上手的事。"],
+        )
+    user_msg = llm.call_args.kwargs["messages"][1]["content"]
+    assert "「画画」像是你常做" in user_msg
 
 
 @pytest.mark.asyncio

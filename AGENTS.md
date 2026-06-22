@@ -52,7 +52,7 @@ Skills 位于 `.agents/skills/` 目录，每个 skill 有独立的 `SKILL.md` �
 - **writing-plans**: 当你有规格说明或需求用于多步骤任务时使用，在动手写代码之前
 - **writing-skills**: 当创建新技能、编辑现有技能或在部署前验证技能是否有效时使用
 
-- **codegraph-query**: 轻量级代码图谱查询——通过命令行直接调用 `cgc --db kuzudb --db-path ".codegraphcontext\codegraph.kuzu"` 查找函数、调用关系、类结构，不启动 MCP server（省 228MB 内存）。当需要理解代码结构、追踪调用链、修改前影响分析时使用。
+- **codegraph-query**: 轻量级代码图谱查询——通过命令行直接调用 `cgc --db kuzudb --db-path ".codegraphcontext\codegraph.kuzu"` 查找函数、调用关系、类结构，不启动 MCP server（省 228MB 内存）。当需要理解代码结构、追踪调用链、修改前影响分析时使用；重建索引见 `docs/codegraph-query-rebuild.md`。
 ## 如何使用
 
 当任务匹配某个 skill 时，使用 `Skill` 工具加载对应 skill 并严格遵循其流程。绝不要用 Read 工具读取 SKILL.md 文件。

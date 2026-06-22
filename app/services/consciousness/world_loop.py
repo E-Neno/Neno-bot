@@ -25,11 +25,14 @@ from .state_store import StateStore
 from .world_brain import WorldBrain
 from .self_context import maybe_update_self_context
 from .world_drift import apply_drift
-from .world_localizer import localize_action_record, localize_last_tick
+from .world_localizer import localize_action, localize_action_record, localize_last_tick
 from .world_model import (
     _label_of, apply_op, find_goal_thread, find_thread, is_outside, load_world_def, make_thread,
-    obj_category, objects_in_room, reconcile_owe_reply_thread, WorldOp, WorldState,
+    next_step_toward, obj_category, objects_in_room, push_soul_event, reconcile_owe_reply_thread,
+    WorldOp, WorldState,
 )
+
+_SLEEP_ROOM = "bedroom"  # 床在卧室——困了在哪都先回卧室睡，不就地睡（避免「小区楼下睡着」）
 from .world_pressure import PressureState, accumulate, is_hard, on_wake as pressure_on_wake, should_wake
 from .world_store import WorldStore
 
@@ -259,6 +262,7 @@ class WorldLoop:
             StateMutation(energy=settled, reason="energy wallclock step")
         )
 
+        ws = await self._world_store.read()  # 提前读：入睡判断要看她在哪（不在卧室先回卧室）
         transition = self._day_cycle.check_sleep_wake(nstate)
         sleeping = False
         action = reason = ""
@@ -268,10 +272,22 @@ class WorldLoop:
         event_mood = 0.0
 
         if transition == "fall_asleep":
-            await self._day_cycle.on_sleep(self._state_store)
-            nstate = await self._state_store.read()
-            sleeping = True
-            action, reason = "睡觉", "困了，回房间睡下"
+            if ws.location != _SLEEP_ROOM:
+                # 困了但不在卧室：先往卧室走一步，别就地睡（修「小区楼下睡着」）。下拍还困继续走，到了再睡。
+                _nxt = next_step_toward(wd, ws, ws.location, _SLEEP_ROOM)
+                if _nxt:
+                    ws = apply_op(wd, ws, WorldOp(op="move", to_room=_nxt))
+                    action, reason = "回卧室睡", f"困得不行，往卧室走（到了{ROOM_LABELS.get(_nxt, _nxt)}）"
+                else:
+                    await self._day_cycle.on_sleep(self._state_store)
+                    nstate = await self._state_store.read()
+                    sleeping = True
+                    action, reason = "睡觉", "困了，就地歇下"
+            else:
+                await self._day_cycle.on_sleep(self._state_store)
+                nstate = await self._state_store.read()
+                sleeping = True
+                action, reason = "睡觉", "回到床上睡下了"
         elif transition == "wake_up":
             self._day_no += 1
             real_day = datetime.now(_TZ8).date()
@@ -284,8 +300,6 @@ class WorldLoop:
         elif nstate.energy.status == "sleeping":
             sleeping = True
             action, reason = "睡着", "还在睡"
-
-        ws = await self._world_store.read()
 
         if not sleeping and action == "":
             drifted, drift = apply_drift(wd, ws, elapsed_minutes=step, config=cfg)
@@ -332,10 +346,37 @@ class WorldLoop:
                     if max(t.get("intensity", 0) for t in _active) >= 0.7:
                         event_kinds.append("open_thread")
 
+            # 意图通道：cursor 之后的新用户消息 → 注入 "message"(salience 40) 推她醒来面对你 + 醒了喂给她。
+            # 探测放在唤醒判断之前（修复：以前消息从不进 event_kinds，她不为消息醒，意图通道几乎不触发）。
+            _wishes: list[str] = []
+            _wish_cursor = ws.intent_cursor
+            if cfg.world_llm_enabled:
+                try:
+                    _mrows = await self._recorder.list_recent(limit=200)
+                    _fresh = [
+                        r for r in _mrows
+                        if r.get("kind") == "message"
+                        and str(r.get("created_at") or "") > (ws.intent_cursor or "")
+                    ]
+                    _fresh.sort(key=lambda r: str(r.get("created_at") or ""))
+                    if _fresh:
+                        _wishes = [
+                            str(r.get("content") or "").strip()
+                            for r in _fresh[-3:] if str(r.get("content") or "").strip()
+                        ]
+                        _wish_cursor = str(_fresh[-1].get("created_at") or ws.intent_cursor)
+                        event_kinds.append("message")  # 有人找她 → 该醒来面对
+                except Exception as exc:  # noqa: BLE001 — 取意图失败绝不阻断 tick
+                    _log.warning("intent channel fetch error: %s", exc)
+
             now_real = time.time()
             hard = is_hard(event_kinds, cfg)
             pressure = accumulate(pressure, event_kinds, cfg, now=now_real)
             wake, wake_reason = should_wake(pressure, cfg, now=now_real, hard_event=hard)
+
+            new_intent_cursor = ws.intent_cursor  # 意图通道：默认不动，仅"真想"分支推进
+            soul_evs = list(ws.soul_events or [])  # 魂事件流：跨 tick 累积的环形缓冲
+            _when = now8.strftime("%H:%M")
 
             if wake and cfg.world_llm_enabled:
                 # ── 真想：LLM 路径 ──
@@ -365,14 +406,23 @@ class WorldLoop:
                     _restless.append(f"你在{ROOM_LABELS.get(drifted.location, drifted.location)}已经待了好一会儿了")
                 if ws.last_outing_day != _today and 8 <= now8.hour <= 21:
                     _restless.append("今天还没出过门")
+                # 意图通道（capstone）：用上面唤醒判断前已探到的新用户消息（_wishes）当意图候选。
+                # 她考虑了这一拍就推进 cursor；没醒则 cursor 不动、下拍消息仍在、继续把她往醒里推（无常但不丢）。
+                new_intent_cursor = _wish_cursor
                 plan_obj = await self._brain.decide(
                     drifted, nstate=nstate, phase=phase, plan=plan_dp,
                     memories=memories, recent=recent_ctx, event=event,
                     threads=active_threads, restless="；".join(_restless),
+                    wishes=_wishes,
                 )
                 action, reason, micro, ops = (
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
                 )
+                # 魂事件：收到你的话这一拍，她在做什么（做不做随她——无常，你看相关性自己判）
+                if _wishes:
+                    soul_evs = push_soul_event(
+                        soul_evs, "intent",
+                        f"收到你说的话，她这会儿在「{localize_action(wd, drifted, action)}」", when=_when)
                 pressure = pressure_on_wake(pressure, now=now_real)
             elif cfg.world_llm_enabled:
                 # ── 滑行接续：LLM 开着但这拍没醒 → 继续上一次真想定的事 ──
@@ -390,10 +440,13 @@ class WorldLoop:
 
             sim = drifted
             op_log = []
+            learned_topics: list[str] = []  # 学习：accepted learn op 的主题，落账后结晶
             today_str = now8.date().isoformat()
             for op in ops:
                 acc, rej = validate_ops(wd, sim, [op])
                 if acc:
+                    if op.op == "learn" and (op.topic or "").strip():
+                        learned_topics.append(op.topic.strip())
                     # loss 牵挂诞生：destroy_object 被接受后派生
                     if op.op == "destroy_object":
                         label = _label_of(wd, sim, op.object)
@@ -409,6 +462,19 @@ class WorldLoop:
                                 day=today_str, intensity=0.6, mood="空落落",
                             ))
                         sim.open_threads = threads_mut
+                    # 魂事件：把她这一下做的可见化（学/挪/买）
+                    if op.op == "learn" and (op.topic or "").strip():
+                        soul_evs = push_soul_event(soul_evs, "learn", f"她学起了「{op.topic.strip()}」", when=_when)
+                    elif op.op == "relocate":
+                        soul_evs = push_soul_event(
+                            soul_evs, "relocate",
+                            f"她把{_label_of(wd, sim, op.object)}挪去了{ROOM_LABELS.get(op.to_room, op.to_room)}",
+                            when=_when)
+                    elif op.op == "create_object":
+                        _c = int(op.cost or 0)
+                        soul_evs = push_soul_event(
+                            soul_evs, "buy",
+                            f"她买了{op.label or op.object}" + (f"（-{_c}元）" if _c else ""), when=_when)
                     sim = apply_op(wd, sim, op)
                     op_log.append({"r": "accept", "t": op.object or op.to_room, "s": op.state})
                 else:
@@ -431,6 +497,8 @@ class WorldLoop:
             sim.pressure_last_wake_ts = pressure.last_wake_ts
             sim.pressure_wakes_this_hour = pressure.wakes_this_hour
             sim.pressure_hour_anchor = pressure.hour_anchor
+            sim.intent_cursor = new_intent_cursor  # 意图通道：推进到已看过的最后一条消息
+            sim.soul_events = soul_evs  # 观测性：魂事件流落库
             if sim.daily_plan:
                 for it in sim.daily_plan.get("items", []):
                     if it["phase"] == phase and not it.get("done"):
@@ -456,6 +524,13 @@ class WorldLoop:
                 content=(micro or action), salience=0.45,
                 metadata={"place": sim.location, "time_phase": phase},
             ))
+            # 学习落账：reflection 会把当天 learning 经历结晶成她「在学的事」直接事实
+            for topic in learned_topics:
+                await self._recorder.record(InnerExperienceIn(
+                    trace_id="life_world", source="life_simulation", kind="learning",
+                    content=topic, salience=0.6,
+                    metadata={"place": sim.location, "time_phase": phase, "learn_topic": topic},
+                ))
             if action != self._prev_action and action not in {"去厨房", "去客厅", "去阳台", "回卧室"}:
                 try:
                     await self._episode_store.start_episode(
@@ -499,8 +574,13 @@ class WorldLoop:
 
         ws.sim_minutes = sim_minutes  # 写回真实时间，不再累加
         try:
+            # 自我库（阶段3）喂回：只在开关开时拉，省得关着也每拍查库
+            self_facts = (
+                await self._recall.list_self_facts(limit=5)
+                if cfg.self_context_llm_enabled else []
+            )
             await maybe_update_self_context(
-                ws, nstate, cfg, trace_id="life_world"
+                ws, nstate, cfg, trace_id="life_world", self_facts=self_facts
             )
         except Exception as exc:  # noqa: BLE001
             log_event(

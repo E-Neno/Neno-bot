@@ -49,6 +49,16 @@ def test_apply_move_changes_location():
     assert out.location == "balcony"
 
 
+def test_apply_learn_is_world_noop():
+    # 学习是心智动作，不改物理世界（落账走 world_loop 记 learning experience）
+    wd = load_world_def()
+    st = seed_world_state(wd)
+    out = apply_op(wd, st, WorldOp(op="learn", topic="弹吉他"))
+    assert out.location == st.location
+    assert out.object_states == st.object_states
+    assert out.money == st.money
+
+
 # ── 刀③ 可达性 / 在外面 ──────────────────────────────────────────────────────
 
 def test_home_rooms_fully_interconnected():
@@ -99,3 +109,63 @@ def test_is_outside_flags_external_places():
     assert is_outside(wd, "building_entrance") is True
     assert is_outside(wd, "bedroom") is False
     assert is_outside(wd, "entryway") is False  # 玄关是门槛，不算在外面
+
+
+def test_push_soul_event_appends_and_caps():
+    from app.services.consciousness.world_model import push_soul_event
+    events = []
+    for i in range(20):
+        events = push_soul_event(events, "learn", f"她学了主题{i}", when="14:00", cap=15)
+    assert len(events) == 15                       # 环形缓冲只留最近 15
+    assert events[-1] == {"kind": "learn", "text": "她学了主题19", "when": "14:00"}
+    assert events[0]["text"] == "她学了主题5"
+
+
+def test_push_soul_event_dedups_consecutive():
+    from app.services.consciousness.world_model import push_soul_event
+    events = push_soul_event([], "relocate", "她把杯子挪去客厅", when="14:00")
+    events = push_soul_event(events, "relocate", "她把杯子挪去客厅", when="14:05")  # 连续重复
+    assert len(events) == 1
+    # 中间插了别的 → 再来同一条算新事件
+    events = push_soul_event(events, "learn", "她学了画画", when="14:06")
+    events = push_soul_event(events, "relocate", "她把杯子挪去客厅", when="14:07")
+    assert len(events) == 3
+
+
+def test_push_soul_event_ignores_empty():
+    from app.services.consciousness.world_model import push_soul_event
+    assert push_soul_event([], "buy", "   ", when="14:00") == []
+
+
+def test_old_state_has_empty_soul_events():
+    from app.services.consciousness.world_model import WorldState
+    st = WorldState.model_validate({"location": "bedroom", "object_states": {}})
+    assert st.soul_events == []
+
+
+def test_is_shop_flags_only_stores():
+    from app.services.consciousness.world_model import is_shop
+    wd = load_world_def()
+    assert is_shop(wd, "convenience_store") is True
+    assert is_shop(wd, "cafe") is True
+    assert is_shop(wd, "park") is False           # 公园不是店
+    assert is_shop(wd, "building_entrance") is False
+    assert is_shop(wd, "kitchen") is False         # 家里不是店
+    # shops 为空 → 恒 False（旧世界退回任意房间可买）
+    wd.shops = []
+    assert is_shop(wd, "convenience_store") is False
+
+
+def test_next_step_toward_walks_home_from_outside():
+    from app.services.consciousness.world_model import next_step_toward
+    wd = load_world_def()
+    st = seed_world_state(wd)
+    # 在小区楼下 → 朝卧室：第一步必须先回玄关（出门要过门，不能瞬移回床）
+    assert next_step_toward(wd, st, "building_entrance", "bedroom") == "entryway"
+    # 玄关 → 卧室：下一步进家内
+    nxt = next_step_toward(wd, st, "entryway", "bedroom")
+    assert nxt in reachable_rooms(wd, st, "entryway")
+    # 家内房间一步可达卧室
+    assert next_step_toward(wd, st, "kitchen", "bedroom") == "bedroom"
+    # 已在卧室 → None
+    assert next_step_toward(wd, st, "bedroom", "bedroom") is None

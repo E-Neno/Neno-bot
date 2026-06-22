@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from app.services.chat.selection_layer import fallback_decision
+
 
 def test_awake_chat_no_longer_consumes_defer_marker():
     from app.services.chat.turn_orchestrator import run_chat_turn
@@ -43,6 +45,9 @@ def test_awake_chat_no_longer_consumes_defer_marker():
     ), patch(
         "app.services.chat.turn_orchestrator.generate_chat_reply",
         return_value=DEFER_MARKER,
+    ), patch(
+        "app.services.chat.turn_orchestrator.select_response_sync",
+        side_effect=lambda messages, *args, **kwargs: fallback_decision(messages),
     ), patch(
         "app.services.chat.turn_orchestrator.stash_pending_message"
     ) as stash, patch(

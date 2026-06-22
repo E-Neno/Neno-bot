@@ -886,9 +886,12 @@ function layoutWorldStage(state, animate) {
   });
   strip.style.width = `${_worldRoomWidth * ROOM_ORDER.length}px`;
 
-  const worldX = state.room * _worldRoomWidth + state.x * _worldRoomWidth;
+  const rawWorldX = state.room * _worldRoomWidth + state.x * _worldRoomWidth;
+  const worldWidth = _worldRoomWidth * ROOM_ORDER.length;
+  const avatarPadding = Math.max(42, (neno.offsetWidth || 72) * 0.58);
+  const worldX = Math.max(avatarPadding, Math.min(rawWorldX, worldWidth - avatarPadding));
   neno.className = "world-neno";
-  if (_lastWorldX != null && worldX < _lastWorldX) neno.classList.add("face-left");
+  if (_lastWorldX != null && rawWorldX < _lastWorldX) neno.classList.add("face-left");
   if (animate && state.walk) {
     neno.classList.add("walking");
     window.setTimeout(() => neno.classList.remove("walking"), 1750);
@@ -899,7 +902,6 @@ function layoutWorldStage(state, animate) {
   neno.style.left = `${worldX}px`;
   neno.style.bottom = characterBottom(state);
 
-  const worldWidth = _worldRoomWidth * ROOM_ORDER.length;
   // 镜头中心：手动 focus 时摇到目标房间，否则跟着她
   const camX = focusRoomIndex(state) * _worldRoomWidth + 0.5 * _worldRoomWidth;
   const camera = Math.max(
@@ -907,7 +909,7 @@ function layoutWorldStage(state, animate) {
     Math.min(0, -(camX - viewport.clientWidth / 2))
   );
   strip.style.transform = `translateX(${camera}px)`;
-  _lastWorldX = worldX;
+  _lastWorldX = rawWorldX;
 
   // minimap 高亮：手动 focus 时标在镜头所在房间，否则标她所在
   const mapKey = _worldFocus ? ROOM_ORDER[focusRoomIndex(state)] : state.roomKey;
@@ -970,6 +972,69 @@ export function renderWorldLive(data) {
   renderWorldObjects(state);
   renderWorldPlan(state.plan);
   renderWorldTimeline(state);
+  renderWorldSelf(data.self);
+}
+
+// 「魂」层：此刻的你（self_context）/ 她活成的自己（自我库 subject="neno"）/ 攒着你的消息。
+// world-tick 不带 self 块时跳过，5 秒刷新会补上。
+function renderWorldSelf(self) {
+  if (!self) return;
+  const ctx = (self.context || "").trim();
+  // self_context 正文是第二人称「你…」（她写给自己读的内心话）。控制台是观察者视角，
+  // 加引号呈现成「她的自我独白」，免得「你…」读起来像在对看面板的人说话。
+  setWorldText(
+    "worldSelfContext",
+    ctx ? `「${ctx}」` : "还没生成（self_context 开关关着，或刚启动）。"
+  );
+  const pend = Number(self.pending_count) || 0;
+  setWorldText("worldSelfPending", pend > 0 ? `💤 睡着时攒着你 ${pend} 条消息，醒了会面对` : "");
+
+  const list = document.getElementById("worldSelfFacts");
+  if (list) {
+    const facts = Array.isArray(self.facts) ? self.facts.filter(Boolean) : [];
+    list.innerHTML = "";
+    if (facts.length === 0) {
+      const li = document.createElement("li");
+      li.className = "world-self-empty";
+      li.textContent = "还没沉淀出自我事实（要她真反复做点什么 + 反思跑过）。";
+      list.appendChild(li);
+    } else {
+      for (const f of facts) {
+        const li = document.createElement("li");
+        li.textContent = String(f);  // 自我事实是 LLM 文本，用 textContent 防注入
+        list.appendChild(li);
+      }
+    }
+  }
+
+  // 魂时刻 feed：学/挪/买/收到你的话——让慢热机制可见
+  const SOUL_ICON = { intent: "💌", learn: "📖", relocate: "📦", buy: "🛍️" };
+  const feed = document.getElementById("worldSoulFeed");
+  if (feed) {
+    const evs = Array.isArray(self.events) ? self.events : [];
+    feed.innerHTML = "";
+    if (evs.length === 0) {
+      const li = document.createElement("li");
+      li.className = "world-soul-empty";
+      li.textContent = "还没有可见的魂事件（她学了/挪了/买了、或收到你的话时，会出现在这里）。";
+      feed.appendChild(li);
+    } else {
+      for (const e of evs) {
+        const li = document.createElement("li");
+        li.className = `world-soul-item soul-${e.kind || ""}`;
+        const icon = document.createElement("span");
+        icon.className = "world-soul-icon";
+        icon.textContent = SOUL_ICON[e.kind] || "·";
+        const body = document.createElement("span");
+        body.className = "world-soul-text";
+        body.textContent = String(e.text || "");  // textContent 防注入
+        const when = document.createElement("time");
+        when.textContent = String(e.when || "");
+        li.append(icon, body, when);
+        feed.appendChild(li);
+      }
+    }
+  }
 }
 
 // ── 反应式物品层：每个房间按快照里物品的 state 画出/更新物品，状态变了给点手感 ──

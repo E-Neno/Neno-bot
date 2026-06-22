@@ -17,6 +17,23 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="milliseconds")
 
 
+class _RealTimerScheduler:
+    """Production window-seal scheduler: fires the callback on a real daemon
+    ``threading.Timer`` after ``delay`` seconds of wall-clock time.
+
+    The scheduler is pluggable (see ``SessionAggregationController.__init__``)
+    purely so tests can drive the aggregation window deterministically instead
+    of racing a real timer against thread scheduling and ``time.sleep``. The
+    returned handle only needs a ``cancel()`` method.
+    """
+
+    def call_later(self, delay: float, callback: Callable[[], None]) -> threading.Timer:
+        timer = threading.Timer(delay, callback)
+        timer.daemon = True
+        timer.start()
+        return timer
+
+
 class AggregationFuture:
     def __init__(self) -> None:
         self._event = threading.Event()
@@ -85,7 +102,7 @@ class _BatchState:
     opened_at: str
     deadline_at: str
     opened_monotonic: float
-    timer: threading.Timer | None = None
+    timer: Any = None
     sealed_at: str | None = None
     batch_snapshot: dict[str, Any] = field(default_factory=dict)
     sources: dict[int, _SourceItem] = field(default_factory=dict)
@@ -103,8 +120,15 @@ class _SessionAggregationState:
 
 
 class SessionAggregationController:
-    def __init__(self, *, window_seconds: float, recent_limit: int = 100) -> None:
+    def __init__(
+        self,
+        *,
+        window_seconds: float,
+        recent_limit: int = 100,
+        scheduler: Any = None,
+    ) -> None:
         self.window_seconds = max(0.01, float(window_seconds))
+        self._scheduler = scheduler if scheduler is not None else _RealTimerScheduler()
         self._lock = threading.RLock()
         self._sessions: dict[str, _SessionAggregationState] = {}
         self._recent_limit = max(20, recent_limit)
@@ -212,16 +236,16 @@ class SessionAggregationController:
                 "updated_at": now,
             },
         )
-        timer = threading.Timer(
-            self.window_seconds,
-            self.seal_batch,
-            kwargs={"session_id": session_id, "batch_id": batch_id, "reason": "window_elapsed"},
-        )
-        timer.daemon = True
-        batch.timer = timer
         state.batches[batch_id] = batch
         state.open_batch_id = batch_id
-        timer.start()
+        batch.timer = self._scheduler.call_later(
+            self.window_seconds,
+            lambda: self.seal_batch(
+                session_id=session_id,
+                batch_id=batch_id,
+                reason="window_elapsed",
+            ),
+        )
         return batch
 
     def allocate_ticket(self, *, session_id: str, trace_id: str | None = None) -> AggregationTicket:

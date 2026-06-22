@@ -277,3 +277,216 @@ def test_world_view_external_scene_assets_exist():
         assert path.is_file() and path.stat().st_size > 0, f"缺场景资产 {filename}"
         assert filename in css, f"CSS 未引用 {filename}"
         assert f'data-world-room="{room}"' in layout, f"场景条缺 {room}"
+
+
+def test_console_redesign_has_observatory_design_tokens():
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "--obs-bg",
+        "--obs-panel",
+        "--obs-accent",
+        "--obs-rose",
+        "--obs-text",
+    ):
+        assert token in css
+
+    assert ".observatory-shell" in css
+    assert ".control-density-panel" in css
+    assert ".world-stage-card::before" in css
+    assert ".world-workspace::before" in css
+
+
+def test_console_layout_marks_observatory_and_control_surfaces():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+
+    assert 'world-console-shell observatory-shell' in layout
+    assert 'control-workspace workspace-hidden control-framer-shell' in layout
+    assert '<strong>Neno</strong>' in layout
+    assert "Neno Living World" not in layout
+    assert "持续生活观测台" not in layout
+    assert 'world-panel-label">LIVING WORLD' in layout
+    assert 'console-density-card' in layout
+
+
+def test_control_center_uses_framer_product_sidebar_layout():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "control-framer-shell",
+        "control-product-sidebar",
+        "control-runtime-identity",
+        "control-panel-stage",
+        "createFramerControlFrame",
+    ):
+        assert token in layout
+
+    for selector in (
+        ".control-framer-shell",
+        ".control-product-sidebar",
+        ".control-runtime-identity",
+        ".control-panel-stage",
+        ".control-panel-stage .console-panel.active",
+    ):
+        assert selector in css
+
+    for token in (
+        "--framer-page:#050609",
+        "--framer-sidebar:#08090d",
+        "--framer-panel:#0c1018",
+        "--framer-glow:#87bfff",
+    ):
+        assert token in css
+
+    assert "--framer-paper:#fbfbfa" not in css
+    assert "--framer-page:#f6f6f3" not in css
+    for removed in (
+        "Default Workspace",
+        "Open current panel",
+        "control-workspace-select",
+        "control-hero-widget",
+        "control-glow-orbit",
+    ):
+        assert removed not in layout
+        assert removed not in css
+    assert "control-os-dock" not in layout
+    assert "control-command-center" not in layout
+
+
+def test_control_center_uses_studio_shell_not_dashboard_shell():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "control-studio-shell",
+        "control-stage-header",
+        "control-stage-title",
+        "control-stage-subtitle",
+        "control-stage-status",
+        "control-sidebar-footer",
+    ):
+        assert token in layout
+
+    for selector in (
+        ".control-studio-shell",
+        ".control-studio-shell .control-stage-header",
+        ".control-studio-shell .runtime-workbench",
+        ".control-studio-shell .control-surface",
+        ".control-studio-shell .control-binding-surface",
+        ".control-studio-shell .control-chat-console",
+    ):
+        assert selector in css
+
+    for removed in (
+        "control-command-bar",
+        "control-utility-rail",
+        "control-rail-card",
+    ):
+        assert removed not in layout
+        assert removed not in css
+
+
+def test_control_center_keeps_all_debug_nodes_visible_for_redesign():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "sessionCard",
+        "configCard",
+        "statsCard",
+        "proactiveCard",
+        "relationshipCard",
+        "usedMemoryCard",
+        "chatPreviewCard",
+        "messageDebugCard",
+        "sessionDebugCard",
+        "candidateCard",
+        "memoryCard",
+        "routingCard",
+        "debugGrid",
+        "chatGrid",
+    ):
+        assert token in layout
+
+    for visible_grouping in (
+        "appendSurface(overviewRuntime.primary, statsCard",
+        "overviewRuntime.evidence.appendChild(bridgeCard)",
+        "overviewRuntime.raw.appendChild(quickCard)",
+        "chatRuntime.primary.appendChild(chat)",
+        "debugRuntime.raw.appendChild(debugEventsCard)",
+        "appendSurface(memoryRuntime.primary, memoryCard",
+        "appendSurface(configRuntime.primary, configCard",
+    ):
+        assert visible_grouping in layout
+
+    assert "control-node-vault" not in layout
+    assert ".control-node-vault" not in css
+
+
+def test_control_center_rewrites_content_as_runtime_workbench():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "createRuntimeWorkbench",
+        "runtime-workbench",
+        "runtime-primary",
+        "runtime-evidence",
+        "runtime-raw",
+        "runtime-module-chip",
+        "runtime-strip",
+    ):
+        assert token in layout
+
+    for selector in (
+        ".runtime-workbench",
+        ".runtime-primary",
+        ".runtime-evidence",
+        ".runtime-raw",
+        ".runtime-panel .panel-header",
+        ".runtime-strip",
+    ):
+        assert selector in css
+
+    assert "chat-workbench" in layout
+    assert "debug-workbench" in layout
+
+
+def test_control_center_rewrites_legacy_cards_into_control_surfaces():
+    layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    for token in (
+        "adoptControlSurface",
+        "appendSurface",
+        "normalizeControlSurfaces",
+        "control-binding-surface",
+        "control-surface",
+        "control-chat-console",
+    ):
+        assert token in layout
+
+    for token in (
+        "appendSurface(overviewRuntime.primary, statsCard",
+        "appendSurface(chatSide, sessionCard",
+        "appendSurface(chatRaw, relationshipCard",
+        "appendSurface(memoryRuntime.primary, memoryCard",
+        "appendSurface(configRuntime.primary, configCard",
+    ):
+        assert token in layout
+
+    for selector in (
+        ".control-surface",
+        ".control-binding-surface",
+        ".control-surface h3",
+        ".control-chat-console",
+    ):
+        assert selector in css
+
+    for forbidden in (
+        ".runtime-workbench .card",
+        ".control-framer-shell .card",
+        ".control-panel-stage #chatPanel .chat-side-column .card",
+    ):
+        assert forbidden not in css

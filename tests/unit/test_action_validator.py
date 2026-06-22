@@ -84,14 +84,33 @@ def test_rejects_teleport_to_unreachable_outside():
 
 def test_create_object_accepts_legal():
     wd, st = _setup()
+    st.location = "convenience_store"  # 买东西要在店里
     op = WorldOp(op="create_object", object="tulips", category="plant",
                  room="balcony", label="郁金香", cost=20)
     accepted, rejected = validate_ops(wd, st, [op])
     assert accepted == [op] and rejected == []
 
 
+def test_create_object_rejected_outside_shop():
+    wd, st = _setup()  # 在厨房，不是店
+    op = WorldOp(op="create_object", object="tulips", category="plant",
+                 room="balcony", label="郁金香", cost=20)
+    _, rejected = validate_ops(wd, st, [op])
+    assert "not_in_shop" in rejected[0][1]
+
+
+def test_create_object_accepts_in_cafe():
+    wd, st = _setup()
+    st.location = "cafe"
+    op = WorldOp(op="create_object", object="latte", category="drinkware",
+                 room="cafe", label="拿铁", cost=18)
+    accepted, rejected = validate_ops(wd, st, [op])
+    assert accepted == [op] and rejected == []
+
+
 def test_create_rejects_unknown_category():
     wd, st = _setup()
+    st.location = "convenience_store"
     op = WorldOp(op="create_object", object="ufo", category="spaceship",
                  room="balcony", cost=1)
     _, rejected = validate_ops(wd, st, [op])
@@ -100,6 +119,7 @@ def test_create_rejects_unknown_category():
 
 def test_create_rejects_existing_object():
     wd, st = _setup()
+    st.location = "convenience_store"
     op = WorldOp(op="create_object", object="kettle", category="appliance",
                  room="kitchen", cost=1)
     _, rejected = validate_ops(wd, st, [op])
@@ -108,6 +128,7 @@ def test_create_rejects_existing_object():
 
 def test_create_rejects_insufficient_funds():
     wd, st = _setup()
+    st.location = "convenience_store"
     st.money = 5
     op = WorldOp(op="create_object", object="tulips", category="plant",
                  room="balcony", cost=50)
@@ -117,6 +138,7 @@ def test_create_rejects_insufficient_funds():
 
 def test_create_rejects_unknown_room():
     wd, st = _setup()
+    st.location = "convenience_store"
     op = WorldOp(op="create_object", object="tulips", category="plant",
                  room="dungeon", cost=10)
     _, rejected = validate_ops(wd, st, [op])
@@ -135,3 +157,19 @@ def test_destroy_accepts_existing():
     op = WorldOp(op="destroy_object", object="mug")
     accepted, rejected = validate_ops(wd, st, [op])
     assert accepted == [op] and rejected == []
+
+
+# ── 学习（刀①收尾）──────────────────────────────────────────────────────────
+
+def test_learn_accepts_with_topic():
+    wd, st = _setup()
+    op = WorldOp(op="learn", topic="弹吉他")
+    accepted, rejected = validate_ops(wd, st, [op])
+    assert accepted == [op] and rejected == []
+
+
+def test_learn_rejects_empty_topic():
+    wd, st = _setup()
+    op = WorldOp(op="learn", topic="   ")
+    _, rejected = validate_ops(wd, st, [op])
+    assert "empty_topic" in rejected[0][1]

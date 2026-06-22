@@ -1,10 +1,16 @@
 import time
 from copy import deepcopy
 
-from app.config import CHAT_MODEL_NAME, WORLD_PRESENCE_GATE_ENABLED
+from app.config import (
+    CHAT_MODEL_NAME, MIMO_API_KEY, MIMO_BASE_URL, MIMO_MODEL,
+    SELECTION_LAYER_ENABLED, SELECTION_THINKING_OFF, SELECTION_TIMEOUT,
+    WORLD_PRESENCE_GATE_ENABLED,
+)
 from app.services.chat.context_builder import build_chat_messages, load_chat_contexts
 from app.services.chat.llm_gateway import generate_chat_reply
 from app.services.chat.memory_candidate_service import process_memory_candidate
+from app.services.chat.selection_layer import build_selection_guidance, select_response_sync
+from app.services.consciousness.memory_recall import list_self_facts_sync
 from app.services.chat.preview_service import build_chat_messages_preview_from_contexts
 from app.services.consciousness.presence import (
     is_physically_asleep,
@@ -18,6 +24,22 @@ from app.services.relationship_service import (
 )
 from app.storage.db import add_message
 from app.utils.logging_utils import log_event, new_trace_id
+
+
+def _inject_selection_guidance(messages: list[dict], guidance: str) -> None:
+    """把取舍指导插进回复 prompt 动态区（messages[last]，历史缓存断点之后 → 缓存安全）。
+
+    插在最后一块「【对方刚说】」**之前**，保住它永远是最后一块（wx 测试切分依赖它）。
+    """
+    if not messages or not guidance:
+        return
+    last = messages[-1]
+    block = {"type": "text", "text": guidance}
+    content = last.get("content")
+    if isinstance(content, list) and content:
+        content.insert(len(content) - 1, block)  # 插到【对方刚说】之前
+    elif isinstance(content, str):
+        last["content"] = [block, {"type": "text", "text": content}]
 
 
 def run_chat_turn(
@@ -173,6 +195,75 @@ def run_chat_turn(
         msg_experience_id = record_incoming_message_experience(
             message, user_message_ids, trace_id=trace_id
         )
+
+        # ── 统一判断层：醒着时所有消息（单条/一波）都走这一个判断，把她此刻全部状态喂进去 ──
+        # 「回不回（含忙/累/不想回）+ 取舍」由这一个 LLM 判断综合涌现，不再分割成多套门（互补）。
+        # 物理睡眠门在上面（真没意识，零 LLM，是硬底不是分割）。崩/关 → fallback 全回，绝不阻断。
+        decision = None
+        if SELECTION_LAYER_ENABLED and user_message_ids and MIMO_API_KEY:
+            batch = [
+                {"id": uid, "content": str(rec.get("content") or "")}
+                for uid, rec in zip(user_message_ids, user_records)
+            ]
+            sel_state = {
+                "state": contexts.get("self_state_context") or "",  # 此刻的你：在哪/在干嘛/累/心情/牵挂
+                "self": "；".join(list_self_facts_sync(limit=6)),    # 她活成的自己（自我库）→ 判「戳到她」
+                "relationship": relationship_context or "",
+                "memory": "；".join(
+                    str(m.get("content") or "") for m in used_memories if isinstance(m, dict)
+                )[:300],
+            }
+            decision = select_response_sync(
+                batch, sel_state,
+                model_name=MIMO_MODEL, api_key=MIMO_API_KEY,
+                url=MIMO_BASE_URL.rstrip("/") + "/chat/completions",
+                timeout=SELECTION_TIMEOUT, extra_body=SELECTION_THINKING_OFF,
+                trace_id=trace_id,
+            )
+            if not decision.should_respond:
+                # 甲：她这会儿选择不回。消息已在历史里；攒进 pending → 世界「欠回复」牵挂让她之后想起。
+                stash_pending_message(
+                    {
+                        "session_id": session_id, "message": message,
+                        "user_message_ids": user_message_ids, "trace_id": trace_id,
+                        "experience_id": msg_experience_id,
+                        "source": str((input_record or {}).get("source") or "chat"),
+                        "platform": str((input_record or {}).get("platform") or ""),
+                        "chat_type": str((input_record or {}).get("chat_type") or ""),
+                        "user_id": str((input_record or {}).get("user_id") or ""),
+                    },
+                    cooldown=180.0,  # 选择不回 → 隔一会儿再重新考虑（不是没看见，是这会儿不想）
+                    trace_id=trace_id,
+                )
+                log_event("chat", "selection_chose_silence", trace_id=trace_id,
+                          session_id=session_id, msg_count=len(user_message_ids))
+                try:
+                    relationship_state = apply_relationship_update(session_id, message)
+                except Exception:  # noqa: BLE001
+                    relationship_state = None
+                return {
+                    "trace_id": trace_id,
+                    "user_message_id": user_message_ids[0] if user_message_ids else None,
+                    "user_message_ids": user_message_ids,
+                    "assistant_message_id": None,
+                    "message_type": str((input_record or {}).get("message_type") or "text"),
+                    "source": str((input_record or {}).get("source") or "chat"),
+                    "reply": "",
+                    "world_action": "chose_silence",
+                    "world_reason": "selection_layer",
+                    "candidate_memory": memory_result["candidate_memory"],
+                    "candidate_memory_debug": memory_result.get("candidate_memory_debug"),
+                    "candidate_memory_decision": memory_result["candidate_memory_decision"],
+                    "auto_added": memory_result["auto_added_memory"],
+                    "auto_added_memory": memory_result["auto_added_memory"],
+                    "used_memories": used_memories,
+                    "relationship_state": relationship_state,
+                    "relationship_context": relationship_context,
+                }
+            # 要回 + 是一波（≥2 条）→ 把取舍指导塞进回复 prompt 动态区（缓存安全）。
+            # 单条没东西可取舍，回就直接回（判断已在上面做过，这里只管多条的取舍呈现）。
+            if len(user_message_ids) >= 2:
+                _inject_selection_guidance(messages, build_selection_guidance(decision, batch))
 
         model_started = time.perf_counter()
         log_event(
