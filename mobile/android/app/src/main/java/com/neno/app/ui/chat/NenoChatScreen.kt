@@ -1,7 +1,6 @@
 package com.neno.app.ui.chat
 
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -386,11 +385,18 @@ private fun MessageLazyList(
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    var didInitialScroll by remember { mutableStateOf(false) }
     // 新消息或正在等回复时，把列表滚到最底，确保刚发的话和回复都在可视区。
+    // 首次进入直接瞬跳（避免和淡入 Crossfade 叠加成卡顿）；之后的新消息才平滑滚动。
     LaunchedEffect(displayMessages.size, isSending) {
         val lastIndex = displayMessages.size - 1 + if (isSending) 1 else 0
         if (lastIndex >= 0) {
-            listState.animateScrollToItem(lastIndex)
+            if (didInitialScroll) {
+                listState.animateScrollToItem(lastIndex)
+            } else {
+                listState.scrollToItem(lastIndex)
+                didInitialScroll = true
+            }
         }
     }
 
@@ -502,8 +508,7 @@ private fun MessageBubble(message: ChatBubbleModel) {
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 210.dp)
-                .animateContentSize(animationSpec = tween(durationMillis = 160)),
+                .widthIn(max = 210.dp),
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(10.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
