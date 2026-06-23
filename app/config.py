@@ -67,6 +67,8 @@ HISTORY_TOKEN_LIMIT = int(os.getenv("HISTORY_TOKEN_LIMIT", "500"))
 MEMORY_LIMIT = int(os.getenv("MEMORY_LIMIT", "3"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 PLATFORM_TOKEN = os.getenv("PLATFORM_TOKEN", "").strip()
+MOBILE_TOKEN = os.getenv("MOBILE_TOKEN", "").strip()
+MOBILE_DEFAULT_SESSION_ID = os.getenv("MOBILE_DEFAULT_SESSION_ID", "mobile:neno").strip() or "mobile:neno"
 SYSTEM_PROMPT = load_text("prompts/system.txt")
 try:
     NENO_SEED = _json.loads(load_text("prompts/seed.json"))

@@ -1,6 +1,6 @@
 from fastapi import Header, HTTPException, Request
 
-from app.config import ADMIN_TOKEN, PLATFORM_TOKEN
+from app.config import ADMIN_TOKEN, MOBILE_TOKEN, PLATFORM_TOKEN
 
 LOOPBACK_CLIENTS = {"127.0.0.1", "::1", "localhost"}
 
@@ -28,3 +28,14 @@ def require_platform_token(
         raise HTTPException(status_code=403, detail="PLATFORM_TOKEN not configured")
     if x_platform_token != PLATFORM_TOKEN:
         raise HTTPException(status_code=403, detail="invalid platform token")
+
+
+def require_mobile_token(authorization: str | None = Header(default=None)):
+    if not MOBILE_TOKEN:
+        raise HTTPException(status_code=403, detail="MOBILE_TOKEN not configured")
+    prefix = "Bearer "
+    if not authorization or not authorization.startswith(prefix):
+        raise HTTPException(status_code=403, detail="missing mobile token")
+    token = authorization[len(prefix):].strip()
+    if token != MOBILE_TOKEN:
+        raise HTTPException(status_code=403, detail="invalid mobile token")
