@@ -40,11 +40,13 @@ Backend mobile API files:
 Mobile API contract:
 
 - `GET /mobile/status`
+- `WS /mobile/ws`
 - `GET /mobile/conversations`
 - `GET /mobile/conversations/neno/messages?limit=50`
 - `POST /mobile/conversations/neno/messages`
 - Authentication uses `Authorization: Bearer <MOBILE_TOKEN>`.
 - Default mobile session is controlled by `MOBILE_DEFAULT_SESSION_ID`, defaulting to `mobile:neno`.
+- `/mobile/ws` sends `hello`, then `presence`; it responds to text `ping` with `pong` and refreshes presence on idle. It is a lightweight foreground connection, not a replacement for the chat POST route.
 
 Android app files:
 
@@ -57,6 +59,8 @@ Android app files:
 - Settings screen: `mobile/android/app/src/main/java/com/neno/app/ui/settings/SettingsScreen.kt`
 - API layer: `mobile/android/app/src/main/java/com/neno/app/data/NenoApi.kt`
 - Repository: `mobile/android/app/src/main/java/com/neno/app/data/NenoRepository.kt`
+- Connection state: `mobile/android/app/src/main/java/com/neno/app/data/ConnectionState.kt`
+- WebSocket client: `mobile/android/app/src/main/java/com/neno/app/data/MobileRealtimeClient.kt`
 - Shared visuals: `mobile/android/app/src/main/java/com/neno/app/ui/components/NenoVisuals.kt`
 
 Implemented UI details:
@@ -70,6 +74,8 @@ Implemented UI details:
 - On send failure the optimistic bubble is removed, the typed text is restored into the input box, and a Chinese error bar with `点这里重试` resends the draft.
 - If the backend returns no assistant message (presence gate stashed it), the chat shows a soft Chinese hint `她看到了，晚点回你。` instead of a silent gap.
 - The conversation list refreshes the Neno last-message preview on every return because the `when`-based nav in `AppNav.kt` disposes and re-runs `ConversationListScreen`'s `LaunchedEffect`.
+- `NenoRepository.connectionState` is the app-wide connection state. `NenoApp.kt` starts `MobileRealtimeClient` while the app composition is alive and still runs periodic HTTP status refresh as a fallback.
+- Settings is now a connection/status page. It shows `已连接` / `未连接` / `令牌无效`, has a lower top offset for real devices, and hides raw server/token fields behind a long press on the title.
 - Settings stores server URL and mobile token in `SharedPreferences`; do not commit real tokens.
 
 ## Verified State
@@ -77,50 +83,50 @@ Implemented UI details:
 Commands run successfully on 2026-06-23:
 
 ```powershell
-.\mobile\android\gradlew.bat -p .\mobile\android :app:assembleDebug
-.\mobile\android\gradlew.bat -p .\mobile\android :app:testDebugUnitTest
+pytest tests\integration\test_mobile_api.py -q
+python -m compileall -q app tests
 git diff --check
+.\mobile\android\gradlew.bat -p .\mobile\android :app:testDebugUnitTest
+.\mobile\android\gradlew.bat -p .\mobile\android :app:assembleDebug
 ```
 
-`git diff --check` only reported existing LF/CRLF warnings in backend files:
+`git diff --check` only reported LF/CRLF warnings.
 
-- `app/config.py`
-- `app/main.py`
-- `app/routers/__init__.py`
-- `app/security.py`
+Manual WebSocket verification:
+
+```text
+recv1={"type":"hello","api":"mobile-v0"}
+recv2={"type":"presence","conversation_id":"neno","presence":"睡着了"}
+recv3={"type":"pong"}
+```
 
 Real-device validation:
 
 - Wireless ADB device used: `192.168.1.5:44043`
-- APK install succeeded with:
+- APK install, start, and settings screenshot succeeded with:
 
 ```powershell
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb -s 192.168.1.5:44043 install -r -t .\mobile\android\app\build\outputs\apk\debug\app-debug.apk
+& $adb -s 192.168.1.5:44043 install -r .\mobile\android\app\build\outputs\apk\debug\app-debug.apk
 & $adb -s 192.168.1.5:44043 shell am start -n com.neno.app/.MainActivity
 ```
 
-Screenshots captured during validation:
+Runtime evidence:
 
-- `tmp/screens/neno-brand-light-home.png`: accepted light brand row after removing the black banner.
-- `tmp/screens/neno-brand-home.png`: rejected black banner reference; do not use as target.
-- `tmp/screens/neno-small-chat.png`: compact chat screen from the previous UI pass.
+- backend log showed `192.168.1.5 ... "WebSocket /mobile/ws" [accepted]`
+- final settings screenshot showed the page lower than the status bar and connection state `已连接`
 
 ## Next Best Task
 
-The smallest real chat loop is now implemented in code (see Current Implementation). It builds and passes
-`:app:assembleDebug` and `:app:testDebugUnitTest`; the backend `/mobile/*` contract and prompt cache tests pass.
+The backend `/mobile/*` HTTP contract, `/mobile/ws` presence channel, Android connection state, and settings visual offset are implemented and validated on a real device.
 
-What is NOT yet done is live end-to-end validation against a running backend on a real device. That is the next task:
+The next useful task is a real chat-message interaction pass:
 
-1. Start the backend with mobile token and nonessential loops disabled.
-2. Configure the Android settings screen with the backend base URL (LAN IP for a real phone) and the mobile token.
-3. Open Neno chat.
-4. Send one Chinese message and confirm: pending bubble → typing dots → assistant reply, auto-scrolled into view.
-5. Kill the backend mid-send and confirm the Chinese error bar appears and the typed text is restored.
-6. Return to the conversation list and confirm the Neno last-message preview updated.
-
-Only after a person sees this work on a device should the loop be called validated.
+1. Open Neno chat on the device.
+2. Send one Chinese message.
+3. Confirm pending bubble -> typing dots -> assistant reply, auto-scrolled into view.
+4. Kill the backend mid-send and confirm the Chinese error bar appears and the typed text is restored.
+5. Return to the conversation list and confirm the Neno last-message preview updated.
 
 Suggested backend command for local validation:
 
@@ -131,10 +137,11 @@ $env:PROACTIVE_ENABLED="false"
 $env:PROACTIVE_AUTO_SEND="false"
 $env:BRAIN_INTENT_CONSUMER_ENABLED="false"
 $env:CONSCIOUSNESS_WORLD_LOOP_ENABLED="false"
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 Use the computer LAN IP in the app settings when testing on a physical phone. Use `http://10.0.2.2:8000` only for an Android emulator.
+The active Python environment must include a WebSocket implementation for uvicorn. `requirements.txt` uses `uvicorn[standard]`; if `/mobile/ws` returns HTTP 404 with `Unsupported upgrade request`, install the extras in the active venv.
 
 ## Hard Boundaries
 
@@ -148,7 +155,7 @@ Do not change these while continuing the app:
 - Any direct Android call to `/debug/*`, `/session/*`, or admin-only endpoints
 - Any committed real `MOBILE_TOKEN`, admin token, platform token, or server secret
 
-The Android app must enter the existing chat path only through `/mobile/*`.
+The Android app must enter the existing chat path only through `/mobile/*`; `/mobile/ws` is only for presence/connection status and must not bypass `POST /mobile/conversations/neno/messages`.
 
 ## Useful Checks
 

@@ -14,6 +14,7 @@ Neno 是一个本地优先的 AI 聊天机器人后端。它不是无状态 LLM 
 - 主动消息：支持 observe / candidate / dry_run / auto 模式。
 - Living World：Neno 有持久化小公寓世界、活动片段、睡醒节律、世界事件、自我库和意图通道。
 - 调试台：`/test` 可查看聊天、记忆、主动消息、世界状态、debug events 和诊断信息。
+- Android App：`mobile/android/` 是原生 Kotlin + Jetpack Compose App，通过 `/mobile/*` 和 `/mobile/ws` 接入后端，不是 `/test` 控制台封装。
 
 ## 快速开始
 
@@ -48,6 +49,8 @@ cp .env.example .env
 | `OPENROUTER_API_KEY` | 聊天、记忆、世界模型调用 |
 | `ADMIN_TOKEN` | 调试台和管理接口鉴权 |
 | `PLATFORM_TOKEN` | 非本机平台消息入口鉴权 |
+| `MOBILE_TOKEN` | Android App 的 `/mobile/*` 和 `/mobile/ws` 鉴权 |
+| `MOBILE_DEFAULT_SESSION_ID` | Android App 使用的后端会话，默认 `mobile:neno` |
 | `MIMO_API_KEY` | 选择层、部分世界/反思模型使用 |
 
 `PLATFORM_TOKEN` 未配置时，非本机平台请求会被拒绝；本机 OpenClaw bridge 仍可走 loopback（回环）绕过。
@@ -86,6 +89,10 @@ python -m pip check
 
 # Git whitespace 检查
 git diff --check
+
+# Android App 单元测试和 debug APK
+.\mobile\android\gradlew.bat -p .\mobile\android :app:testDebugUnitTest
+.\mobile\android\gradlew.bat -p .\mobile\android :app:assembleDebug
 ```
 
 世界 LLM 开关脚本（Windows PowerShell）：
@@ -106,6 +113,11 @@ powershell -ExecutionPolicy Bypass -File scripts\neno-llm.ps1 off
 | `GET /test` | 无 | 调试控制台页面 |
 | `POST /chat` | 无 | Web/控制台聊天入口，建议只本机监听 |
 | `POST /platform/openclaw/message` | loopback 或 `X-Platform-Token` | OpenClaw 平台消息入口 |
+| `GET /mobile/status` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 连接检测 |
+| `GET /mobile/conversations` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 对话列表 |
+| `GET /mobile/conversations/{id}/messages` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 消息历史和状态提示 |
+| `POST /mobile/conversations/{id}/messages` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 发送消息，当前只支持 `neno` |
+| `WS /mobile/ws` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 前台长连接，推送 `hello`、`presence`、`pong` |
 | `/memory/*` | `X-Admin-Token` | 记忆管理 |
 | `/session/*` | `X-Admin-Token` | 会话查询和清理 |
 | `/proactive/*` | `X-Admin-Token` | 主动消息配置、候选、发送 |
@@ -142,6 +154,7 @@ HTTP/Web/Platform
 | 主动消息 | `app/services/proactive/`, `app/services/proactive_service.py` |
 | Living World | `app/services/consciousness/` |
 | 调试台前端 | `app/static/` |
+| Android App | `mobile/android/` |
 
 ## 状态模型
 
@@ -167,7 +180,7 @@ Living World 是后端正式运行的一套持久生活系统，不是演示 pro
 
 当前已经具备：
 
-- 房间、物品、世界时钟、金钱、计划、事件和最近行动。
+- 房间、物品、世界时钟、金钱、计划、事件和近期行动。
 - 睡眠/醒来、精力变化、跨天和活动片段。
 - `self_context`：世界引擎维护“此刻的你”，聊天只读使用。
 - 自我库：从真实经历和反思中结晶 `subject="neno"` 的自我事实。
@@ -199,7 +212,7 @@ Living World 是后端正式运行的一套持久生活系统，不是演示 pro
 
 ```text
 system: SYSTEM_PROMPT + history_digest
-history: 最近原文历史
+history: 近期原文历史
 user: self_context / 关系 / 记忆 / 时间 / 对方刚说
 ```
 
@@ -232,6 +245,9 @@ user: self_context / 关系 / 记忆 / 时间 / 对方刚说
 | [`NENO.md`](NENO.md) | AI 协作和修改红线 |
 | [`NENO_ARCHITECTURE.md`](NENO_ARCHITECTURE.md) | 运行时拓扑和危险区域 |
 | [`docs/living-world.md`](docs/living-world.md) | Living World 当前实现、开关、端点和缺口 |
+| [`docs/android-app-design-brief.md`](docs/android-app-design-brief.md) | Android 原生 App 产品和视觉方向 |
+| [`docs/android-app-implementation-plan.md`](docs/android-app-implementation-plan.md) | Android App v0 后端 / App 合同和任务记录 |
+| [`docs/android-app-handoff.md`](docs/android-app-handoff.md) | Android App 当前实现、验证状态和接手边界 |
 | [`docs/codegraph-query-rebuild.md`](docs/codegraph-query-rebuild.md) | 本地 CodeGraph 索引重建流程 |
 | [`docs/phase5-presence.md`](docs/phase5-presence.md) | 在场/延迟回复相关设计 |
 | [`docs/wx-image-input-route-v1_1.md`](docs/wx-image-input-route-v1_1.md) | 微信图片输入链路 |

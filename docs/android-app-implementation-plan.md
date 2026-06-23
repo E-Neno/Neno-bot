@@ -6,7 +6,7 @@
 
 **架构：** 先在后端增加面向移动端的薄 API 层，再创建 `mobile/android/` 纯原生 Android 工程。Android App 不直接调用 debug 路由，不直接读写 SQLite，不直接写 `life_world_state`，只通过移动端 API 进入现有聊天服务。
 
-**技术栈：** 后端继续使用 FastAPI + SQLite；移动端使用 Kotlin + Jetpack Compose + Material 3。当前机器可见 JDK 17、Android SDK 和本机 Gradle 缓存；`gradle`、`adb`、`studio64` 不在 PATH，但已生成 `mobile/android/gradlew.bat`，后续 Android 命令使用 wrapper 执行。
+**技术栈：** 后端继续使用 FastAPI + SQLite；移动端使用 Kotlin + Jetpack Compose + Material 3。HTTP 使用 `HttpURLConnection`，前台实时状态使用 OkHttp WebSocket。当前机器可见 JDK 17、Android SDK 和本机 Gradle 缓存；`gradle`、`adb`、`studio64` 不在 PATH，但已生成 `mobile/android/gradlew.bat`，后续 Android 命令使用 wrapper 执行。
 
 ---
 
@@ -58,6 +58,8 @@ v0 明确不做：
 - 创建：`mobile/android/app/src/main/java/com/neno/app/MainActivity.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/NenoApp.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/data/ApiModels.kt`
+- 创建：`mobile/android/app/src/main/java/com/neno/app/data/ConnectionState.kt`
+- 创建：`mobile/android/app/src/main/java/com/neno/app/data/MobileRealtimeClient.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/data/NenoApi.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/data/NenoRepository.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/data/SettingsStore.kt`
@@ -67,6 +69,8 @@ v0 明确不做：
 - 创建：`mobile/android/app/src/main/java/com/neno/app/ui/settings/SettingsScreen.kt`
 - 创建：`mobile/android/app/src/main/java/com/neno/app/ui/theme/Theme.kt`
 - 创建：`mobile/android/app/src/test/java/com/neno/app/data/ApiModelsTest.kt`
+- 创建：`mobile/android/app/src/test/java/com/neno/app/data/ConnectionStateTest.kt`
+- 创建：`mobile/android/app/src/test/java/com/neno/app/data/MobileRealtimeEventTest.kt`
 
 ## API 合同
 
@@ -75,6 +79,8 @@ v0 明确不做：
 ```http
 Authorization: Bearer <MOBILE_TOKEN>
 ```
+
+HTTP 仍负责拉取列表、历史和发送消息。`WS /mobile/ws` 只负责前台连接状态和一句 presence（状态提示），不能绕过 `POST /mobile/conversations/neno/messages` 发送聊天内容。
 
 ### `GET /mobile/status`
 
@@ -109,12 +115,13 @@ Authorization: Bearer <MOBILE_TOKEN>
     {
       "id": "neno",
       "title": "Neno",
-      "subtitle": "刚刚说到这里",
+      "subtitle": "对话停在这里",
       "last_message": "我晚点再和你说。",
       "last_message_at": "2026-06-23T12:00:00+08:00",
       "unread_count": 0,
       "pinned": true,
-      "kind": "primary"
+      "kind": "primary",
+      "presence": "在线"
     },
     {
       "id": "writing",
@@ -124,7 +131,8 @@ Authorization: Bearer <MOBILE_TOKEN>
       "last_message_at": null,
       "unread_count": 0,
       "pinned": false,
-      "kind": "utility"
+      "kind": "utility",
+      "presence": "在线"
     }
   ]
 }
@@ -140,6 +148,7 @@ Authorization: Bearer <MOBILE_TOKEN>
 {
   "success": true,
   "conversation_id": "neno",
+  "presence": "在线",
   "messages": [
     {
       "id": 101,
@@ -188,6 +197,36 @@ Authorization: Bearer <MOBILE_TOKEN>
 ```
 
 v0 只支持 `conversation_id=neno` 发送消息。工具联系人可以在列表展示，但点击后显示中文占位页：“这个联系人还没接入。”
+
+### `WS /mobile/ws`
+
+用途：Android App 前台连接状态和低干扰 presence 更新。
+
+鉴权同 HTTP：
+
+```http
+Authorization: Bearer <MOBILE_TOKEN>
+```
+
+服务端连接后先发送：
+
+```json
+{"type":"hello","api":"mobile-v0"}
+```
+
+随后发送或刷新：
+
+```json
+{"type":"presence","conversation_id":"neno","presence":"在线"}
+```
+
+客户端发送文本 `ping` 时，服务端返回：
+
+```json
+{"type":"pong"}
+```
+
+状态提示只允许是短中文文案，例如 `在线`、`睡着了`、`稍后回复`。WebSocket 断开后 Android 端在前台自动重连，HTTP status 检测保留为设置页和兜底路径。
 
 ## 任务 1：新增移动端后端鉴权和 schema
 

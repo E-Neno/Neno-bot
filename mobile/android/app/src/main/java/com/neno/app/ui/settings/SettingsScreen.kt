@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +79,7 @@ fun SettingsScreen(
                 ),
             contentAlignment = Alignment.TopCenter,
         ) {
-            Column(modifier = panelModifier) {
+            Column(modifier = panelModifier.verticalScroll(rememberScrollState())) {
                 SettingsHeader(onBack = onBack, onRevealAdvanced = { showAdvanced = true })
                 Spacer(modifier = Modifier.height(20.dp))
                 ConnectionCard(status = connectionState.connectionLabel(), onRecheck = ::recheck)
@@ -89,6 +91,8 @@ fun SettingsScreen(
                         repository = repository,
                         onRecheck = ::recheck,
                     )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HermesConnectionCard(repository = repository)
                 }
             }
         }
@@ -309,6 +313,50 @@ private fun AdvancedConnectionCard(
             }
             Text(
                 text = "模拟器默认使用 http://10.0.2.2:8000；真机需要填电脑局域网地址。",
+                color = MaterialTheme.colorScheme.secondary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HermesConnectionCard(repository: NenoRepository) {
+    var hermesUrl by remember { mutableStateOf(repository.currentHermesBaseUrl()) }
+    var hermesApiKey by remember { mutableStateOf(repository.currentHermesApiKey()) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = "Hermes 连接设置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            NenoField(value = hermesUrl, onValueChange = { hermesUrl = it }, label = "Hermes API 地址")
+            NenoField(value = hermesApiKey, onValueChange = { hermesApiKey = it }, label = "API Key", isPassword = true)
+            Button(
+                onClick = {
+                    repository.saveHermesSettings(hermesUrl, hermesApiKey)
+                    hermesUrl = repository.currentHermesBaseUrl()
+                },
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
+                Text("保存")
+            }
+            Text(
+                text = "Hermes 默认地址 http://10.0.2.2:8642；配置后联系人列表会出现 Hermes。",
                 color = MaterialTheme.colorScheme.secondary,
                 style = MaterialTheme.typography.bodyMedium,
             )

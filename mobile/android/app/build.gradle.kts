@@ -21,6 +21,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 个人侧载用：用标准 debug keystore 给 release 签名，好让它能直接装机、
+            // 也能 install -r 覆盖 debug 包（同签名）。debug keystore 非机密（人手一个，密码 android），
+            // 放公开仓库无泄露。真要上应用商店分发时，这里得换成正式 keystore。
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

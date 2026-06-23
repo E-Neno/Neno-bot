@@ -100,3 +100,19 @@ Living World 已有可运行实现，不再只是 `LifeState` 模板。修改相
 - `world_ops` 必须先经过 `action_validator`，再由 `world_model.apply_op()` 落账。
 - 用户聊天尚未进入世界引擎。不要绕过 Phase 5 设计直接改主聊天 prompt 或六个红线文件。
 - 不能因为存在房间、事件、日计划和跨天逻辑就宣称“完整世界引擎完成”；验收标准是持续生活、因果延续和用户消息作为外部事件。
+
+---
+
+# Android App 修改边界
+
+Android 产品端是 `mobile/android/` 下的原生 Kotlin + Jetpack Compose App，不是 `/test` 调试控制台、WebView、Expo 或 React Native。修改相关代码前先读：
+
+- `docs/android-app-design-brief.md`：产品方向、中文界面和视觉边界。
+- `docs/android-app-implementation-plan.md`：移动端 API 合同和 Android 工程结构。
+- `docs/android-app-handoff.md`：当前实现、验证状态和接手任务。
+
+必须遵守：
+
+- App 只能通过 `/mobile/*` 进入后端；不得直接调用 `/debug/*`、`/session/*` 或 admin-only 端点。
+- `/mobile/ws` 只承载前台连接状态和 presence，不负责发送聊天内容；聊天仍走 `POST /mobile/conversations/neno/messages`。
+- 不要在 Android 工程提交真实 `MOBILE_TOKEN`、admin token、平台 token、服务器密钥或真实用户数据。

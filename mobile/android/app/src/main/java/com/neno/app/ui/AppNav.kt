@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.neno.app.data.MobileConversation
 import com.neno.app.data.NenoRepository
+import com.neno.app.ui.chat.HermesChatScreen
 import com.neno.app.ui.chat.NenoChatScreen
 import com.neno.app.ui.conversations.ConversationListScreen
 import com.neno.app.ui.settings.SettingsScreen
@@ -40,6 +41,7 @@ import com.neno.app.ui.settings.SettingsScreen
 private enum class AppScreen {
     Conversations,
     NenoChat,
+    HermesChat,
     Settings,
     UnsupportedContact,
 }
@@ -67,6 +69,8 @@ fun AppNav(repository: NenoRepository) {
                 onOpenConversation = { conversation ->
                     if (conversation.id == "neno") {
                         screen = AppScreen.NenoChat
+                    } else if (conversation.id == "hermes") {
+                        screen = AppScreen.HermesChat
                     } else {
                         unsupportedTitle = conversation.title
                         screen = AppScreen.UnsupportedContact
@@ -84,6 +88,11 @@ fun AppNav(repository: NenoRepository) {
                 connectionState = connectionState,
                 onBack = { screen = AppScreen.Conversations },
                 onOpenSettings = { screen = AppScreen.Settings },
+            )
+
+            AppScreen.HermesChat -> HermesChatScreen(
+                repository = repository,
+                onBack = { screen = AppScreen.Conversations },
             )
 
             AppScreen.Settings -> SettingsScreen(

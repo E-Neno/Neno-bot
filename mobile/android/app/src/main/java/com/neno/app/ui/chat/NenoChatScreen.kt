@@ -185,9 +185,7 @@ private fun ChatShell(
         modifier = modifier
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(start = 18.dp, top = 8.dp, end = 18.dp, bottom = 8.dp),
+            .padding(start = 18.dp, top = 8.dp, end = 18.dp),
     ) {
         ChatHeader(presence = presence, onBack = onBack, onOpenSettings = onOpenSettings)
         Spacer(modifier = Modifier.height(14.dp))
@@ -213,11 +211,13 @@ private fun ChatShell(
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-        ChatInputBar(
-            draft = draft,
-            onDraftChange = onDraftChange,
-            onSend = onSend,
-        )
+        KeyboardAwareInputArea {
+            ChatInputBar(
+                draft = draft,
+                onDraftChange = onDraftChange,
+                onSend = onSend,
+            )
+        }
     }
 }
 
@@ -544,10 +544,24 @@ private fun MessageBubble(message: ChatBubbleModel) {
 }
 
 @Composable
-private fun ChatInputBar(
+internal fun KeyboardAwareInputArea(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(bottom = 8.dp),
+    ) {
+        content()
+    }
+}
+
+@Composable
+internal fun ChatInputBar(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    placeholder: String = "发消息给 Neno",
 ) {
     Surface(
         modifier = Modifier
@@ -583,7 +597,7 @@ private fun ChatInputBar(
                 decorationBox = { innerTextField ->
                     if (draft.isBlank()) {
                         Text(
-                            text = "发消息给 Neno",
+                            text = placeholder,
                             color = MaterialTheme.colorScheme.secondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
@@ -617,7 +631,7 @@ private fun ChatInputBar(
 }
 
 @Composable
-private fun IconTapTarget(
+internal fun IconTapTarget(
     icon: NenoIcon,
     onClick: () -> Unit,
 ) {
