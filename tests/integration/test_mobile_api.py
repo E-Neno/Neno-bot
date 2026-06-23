@@ -47,6 +47,40 @@ def test_mobile_conversations_returns_chinese_contacts(client, monkeypatch):
     assert data["conversations"][0]["kind"] == "primary"
 
 
+def test_presence_mapping_pure():
+    from app.services.mobile_api_service import _presence_from
+
+    assert _presence_from("sleeping", 0) == "睡着了"
+    assert _presence_from("sleeping", 3) == "睡着了"  # 睡着优先于欠回复
+    assert _presence_from("awake", 2) == "稍后回复"
+    assert _presence_from("awake", 0) == "在线"
+    assert _presence_from(None, 0) == "在线"
+
+
+def test_mobile_messages_include_presence(client, monkeypatch):
+    import app.routers.mobile as mobile_router
+
+    monkeypatch.setattr(mobile_router, "neno_presence", lambda: "睡着了")
+
+    response = client.get("/mobile/conversations/neno/messages", headers=mobile_headers(monkeypatch))
+
+    assert response.status_code == 200
+    assert response.json()["presence"] == "睡着了"
+
+
+def test_mobile_conversations_include_neno_presence(client, monkeypatch):
+    import app.services.mobile_api_service as mobile_service
+
+    monkeypatch.setattr(mobile_service, "neno_presence", lambda: "稍后回复")
+
+    response = client.get("/mobile/conversations", headers=mobile_headers(monkeypatch))
+
+    assert response.status_code == 200
+    neno = response.json()["conversations"][0]
+    assert neno["id"] == "neno"
+    assert neno["presence"] == "稍后回复"
+
+
 def test_mobile_messages_do_not_expose_debug_fields(client, monkeypatch):
     from app.storage.db import add_message
 

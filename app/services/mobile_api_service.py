@@ -12,9 +12,49 @@ from app.utils.logging_utils import new_trace_id
 NENO_CONVERSATION_ID = "neno"
 UTC8 = timezone(timedelta(hours=8))
 
+DEFAULT_PRESENCE = "在线"
+
 
 def utc8_now_iso() -> str:
     return datetime.now(timezone.utc).astimezone(UTC8).isoformat(timespec="seconds")
+
+
+def _presence_from(energy_status: str | None, pending_count: int) -> str:
+    """把她的真实世界状态映射成一句低干扰提示（纯函数，便于测试）。
+
+    brief 要求：世界状态进 App 只能是「一句自然状态提示」，不是面板/仪表盘。
+    优先级：睡着 > 有欠回复 > 在线。
+    """
+    if energy_status == "sleeping":
+        return "睡着了"
+    if pending_count > 0:
+        return "稍后回复"
+    return DEFAULT_PRESENCE
+
+
+def neno_presence() -> str:
+    """读她此刻真实状态，给出一句状态提示。任何读取失败都降级到「在线」，绝不让列表/聊天 500。"""
+    try:
+        import asyncio
+
+        from app.services.consciousness.config import ConsciousnessConfig
+        from app.services.consciousness.state_store import StateStore
+        from app.services.consciousness.world_model import load_world_def
+        from app.services.consciousness.world_store import WorldStore
+
+        cfg = ConsciousnessConfig()
+
+        async def _read() -> tuple[str | None, int]:
+            nstate = await StateStore(db=None, config=cfg).read()
+            wstate = await WorldStore(load_world_def()).read()
+            status = getattr(getattr(nstate, "energy", None), "status", None)
+            pending = len(getattr(wstate, "pending_messages", None) or [])
+            return status, pending
+
+        status, pending = asyncio.run(_read())
+        return _presence_from(status, pending)
+    except Exception:  # noqa: BLE001 — 状态读不到就降级，不阻断
+        return DEFAULT_PRESENCE
 
 
 def get_mobile_status() -> dict[str, Any]:
@@ -51,6 +91,7 @@ def list_mobile_conversations() -> list[MobileConversation]:
             unread_count=0,
             pinned=True,
             kind="primary",
+            presence=neno_presence(),
         ),
         MobileConversation(
             id="writing",

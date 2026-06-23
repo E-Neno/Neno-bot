@@ -9,9 +9,12 @@ from app.mobile_schemas import (
 )
 from app.security import require_mobile_token
 from app.services.mobile_api_service import (
+    NENO_CONVERSATION_ID,
+    DEFAULT_PRESENCE,
     get_mobile_status,
     list_mobile_conversations,
     list_mobile_messages,
+    neno_presence,
     send_mobile_message,
 )
 
@@ -41,9 +44,11 @@ def mobile_messages(
     conversation_id: str,
     limit: int = Query(default=50, ge=1, le=100),
 ):
+    presence = neno_presence() if conversation_id == NENO_CONVERSATION_ID else DEFAULT_PRESENCE
     return MobileMessagesResponse(
         conversation_id=conversation_id,
         messages=list_mobile_messages(conversation_id, limit),
+        presence=presence,
     )
 
 

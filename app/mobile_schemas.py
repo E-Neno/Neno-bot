@@ -26,6 +26,7 @@ class MobileConversation(BaseModel):
     unread_count: int = 0
     pinned: bool = False
     kind: Literal["primary", "utility"]
+    presence: str = "在线"  # 一句低干扰状态提示（在线/睡着了/稍后回复）
 
 
 class MobileConversationListResponse(BaseModel):
@@ -45,6 +46,7 @@ class MobileMessagesResponse(BaseModel):
     success: bool = True
     conversation_id: str
     messages: list[MobileMessage]
+    presence: str = "在线"  # 聊天页头部状态：在线/睡着了/稍后回复
 
 
 class MobileSendMessageRequest(BaseModel):
