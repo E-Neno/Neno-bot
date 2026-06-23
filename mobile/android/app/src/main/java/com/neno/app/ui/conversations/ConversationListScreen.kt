@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neno.app.data.MobileConversation
 import com.neno.app.data.NenoRepository
+import com.neno.app.ui.AsyncListState
+import com.neno.app.ui.asyncListState
 import com.neno.app.ui.components.AppIcon
 import com.neno.app.ui.components.AvatarKind
 import com.neno.app.ui.components.NenoBrandIcon
@@ -54,7 +56,7 @@ fun ConversationListScreen(
     onOpenSettings: () -> Unit,
     onOpenTools: () -> Unit,
 ) {
-    var conversations by remember { mutableStateOf(NenoRepository.defaultConversations()) }
+    var conversations by remember { mutableStateOf<List<MobileConversation>?>(null) }
 
     LaunchedEffect(repository) {
         conversations = repository.loadConversations()
@@ -91,16 +93,16 @@ fun ConversationListScreen(
 
 @Composable
 private fun ConversationShell(
-    conversations: List<MobileConversation>,
+    conversations: List<MobileConversation>?,
     onOpenConversation: (MobileConversation) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenTools: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val neno = conversations.firstOrNull { it.id == "neno" } ?: NenoRepository.defaultConversations().first()
-    val recents = conversations.filterNot { it.id == "neno" }.ifEmpty {
-        NenoRepository.defaultConversations().filterNot { it.id == "neno" }
-    }
+    val listState = asyncListState(conversations)
+    val loadedConversations = conversations.orEmpty()
+    val neno = loadedConversations.firstOrNull { it.id == "neno" }
+    val recents = loadedConversations.filterNot { it.id == "neno" }
 
     Column(
         modifier = modifier
@@ -120,29 +122,15 @@ private fun ConversationShell(
             item {
                 SectionLabel(icon = NenoIcon.Pin, text = "置顶")
                 Spacer(modifier = Modifier.height(14.dp))
-                PinnedConversationCard(
-                    conversation = neno,
-                    onClick = { onOpenConversation(neno) },
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-                RecentHeader()
-            }
-
-            items(recents.size) { index ->
-                RecentConversationRow(
-                    conversation = recents[index],
-                    avatarKind = when (index) {
-                        0 -> AvatarKind.Atlas
-                        1 -> AvatarKind.Sage
-                        else -> AvatarKind.Hush
-                    },
-                    time = when (index) {
-                        0 -> "昨天"
-                        1 -> "周一"
-                        else -> "周日"
-                    },
-                    onClick = { onOpenConversation(recents[index]) },
-                )
+                when (listState) {
+                    AsyncListState.Loading -> ConversationLoadingContent()
+                    AsyncListState.Empty -> EmptyConversationContent()
+                    AsyncListState.Content -> ConversationLoadedContent(
+                        neno = neno,
+                        recents = recents,
+                        onOpenConversation = onOpenConversation,
+                    )
+                }
             }
         }
 
@@ -198,6 +186,161 @@ private fun SectionLabel(
 }
 
 @Composable
+private fun ConversationLoadedContent(
+    neno: MobileConversation?,
+    recents: List<MobileConversation>,
+    onOpenConversation: (MobileConversation) -> Unit,
+) {
+    if (neno == null) {
+        EmptyConversationContent()
+        return
+    }
+
+    PinnedConversationCard(
+        conversation = neno,
+        onClick = { onOpenConversation(neno) },
+    )
+    Spacer(modifier = Modifier.height(14.dp))
+    RecentHeader()
+    recents.forEachIndexed { index, conversation ->
+        RecentConversationRow(
+            conversation = conversation,
+            avatarKind = when (index) {
+                0 -> AvatarKind.Atlas
+                1 -> AvatarKind.Sage
+                else -> AvatarKind.Hush
+            },
+            time = when (index) {
+                0 -> "昨天"
+                1 -> "周一"
+                else -> "周日"
+            },
+            onClick = { onOpenConversation(conversation) },
+        )
+    }
+}
+
+@Composable
+private fun ConversationLoadingContent() {
+    PinnedLoadingCard()
+    Spacer(modifier = Modifier.height(14.dp))
+    RecentHeader()
+    repeat(3) {
+        LoadingConversationRow()
+    }
+}
+
+@Composable
+private fun EmptyConversationContent() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(84.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "还没有消息",
+                color = MaterialTheme.colorScheme.secondary,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PinnedLoadingCard() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(84.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.50f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LoadingBlock(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape),
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                LoadingBlock(
+                    modifier = Modifier
+                        .fillMaxWidth(0.36f)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LoadingBlock(
+                    modifier = Modifier
+                        .fillMaxWidth(0.62f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LoadingConversationRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LoadingBlock(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            LoadingBlock(
+                modifier = Modifier
+                    .fillMaxWidth(0.34f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(7.dp)),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LoadingBlock(
+                modifier = Modifier
+                    .fillMaxWidth(0.58f)
+                    .height(11.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+            )
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    )
+}
+
+@Composable
+private fun LoadingBlock(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f)),
+    )
+}
+
+@Composable
 private fun PinnedConversationCard(
     conversation: MobileConversation,
     onClick: () -> Unit,
@@ -240,10 +383,27 @@ private fun PinnedConversationCard(
                         fontSize = 11.sp,
                         lineHeight = 14.sp,
                     )
+                    val online = conversation.presence == "在线"
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                    )
+                    if (!online) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = conversation.presence,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = conversation.lastMessage.ifBlank { "慢慢来，明早再说。" },
+                    text = conversation.lastMessage.ifBlank { "还没有消息" },
                     color = MaterialTheme.colorScheme.secondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,

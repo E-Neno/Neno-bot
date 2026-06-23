@@ -32,9 +32,12 @@ class NenoApi(
         return parseConversations(json.optJSONArray("conversations") ?: JSONArray())
     }
 
-    suspend fun messages(conversationId: String, limit: Int = 50): List<MobileMessage> {
+    suspend fun messages(conversationId: String, limit: Int = 50): MobileMessagesResult {
         val json = requestJson(path = "mobile/conversations/$conversationId/messages?limit=$limit")
-        return parseMessages(json.optJSONArray("messages") ?: JSONArray())
+        return MobileMessagesResult(
+            messages = parseMessages(json.optJSONArray("messages") ?: JSONArray()),
+            presence = json.optString("presence", "在线").ifBlank { "在线" },
+        )
     }
 
     suspend fun sendMessage(conversationId: String, text: String): MobileSendMessageResponse {
@@ -104,6 +107,7 @@ class NenoApi(
                 unreadCount = item.optInt("unread_count"),
                 pinned = item.optBoolean("pinned"),
                 kind = item.optString("kind"),
+                presence = item.optString("presence", "在线").ifBlank { "在线" },
             )
         }
 

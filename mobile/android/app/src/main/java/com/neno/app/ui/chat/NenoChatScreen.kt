@@ -1,5 +1,7 @@
 package com.neno.app.ui.chat
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -56,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neno.app.data.MobileMessage
 import com.neno.app.data.NenoRepository
+import com.neno.app.ui.AsyncListState
+import com.neno.app.ui.asyncListState
 import com.neno.app.ui.components.AppIcon
 import com.neno.app.ui.components.AvatarKind
 import com.neno.app.ui.components.NenoIcon
@@ -69,16 +73,19 @@ fun NenoChatScreen(
     onOpenSettings: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var messages by remember { mutableStateOf<List<MobileMessage>>(emptyList()) }
+    var messages by remember { mutableStateOf<List<MobileMessage>?>(null) }
     var draft by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var softNotice by remember { mutableStateOf<String?>(null) }
+    var presence by remember { mutableStateOf("连接中") }
 
     fun reloadMessages() {
         scope.launch {
             errorText = null
-            messages = repository.loadNenoMessages()
+            val result = repository.loadNenoMessages()
+            messages = result.messages
+            presence = result.presence
         }
     }
 
@@ -87,7 +94,7 @@ fun NenoChatScreen(
         if (text.isBlank() || isSending) return
 
         val localId = -System.currentTimeMillis()
-        messages = messages + MobileMessage(
+        messages = messages.orEmpty() + MobileMessage(
             id = localId,
             role = "user",
             text = text,
@@ -102,7 +109,7 @@ fun NenoChatScreen(
             repository.sendToNeno(text).fold(
                 onSuccess = { response ->
                     messages = buildList {
-                        addAll(messages.filterNot { it.id == localId })
+                        addAll(messages.orEmpty().filterNot { it.id == localId })
                         add(response.userMessage)
                         response.assistantMessage?.let(::add)
                     }
@@ -111,7 +118,7 @@ fun NenoChatScreen(
                 },
                 onFailure = { error ->
                     // 失败时回收乐观气泡，并把刚才打的字还回输入框，别让用户白打。
-                    messages = messages.filterNot { it.id == localId }
+                    messages = messages.orEmpty().filterNot { it.id == localId }
                     draft = text
                     errorText = error.message ?: "发送失败"
                 },
@@ -149,6 +156,7 @@ fun NenoChatScreen(
                 isSending = isSending,
                 errorText = errorText,
                 softNotice = softNotice,
+                presence = presence,
                 onRetry = ::sendDraft,
                 onSend = ::sendDraft,
                 onBack = onBack,
@@ -161,12 +169,13 @@ fun NenoChatScreen(
 
 @Composable
 private fun ChatShell(
-    messages: List<MobileMessage>,
+    messages: List<MobileMessage>?,
     draft: String,
     onDraftChange: (String) -> Unit,
     isSending: Boolean,
     errorText: String?,
     softNotice: String?,
+    presence: String,
     onRetry: () -> Unit,
     onSend: () -> Unit,
     onBack: () -> Unit,
@@ -181,7 +190,7 @@ private fun ChatShell(
             .imePadding()
             .padding(start = 18.dp, top = 8.dp, end = 18.dp, bottom = 8.dp),
     ) {
-        ChatHeader(onBack = onBack, onOpenSettings = onOpenSettings)
+        ChatHeader(presence = presence, onBack = onBack, onOpenSettings = onOpenSettings)
         Spacer(modifier = Modifier.height(14.dp))
         DateDivider()
         Spacer(modifier = Modifier.height(8.dp))
@@ -215,9 +224,13 @@ private fun ChatShell(
 
 @Composable
 private fun ChatHeader(
+    presence: String,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    // 只有真「在线」才点亮暖色圆点；睡着/稍后回复/连接中都用中性灰，别假装她一直精神地等着。
+    val online = presence == "在线"
+    val dotColor = if (online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -244,11 +257,11 @@ private fun ChatHeader(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
+                        .background(dotColor),
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "在线",
+                    text = presence,
                     color = MaterialTheme.colorScheme.secondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
@@ -333,32 +346,45 @@ private fun SoftNotice(text: String) {
 
 @Composable
 private fun MessageList(
-    messages: List<MobileMessage>,
+    messages: List<MobileMessage>?,
     isSending: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    if (messages.isEmpty() && !isSending) {
-        Column(
-            modifier = modifier,
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            previewMessages().forEach { message ->
-                MessageBubble(message = message)
+    Box(modifier = modifier) {
+        Crossfade(
+            targetState = asyncListState(messages),
+            animationSpec = tween(durationMillis = 180),
+            label = "messageListState",
+        ) { state ->
+            when (state) {
+                AsyncListState.Loading -> LoadingMessageSpace(modifier = Modifier.fillMaxSize())
+                AsyncListState.Empty -> {
+                    if (isSending) {
+                        MessageLazyList(
+                            displayMessages = emptyList(),
+                            isSending = true,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        EmptyMessageSpace(modifier = Modifier.fillMaxSize())
+                    }
+                }
+                AsyncListState.Content -> MessageLazyList(
+                    displayMessages = messages.orEmpty().map(::toChatBubbleModel),
+                    isSending = isSending,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
-        return
     }
+}
 
-    val displayMessages = messages.map {
-        ChatBubbleModel(
-            id = it.id,
-            text = it.text,
-            time = it.createdAt?.take(5).orEmpty().ifBlank { if (it.role == "user") "8:41" else "8:37" },
-            fromUser = it.role == "user",
-            pending = it.pending,
-        )
-    }
-
+@Composable
+private fun MessageLazyList(
+    displayMessages: List<ChatBubbleModel>,
+    isSending: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val listState = rememberLazyListState()
     // 新消息或正在等回复时，把列表滚到最底，确保刚发的话和回复都在可视区。
     LaunchedEffect(displayMessages.size, isSending) {
@@ -383,6 +409,49 @@ private fun MessageList(
             }
         }
     }
+}
+
+@Composable
+private fun LoadingMessageSpace(modifier: Modifier = Modifier) {
+    Box(modifier = modifier)
+}
+
+@Composable
+private fun EmptyMessageSpace(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "还没有消息",
+            color = MaterialTheme.colorScheme.secondary,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+        )
+    }
+}
+
+private fun toChatBubbleModel(message: MobileMessage): ChatBubbleModel =
+    ChatBubbleModel(
+        id = message.id,
+        text = message.text,
+        time = formatChatMessageTime(message.createdAt, message.role),
+        fromUser = message.role == "user",
+        pending = message.pending,
+    )
+
+internal fun formatChatMessageTime(createdAt: String?, role: String): String {
+    val raw = createdAt?.trim().orEmpty()
+    val match = Regex("""[T\s](\d{1,2}):(\d{2})""").find(raw)
+        ?: Regex("""^(\d{1,2}):(\d{2})""").find(raw)
+
+    if (match != null) {
+        val hour = match.groupValues[1].toIntOrNull()?.toString()
+            ?: match.groupValues[1].trimStart('0').ifEmpty { "0" }
+        return "$hour:${match.groupValues[2]}"
+    }
+
+    return if (role == "user") "8:41" else "8:37"
 }
 
 @Composable
@@ -432,7 +501,9 @@ private fun MessageBubble(message: ChatBubbleModel) {
         horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            modifier = Modifier.widthIn(max = 210.dp),
+            modifier = Modifier
+                .widthIn(max = 210.dp)
+                .animateContentSize(animationSpec = tween(durationMillis = 160)),
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(10.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
@@ -566,43 +637,4 @@ private data class ChatBubbleModel(
     val time: String,
     val fromUser: Boolean,
     val pending: Boolean = false,
-)
-
-private fun previewMessages(): List<ChatBubbleModel> = listOf(
-    ChatBubbleModel(
-        id = 1,
-        text = "嘿，我来看看你。",
-        time = "8:35",
-        fromUser = false,
-    ),
-    ChatBubbleModel(
-        id = 2,
-        text = "早。昨晚没怎么睡。",
-        time = "8:36",
-        fromUser = true,
-    ),
-    ChatBubbleModel(
-        id = 3,
-        text = "难熬的夜晚最消耗人。心里有什么事吗？",
-        time = "8:37",
-        fromUser = false,
-    ),
-    ChatBubbleModel(
-        id = 4,
-        text = "挺多的。想把脑子清一清。",
-        time = "8:38",
-        fromUser = true,
-    ),
-    ChatBubbleModel(
-        id = 5,
-        text = "晚点一起出去走走？",
-        time = "8:41",
-        fromUser = false,
-    ),
-    ChatBubbleModel(
-        id = 6,
-        text = "嗯，那会有帮助。",
-        time = "8:41",
-        fromUser = true,
-    ),
 )

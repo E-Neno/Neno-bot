@@ -1,5 +1,11 @@
 package com.neno.app.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,39 +48,51 @@ fun AppNav(repository: NenoRepository) {
     var screen by rememberSaveable { mutableStateOf(AppScreen.Conversations) }
     var unsupportedTitle by rememberSaveable { mutableStateOf("") }
 
-    when (screen) {
-        AppScreen.Conversations -> ConversationListScreen(
-            repository = repository,
-            onOpenConversation = { conversation ->
-                if (conversation.id == "neno") {
-                    screen = AppScreen.NenoChat
-                } else {
-                    unsupportedTitle = conversation.title
+    BackHandler(enabled = screen != AppScreen.Conversations) {
+        screen = AppScreen.Conversations
+    }
+
+    AnimatedContent(
+        targetState = screen,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(170)) togetherWith fadeOut(animationSpec = tween(120))
+        },
+        label = "screenTransition",
+    ) { currentScreen ->
+        when (currentScreen) {
+            AppScreen.Conversations -> ConversationListScreen(
+                repository = repository,
+                onOpenConversation = { conversation ->
+                    if (conversation.id == "neno") {
+                        screen = AppScreen.NenoChat
+                    } else {
+                        unsupportedTitle = conversation.title
+                        screen = AppScreen.UnsupportedContact
+                    }
+                },
+                onOpenSettings = { screen = AppScreen.Settings },
+                onOpenTools = {
+                    unsupportedTitle = "工具"
                     screen = AppScreen.UnsupportedContact
-                }
-            },
-            onOpenSettings = { screen = AppScreen.Settings },
-            onOpenTools = {
-                unsupportedTitle = "工具"
-                screen = AppScreen.UnsupportedContact
-            },
-        )
+                },
+            )
 
-        AppScreen.NenoChat -> NenoChatScreen(
-            repository = repository,
-            onBack = { screen = AppScreen.Conversations },
-            onOpenSettings = { screen = AppScreen.Settings },
-        )
+            AppScreen.NenoChat -> NenoChatScreen(
+                repository = repository,
+                onBack = { screen = AppScreen.Conversations },
+                onOpenSettings = { screen = AppScreen.Settings },
+            )
 
-        AppScreen.Settings -> SettingsScreen(
-            repository = repository,
-            onBack = { screen = AppScreen.Conversations },
-        )
+            AppScreen.Settings -> SettingsScreen(
+                repository = repository,
+                onBack = { screen = AppScreen.Conversations },
+            )
 
-        AppScreen.UnsupportedContact -> UnsupportedContactScreen(
-            title = unsupportedTitle.ifBlank { "工具联系人" },
-            onBack = { screen = AppScreen.Conversations },
-        )
+            AppScreen.UnsupportedContact -> UnsupportedContactScreen(
+                title = unsupportedTitle.ifBlank { "工具联系人" },
+                onBack = { screen = AppScreen.Conversations },
+            )
+        }
     }
 }
 

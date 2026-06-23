@@ -23,6 +23,7 @@ data class MobileConversation(
     val unreadCount: Int = 0,
     val pinned: Boolean = false,
     val kind: String,
+    val presence: String = "在线",
 )
 
 data class MobileMessage(
@@ -31,6 +32,11 @@ data class MobileMessage(
     val text: String,
     val createdAt: String? = null,
     val pending: Boolean = false,
+)
+
+data class MobileMessagesResult(
+    val messages: List<MobileMessage>,
+    val presence: String = "在线",
 )
 
 data class MobileSendMessageResponse(
