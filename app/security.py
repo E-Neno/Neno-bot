@@ -31,6 +31,10 @@ def require_platform_token(
 
 
 def require_mobile_token(authorization: str | None = Header(default=None)):
+    validate_mobile_authorization(authorization)
+
+
+def validate_mobile_authorization(authorization: str | None):
     if not MOBILE_TOKEN:
         raise HTTPException(status_code=403, detail="MOBILE_TOKEN not configured")
     prefix = "Bearer "

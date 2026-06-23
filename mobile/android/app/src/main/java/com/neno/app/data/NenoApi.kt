@@ -36,7 +36,7 @@ class NenoApi(
         val json = requestJson(path = "mobile/conversations/$conversationId/messages?limit=$limit")
         return MobileMessagesResult(
             messages = parseMessages(json.optJSONArray("messages") ?: JSONArray()),
-            presence = json.optString("presence", "在线").ifBlank { "在线" },
+            presence = json.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
         )
     }
 
@@ -107,7 +107,7 @@ class NenoApi(
                 unreadCount = item.optInt("unread_count"),
                 pinned = item.optBoolean("pinned"),
                 kind = item.optString("kind"),
-                presence = item.optString("presence", "在线").ifBlank { "在线" },
+                presence = item.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
             )
         }
 

@@ -422,7 +422,10 @@ private fun PinnedConversationCard(
                     fontSize = 13.sp,
                     lineHeight = 16.sp,
                 )
-                UnreadBadge(count = 1)
+                // 只有真有未读才显示红点，别常驻。后端目前 unread_count=0，所以默认不出现。
+                if (conversation.unreadCount > 0) {
+                    UnreadBadge(count = conversation.unreadCount)
+                }
             }
         }
     }

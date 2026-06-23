@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,26 +33,39 @@ def _presence_from(energy_status: str | None, pending_count: int) -> str:
     return DEFAULT_PRESENCE
 
 
+async def _read_presence_state() -> tuple[str | None, int]:
+    from app.services.consciousness.config import ConsciousnessConfig
+    from app.services.consciousness.state_store import StateStore
+    from app.services.consciousness.world_model import load_world_def
+    from app.services.consciousness.world_store import WorldStore
+
+    cfg = ConsciousnessConfig()
+    nstate = await StateStore(db=None, config=cfg).read()
+    wstate = await WorldStore(load_world_def()).read()
+    status = getattr(getattr(nstate, "energy", None), "status", None)
+    pending = len(getattr(wstate, "pending_messages", None) or [])
+    return status, pending
+
+
+async def read_neno_presence() -> str:
+    try:
+        status, pending = await _read_presence_state()
+        return _presence_from(status, pending)
+    except Exception:  # noqa: BLE001 — 状态读不到就降级，不阻断
+        return DEFAULT_PRESENCE
+
+
 def neno_presence() -> str:
     """读她此刻真实状态，给出一句状态提示。任何读取失败都降级到「在线」，绝不让列表/聊天 500。"""
     try:
-        import asyncio
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        return DEFAULT_PRESENCE
 
-        from app.services.consciousness.config import ConsciousnessConfig
-        from app.services.consciousness.state_store import StateStore
-        from app.services.consciousness.world_model import load_world_def
-        from app.services.consciousness.world_store import WorldStore
-
-        cfg = ConsciousnessConfig()
-
-        async def _read() -> tuple[str | None, int]:
-            nstate = await StateStore(db=None, config=cfg).read()
-            wstate = await WorldStore(load_world_def()).read()
-            status = getattr(getattr(nstate, "energy", None), "status", None)
-            pending = len(getattr(wstate, "pending_messages", None) or [])
-            return status, pending
-
-        status, pending = asyncio.run(_read())
+    try:
+        status, pending = asyncio.run(_read_presence_state())
         return _presence_from(status, pending)
     except Exception:  # noqa: BLE001 — 状态读不到就降级，不阻断
         return DEFAULT_PRESENCE

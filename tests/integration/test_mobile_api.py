@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from starlette.websockets import WebSocketDisconnect
+
 
 TEST_MOBILE_TOKEN = "mobile-test-token"
 
@@ -57,6 +59,26 @@ def test_presence_mapping_pure():
     assert _presence_from(None, 0) == "在线"
 
 
+def test_sync_presence_degrades_inside_running_loop_without_warning(monkeypatch, recwarn):
+    import asyncio
+    import gc
+
+    import app.services.mobile_api_service as mobile_service
+
+    async def fake_read_presence_state():
+        return "awake", 0
+
+    async def run_in_loop():
+        return mobile_service.neno_presence()
+
+    monkeypatch.setattr(mobile_service, "_read_presence_state", fake_read_presence_state)
+
+    assert asyncio.run(run_in_loop()) == mobile_service.DEFAULT_PRESENCE
+    gc.collect()
+    leaked = [warning for warning in recwarn if "was never awaited" in str(warning.message)]
+    assert leaked == []
+
+
 def test_mobile_messages_include_presence(client, monkeypatch):
     import app.routers.mobile as mobile_router
 
@@ -66,6 +88,38 @@ def test_mobile_messages_include_presence(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["presence"] == "睡着了"
+
+
+def test_mobile_websocket_requires_token(client):
+    try:
+        with client.websocket_connect("/mobile/ws"):
+            raise AssertionError("websocket should reject missing token")
+    except WebSocketDisconnect as exc:
+        assert exc.code == 1008
+
+
+def test_mobile_websocket_sends_hello_and_presence(client, monkeypatch):
+    import app.routers.mobile as mobile_router
+
+    async def fake_presence():
+        return "睡着了"
+
+    monkeypatch.setattr(mobile_router, "read_neno_presence", fake_presence)
+    headers = mobile_headers(monkeypatch)
+
+    with client.websocket_connect("/mobile/ws", headers=headers) as websocket:
+        hello = websocket.receive_json()
+        presence = websocket.receive_json()
+        websocket.send_text("ping")
+        pong = websocket.receive_json()
+
+    assert hello == {"type": "hello", "api": "mobile-v0"}
+    assert pong == {"type": "pong"}
+    assert presence == {
+        "type": "presence",
+        "conversation_id": "neno",
+        "presence": "睡着了",
+    }
 
 
 def test_mobile_conversations_include_neno_presence(client, monkeypatch):
@@ -180,4 +234,3 @@ def test_mobile_send_message_handles_silent_reply(client, monkeypatch):
     assert body["user_message"]["id"] == 301
     assert body["user_message"]["text"] == "在嘛"
     assert body["assistant_message"] is None
-

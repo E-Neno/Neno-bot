@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.neno.app.data.AppConnectionState
 import com.neno.app.data.MobileMessage
 import com.neno.app.data.NenoRepository
 import com.neno.app.ui.AsyncListState
@@ -68,6 +69,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun NenoChatScreen(
     repository: NenoRepository,
+    connectionState: AppConnectionState,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -77,14 +79,12 @@ fun NenoChatScreen(
     var isSending by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var softNotice by remember { mutableStateOf<String?>(null) }
-    var presence by remember { mutableStateOf("连接中") }
 
     fun reloadMessages() {
         scope.launch {
             errorText = null
             val result = repository.loadNenoMessages()
             messages = result.messages
-            presence = result.presence
         }
     }
 
@@ -155,7 +155,7 @@ fun NenoChatScreen(
                 isSending = isSending,
                 errorText = errorText,
                 softNotice = softNotice,
-                presence = presence,
+                presence = connectionState.chatPresenceLabel(),
                 onRetry = ::sendDraft,
                 onSend = ::sendDraft,
                 onBack = onBack,

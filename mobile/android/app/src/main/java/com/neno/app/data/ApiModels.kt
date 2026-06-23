@@ -23,7 +23,7 @@ data class MobileConversation(
     val unreadCount: Int = 0,
     val pinned: Boolean = false,
     val kind: String,
-    val presence: String = "在线",
+    val presence: String = DEFAULT_NENO_PRESENCE,
 )
 
 data class MobileMessage(
@@ -36,7 +36,7 @@ data class MobileMessage(
 
 data class MobileMessagesResult(
     val messages: List<MobileMessage>,
-    val presence: String = "在线",
+    val presence: String = DEFAULT_NENO_PRESENCE,
 )
 
 data class MobileSendMessageResponse(
