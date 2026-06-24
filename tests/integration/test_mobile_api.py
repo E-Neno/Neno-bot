@@ -393,7 +393,7 @@ def test_mobile_send_message_normalizes_voice_attachment(client, monkeypatch, tm
             "user",
             message,
             trace_id=trace_id,
-            message_type="image",
+            message_type="voice",
             source="mobile",
             metadata=input_record,
         )
@@ -422,7 +422,12 @@ def test_mobile_send_message_normalizes_voice_attachment(client, monkeypatch, tm
     assert response.status_code == 200
     assert captured["input_record"]["message_type"] == "voice"
     assert captured["input_record"]["pipeline"]["asr"]["success"] is True
+    assert captured["input_record"]["attachments"][0]["text_hint"] == "语音识别出来的话"
     assert "语音识别出来的话" in captured["message"]
+    body = response.json()
+    assert body["user_message"]["text"] == ""
+    assert body["user_message"]["attachments"][0]["text_hint"] == "语音识别出来的话"
+    assert "用户发送了一段语音" not in body["user_message"]["text"]
 
 
 def test_mobile_send_message_normalizes_image_attachment(client, monkeypatch):

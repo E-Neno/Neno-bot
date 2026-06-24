@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
@@ -100,10 +101,12 @@ import com.neno.app.ui.components.AvatarKind
 import com.neno.app.ui.components.NenoIcon
 import com.neno.app.ui.components.PhotoAvatar
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.resume
 
 @Composable
 fun NenoChatScreen(
@@ -205,9 +208,11 @@ fun NenoChatScreen(
                         bytes = upload.bytes,
                     ).fold(
                         onSuccess = { attachment ->
-                            val displayAttachment = attachment.copy(localUri = uri.toString())
                             repository.sendToNeno(text, listOf(attachment)).fold(
                                 onSuccess = { response ->
+                                    val responseAttachment = response.userMessage.attachments.firstOrNull()
+                                        ?: attachment
+                                    val displayAttachment = responseAttachment.copy(localUri = uri.toString())
                                     val displayUserMessage = response.userMessage.copy(
                                         text = text,
                                         attachments = listOf(displayAttachment),
@@ -800,10 +805,11 @@ private fun MessageBubble(
     onImageLoaded: () -> Unit,
 ) {
     val imageAttachments = message.attachments.filter { it.kind == "image" }
+    val voiceAttachments = message.attachments.filter { it.kind == "voice" }
     val displayText = when {
         message.text.isNotBlank() -> message.text
         imageAttachments.isNotEmpty() -> ""
-        message.attachments.any { it.kind == "voice" } -> "语音"
+        voiceAttachments.isNotEmpty() -> ""
         message.attachments.any { it.kind == "file" } -> "文件"
         else -> ""
     }
@@ -878,6 +884,16 @@ private fun MessageBubble(
             shadowElevation = 2.dp,
         ) {
             Column(modifier = Modifier.padding(start = 11.dp, top = 7.dp, end = 10.dp, bottom = 6.dp)) {
+                voiceAttachments.forEach { attachment ->
+                    VoiceMessageContent(
+                        repository = repository,
+                        attachment = attachment,
+                        fromUser = message.fromUser,
+                    )
+                    if (displayText.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                }
                 imageAttachments.forEach { attachment ->
                     AttachmentImage(
                         repository = repository,
@@ -977,6 +993,67 @@ private fun AttachmentImage(
                 color = MaterialTheme.colorScheme.secondary,
                 fontSize = 12.sp,
                 lineHeight = 16.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceMessageContent(
+    repository: NenoRepository,
+    attachment: MobileAttachment,
+    fromUser: Boolean,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isPlaying by remember(attachment.localUri, attachment.url, attachment.mediaPath) {
+        mutableStateOf(false)
+    }
+    val transcript = attachment.textHint
+        ?.trim()
+        ?.takeIf { it.isNotBlank() && !it.endsWith(".wav") && !it.endsWith(".m4a") && !it.endsWith(".mp3") }
+
+    Column(
+        modifier = Modifier.widthIn(min = 148.dp, max = 196.dp),
+        horizontalAlignment = if (fromUser) Alignment.End else Alignment.Start,
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                .clickable(enabled = !isPlaying) {
+                    scope.launch {
+                        isPlaying = true
+                        runCatching {
+                            playVoiceAttachment(context, repository, attachment)
+                        }
+                        isPlaying = false
+                    }
+                }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(
+                icon = NenoIcon.Mic,
+                modifier = Modifier.size(17.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isPlaying) "播放中" else "听",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        if (transcript != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "转文字：$transcript",
+                color = MaterialTheme.colorScheme.secondary,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
             )
         }
     }
@@ -1116,6 +1193,29 @@ internal fun ChatInputBar(
         }
     }
 
+    val voiceHoldModifier = Modifier.pointerInput(voiceMode, isSending, hasDraft) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val longPress = awaitLongPressOrCancellation(down.id)
+            if (longPress != null && !hasDraft && !isSending) {
+                voiceCanceling = false
+                onVoiceHoldStart()
+                var cancelled = false
+                do {
+                    val event = awaitPointerEvent()
+                    val pointer = event.changes.firstOrNull { it.id == down.id }
+                        ?: event.changes.firstOrNull()
+                    cancelled = pointer?.position?.y?.let { y ->
+                        y < down.position.y - cancelThresholdPx
+                    } ?: false
+                    voiceCanceling = cancelled
+                } while (event.changes.any { it.pressed })
+                onVoiceHoldEnd(cancelled)
+                voiceCanceling = false
+            }
+        }
+    }
+
     Box(
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -1160,28 +1260,7 @@ internal fun ChatInputBar(
                                     MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
                                 },
                             )
-                            .pointerInput(voiceMode, isSending, isRecording) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val longPress = awaitLongPressOrCancellation(down.id)
-                                if (longPress != null && voiceMode && !isSending) {
-                                    voiceCanceling = false
-                                    onVoiceHoldStart()
-                                    var cancelled = false
-                                    do {
-                                        val event = awaitPointerEvent()
-                                        val pointer = event.changes.firstOrNull { it.id == down.id }
-                                            ?: event.changes.firstOrNull()
-                                        cancelled = pointer?.position?.y?.let { y ->
-                                            y < down.position.y - cancelThresholdPx
-                                        } ?: false
-                                        voiceCanceling = cancelled
-                                    } while (event.changes.any { it.pressed })
-                                    onVoiceHoldEnd(cancelled)
-                                    voiceCanceling = false
-                                }
-                            }
-                        },
+                            .then(voiceHoldModifier),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -1204,7 +1283,7 @@ internal fun ChatInputBar(
                     BasicTextField(
                         value = draft,
                         onValueChange = onDraftChange,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).then(voiceHoldModifier),
                         textStyle = TextStyle(
                             color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 12.sp,
@@ -1566,6 +1645,47 @@ private fun readLocalAttachmentBytes(context: Context, uri: Uri): ByteArray? =
     } else {
         context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
     }
+
+private suspend fun playVoiceAttachment(
+    context: Context,
+    repository: NenoRepository,
+    attachment: MobileAttachment,
+) {
+    val localUri = attachment.localUri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+    val uri = localUri ?: run {
+        val bytes = repository.downloadAttachment(attachment).getOrThrow()
+        val file = File(context.cacheDir, "neno_play_${captureTimestamp()}.m4a")
+        file.writeBytes(bytes)
+        Uri.fromFile(file)
+    }
+    suspendCancellableCoroutine { continuation ->
+        val player = MediaPlayer.create(context, uri)
+        if (player == null) {
+            continuation.resume(Unit)
+            return@suspendCancellableCoroutine
+        }
+        continuation.invokeOnCancellation {
+            runCatching {
+                player.stop()
+                player.release()
+            }
+        }
+        player.setOnCompletionListener {
+            it.release()
+            if (continuation.isActive) {
+                continuation.resume(Unit)
+            }
+        }
+        player.setOnErrorListener { mp, _, _ ->
+            mp.release()
+            if (continuation.isActive) {
+                continuation.resume(Unit)
+            }
+            true
+        }
+        player.start()
+    }
+}
 
 private data class ChatBubbleModel(
     val id: Long,

@@ -258,6 +258,9 @@ def normalize_mobile_message(
         except VoiceASRError as exc:
             _mark_mobile_input_failure(input_record, "asr", trace_id, exc)
             raise MobileInputError("这段语音我刚刚没听清，你再发一次试试。") from exc
+        for item in input_record.get("attachments", []):
+            if isinstance(item, dict) and item.get("kind") == "voice":
+                item["text_hint"] = transcript
         input_record["pipeline"]["asr"]["success"] = True
         input_record["pipeline"]["normalization"] = {"status": "success", "failed_at": None}
         if base_text:

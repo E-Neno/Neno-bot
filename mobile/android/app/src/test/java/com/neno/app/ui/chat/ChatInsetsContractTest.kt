@@ -154,11 +154,28 @@ class ChatInsetsContractTest {
         assertTrue(
             "Hold-to-talk must send on release and support sliding up to cancel.",
             source.contains("awaitLongPressOrCancellation") &&
-            source.contains("onVoiceHoldStart") &&
+                source.contains("onVoiceHoldStart") &&
                 source.contains("onVoiceHoldEnd(cancelled") &&
                 source.contains("cancelThresholdPx") &&
                 source.contains("上滑取消") &&
-                source.contains("松开取消"),
+                source.contains("松开取消") &&
+                source.contains("pointerInput(voiceMode, isSending") &&
+                !source.contains("pointerInput(voiceMode, isSending, isRecording)"),
+        )
+        assertTrue(
+            "Hold-to-talk should be always available from the empty text composer; switching voice mode only replaces text with a pure voice box.",
+            source.contains("voiceHoldModifier") &&
+                source.contains("modifier = Modifier.weight(1f).then(voiceHoldModifier)") &&
+                source.contains("if (voiceMode && !hasDraft)") &&
+                source.contains("按住说话"),
+        )
+        assertTrue(
+            "Voice messages should render like chat voice bubbles with listen and transcript actions, not as bare normalized user text.",
+            source.contains("VoiceMessageContent") &&
+                source.contains("MediaPlayer") &&
+                source.contains("听") &&
+                source.contains("转文字") &&
+                !source.contains("用户发送了一段语音"),
         )
         assertTrue(
             "The voice button should use the previous mic icon, not the waveform icon.",
