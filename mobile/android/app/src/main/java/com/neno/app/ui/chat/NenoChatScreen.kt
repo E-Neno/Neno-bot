@@ -1,5 +1,17 @@
 package com.neno.app.ui.chat
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.media.MediaRecorder
+import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,9 +20,15 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -39,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,10 +67,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +87,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.neno.app.data.AppConnectionState
+import com.neno.app.data.MobileAttachment
 import com.neno.app.data.MobileMessage
 import com.neno.app.data.NenoRepository
 import com.neno.app.ui.AsyncListState
@@ -73,6 +100,10 @@ import com.neno.app.ui.components.AvatarKind
 import com.neno.app.ui.components.NenoIcon
 import com.neno.app.ui.components.PhotoAvatar
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun NenoChatScreen(
@@ -82,11 +113,22 @@ fun NenoChatScreen(
     onOpenSettings: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var messages by remember { mutableStateOf<List<MobileMessage>?>(null) }
     var draft by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var softNotice by remember { mutableStateOf<String?>(null) }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    var activeRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var activeVoiceFile by remember { mutableStateOf<File?>(null) }
+    var isRecording by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { activeRecorder?.release() }
+        }
+    }
 
     fun reloadMessages() {
         scope.launch {
@@ -134,6 +176,202 @@ fun NenoChatScreen(
         }
     }
 
+    fun sendUploadedAttachment(kind: String, uri: Uri) {
+        if (isSending) return
+
+        val text = draft.trim()
+        val localAttachment = MobileAttachment(kind = kind, localUri = uri.toString())
+        val localId = -System.currentTimeMillis()
+        messages = messages.orEmpty() + MobileMessage(
+            id = localId,
+            role = "user",
+            text = text,
+            attachments = listOf(localAttachment),
+            pending = true,
+        )
+        draft = ""
+        isSending = true
+        errorText = null
+        softNotice = "正在上传"
+
+        scope.launch {
+            val payload = runCatching { readMobileUploadPayload(context, uri, kind) }
+            payload.fold(
+                onSuccess = { upload ->
+                    repository.uploadAttachment(
+                        kind = kind,
+                        filename = upload.filename,
+                        mimeType = upload.mimeType,
+                        bytes = upload.bytes,
+                    ).fold(
+                        onSuccess = { attachment ->
+                            val displayAttachment = attachment.copy(localUri = uri.toString())
+                            repository.sendToNeno(text, listOf(attachment)).fold(
+                                onSuccess = { response ->
+                                    val displayUserMessage = response.userMessage.copy(
+                                        text = text,
+                                        attachments = listOf(displayAttachment),
+                                    )
+                                    messages = buildList {
+                                        addAll(messages.orEmpty().filterNot { it.id == localId })
+                                        add(displayUserMessage)
+                                        response.assistantMessage?.let(::add)
+                                    }
+                                    softNotice = if (response.assistantMessage == null) "她看到了，晚点回你。" else null
+                                },
+                                onFailure = { error ->
+                                    messages = messages.orEmpty().filterNot { it.id == localId }
+                                    draft = text
+                                    errorText = error.message ?: "发送失败"
+                                    softNotice = null
+                                },
+                            )
+                        },
+                        onFailure = { error ->
+                            messages = messages.orEmpty().filterNot { it.id == localId }
+                            draft = text
+                            errorText = error.message ?: "上传失败"
+                            softNotice = null
+                        },
+                    )
+                },
+                onFailure = { error ->
+                    messages = messages.orEmpty().filterNot { it.id == localId }
+                    draft = text
+                    errorText = error.message ?: "读取文件失败"
+                    softNotice = null
+                },
+            )
+            isSending = false
+        }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { sendUploadedAttachment("image", it) }
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { sendUploadedAttachment("file", it) }
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (captured && uri != null) {
+            sendUploadedAttachment("image", uri)
+        }
+    }
+
+    fun launchCameraCapture() {
+        val uri = createCameraCaptureUri(context)
+        pendingCameraUri = uri
+        cameraLauncher.launch(uri)
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            launchCameraCapture()
+        } else {
+            errorText = "没有相机权限"
+        }
+    }
+
+    fun startVoiceRecording() {
+        if (isSending || isRecording) return
+
+        val file = createVoiceCaptureFile(context)
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
+
+        val started = runCatching {
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+        }
+
+        started.fold(
+            onSuccess = {
+                activeRecorder = recorder
+                activeVoiceFile = file
+                isRecording = true
+                errorText = null
+                softNotice = "正在录音，再点一次发送"
+            },
+            onFailure = { error ->
+                runCatching { recorder.release() }
+                runCatching { file.delete() }
+                errorText = error.message ?: "录音启动失败"
+                softNotice = null
+            },
+        )
+    }
+
+    fun stopVoiceRecording(cancelled: Boolean = false) {
+        val recorder = activeRecorder ?: return
+        val file = activeVoiceFile ?: return
+        activeRecorder = null
+        activeVoiceFile = null
+        isRecording = false
+        softNotice = null
+
+        val stopped = runCatching {
+            recorder.stop()
+            recorder.release()
+        }
+
+        if (cancelled) {
+            runCatching { file.delete() }
+            softNotice = "已取消"
+            return
+        }
+
+        stopped.fold(
+            onSuccess = {
+                sendUploadedAttachment("voice", Uri.fromFile(file))
+            },
+            onFailure = { error ->
+                runCatching { recorder.release() }
+                runCatching { file.delete() }
+                errorText = error.message ?: "录音保存失败"
+            },
+        )
+    }
+
+    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            startVoiceRecording()
+        } else {
+            errorText = "没有麦克风权限"
+        }
+    }
+
+    fun requestVoiceRecording() {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            startVoiceRecording()
+        } else {
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun stopVoiceRecordingIfActive(cancelled: Boolean) {
+        if (isRecording) {
+            stopVoiceRecording(cancelled)
+        }
+    }
+
+    fun toggleVoiceRecording() {
+        requestVoiceRecording()
+    }
+
     LaunchedEffect(repository) {
         reloadMessages()
     }
@@ -164,6 +402,7 @@ fun NenoChatScreen(
             contentAlignment = Alignment.Center,
         ) {
             ChatShell(
+                repository = repository,
                 messages = messages,
                 draft = draft,
                 onDraftChange = { draft = it },
@@ -173,6 +412,13 @@ fun NenoChatScreen(
                 presence = connectionState.chatPresenceLabel(),
                 onRetry = ::sendDraft,
                 onSend = ::sendDraft,
+                onPickImage = { imagePicker.launch("image/*") },
+                onPickCamera = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
+                onPickVoice = {},
+                onPickFile = { filePicker.launch("*/*") },
+                onVoiceHoldStart = { requestVoiceRecording() },
+                onVoiceHoldEnd = { cancelled -> stopVoiceRecordingIfActive(cancelled) },
+                isRecording = isRecording,
                 onBack = onBack,
                 onOpenSettings = onOpenSettings,
                 modifier = shellModifier,
@@ -183,6 +429,7 @@ fun NenoChatScreen(
 
 @Composable
 private fun ChatShell(
+    repository: NenoRepository,
     messages: List<MobileMessage>?,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -192,6 +439,13 @@ private fun ChatShell(
     presence: String,
     onRetry: () -> Unit,
     onSend: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickCamera: () -> Unit,
+    onPickVoice: () -> Unit,
+    onPickFile: () -> Unit,
+    onVoiceHoldStart: () -> Unit,
+    onVoiceHoldEnd: (Boolean) -> Unit,
+    isRecording: Boolean,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -213,6 +467,7 @@ private fun ChatShell(
         }
 
         MessageList(
+            repository = repository,
             messages = messages,
             isSending = isSending,
             modifier = Modifier
@@ -231,7 +486,14 @@ private fun ChatShell(
                 draft = draft,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
+                onPickImage = onPickImage,
+                onPickCamera = onPickCamera,
+                onPickVoice = onPickVoice,
+                onPickFile = onPickFile,
+                onVoiceHoldStart = onVoiceHoldStart,
+                onVoiceHoldEnd = onVoiceHoldEnd,
                 isSending = isSending,
+                isRecording = isRecording,
             )
         }
     }
@@ -361,50 +623,50 @@ private fun SoftNotice(text: String) {
 
 @Composable
 private fun MessageList(
+    repository: NenoRepository,
     messages: List<MobileMessage>?,
     isSending: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
-        Crossfade(
-            targetState = asyncListState(messages),
-            animationSpec = tween(durationMillis = 180),
-            label = "messageListState",
-        ) { state ->
-            when (state) {
-                AsyncListState.Loading -> LoadingMessageSpace(modifier = Modifier.fillMaxSize())
-                AsyncListState.Empty -> {
-                    if (isSending) {
-                        MessageLazyList(
-                            displayMessages = emptyList(),
-                            isSending = true,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        EmptyMessageSpace(modifier = Modifier.fillMaxSize())
-                    }
+        when (asyncListState(messages)) {
+            AsyncListState.Loading -> LoadingMessageSpace(modifier = Modifier.fillMaxSize())
+            AsyncListState.Empty -> {
+                if (isSending) {
+                    MessageLazyList(
+                        repository = repository,
+                        displayMessages = emptyList(),
+                        isSending = true,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    EmptyMessageSpace(modifier = Modifier.fillMaxSize())
                 }
-                AsyncListState.Content -> MessageLazyList(
-                    displayMessages = messages.orEmpty().map(::toChatBubbleModel),
-                    isSending = isSending,
-                    modifier = Modifier.fillMaxSize(),
-                )
             }
+            AsyncListState.Content -> MessageLazyList(
+                repository = repository,
+                displayMessages = messages.orEmpty().map(::toChatBubbleModel),
+                isSending = isSending,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
 
 @Composable
 private fun MessageLazyList(
+    repository: NenoRepository,
     displayMessages: List<ChatBubbleModel>,
     isSending: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     var didInitialScroll by remember { mutableStateOf(false) }
+    var imageLayoutRevision by remember { mutableStateOf(0) }
+    var previewAttachment by remember { mutableStateOf<MobileAttachment?>(null) }
     // 新消息或正在等回复时，把列表滚到最底，确保刚发的话和回复都在可视区。
     // 首次进入直接瞬跳（避免和淡入 Crossfade 叠加成卡顿）；之后的新消息才平滑滚动。
-    LaunchedEffect(displayMessages.size, isSending) {
+    LaunchedEffect(displayMessages.size, isSending, imageLayoutRevision) {
         val lastIndex = displayMessages.size - 1 + if (isSending) 1 else 0
         if (lastIndex >= 0) {
             if (didInitialScroll) {
@@ -423,13 +685,26 @@ private fun MessageLazyList(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(displayMessages, key = { it.id }) { message ->
-            MessageBubble(message = message)
+            MessageBubble(
+                repository = repository,
+                message = message,
+                onPreviewImage = { previewAttachment = it },
+                onImageLoaded = { imageLayoutRevision += 1 },
+            )
         }
         if (isSending) {
             item(key = "neno-typing") {
                 TypingBubble()
             }
         }
+    }
+
+    previewAttachment?.let { attachment ->
+        AttachmentImagePreview(
+            repository = repository,
+            attachment = attachment,
+            onDismiss = { previewAttachment = null },
+        )
     }
 }
 
@@ -457,6 +732,7 @@ private fun toChatBubbleModel(message: MobileMessage): ChatBubbleModel =
     ChatBubbleModel(
         id = message.id,
         text = message.text,
+        attachments = message.attachments,
         time = formatChatMessageTime(message.displayTime ?: message.createdAt, message.role),
         fromUser = message.role == "user",
         pending = message.pending,
@@ -517,7 +793,78 @@ private fun TypingBubble() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatBubbleModel) {
+private fun MessageBubble(
+    repository: NenoRepository,
+    message: ChatBubbleModel,
+    onPreviewImage: (MobileAttachment) -> Unit,
+    onImageLoaded: () -> Unit,
+) {
+    val imageAttachments = message.attachments.filter { it.kind == "image" }
+    val displayText = when {
+        message.text.isNotBlank() -> message.text
+        imageAttachments.isNotEmpty() -> ""
+        message.attachments.any { it.kind == "voice" } -> "语音"
+        message.attachments.any { it.kind == "file" } -> "文件"
+        else -> ""
+    }
+    if (imageAttachments.isNotEmpty()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start,
+        ) {
+            Column(
+                horizontalAlignment = if (message.fromUser) Alignment.End else Alignment.Start,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                imageAttachments.forEach { attachment ->
+                    AttachmentImage(
+                        repository = repository,
+                        attachment = attachment,
+                        onClick = { onPreviewImage(attachment) },
+                        onImageLoaded = onImageLoaded,
+                    )
+                }
+                if (displayText.isNotBlank()) {
+                    Surface(
+                        modifier = Modifier.widthIn(max = 210.dp),
+                        color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
+                        shadowElevation = 2.dp,
+                    ) {
+                        Text(
+                            text = displayText,
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.widthIn(max = 210.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start,
+                ) {
+                    Text(
+                        text = if (message.pending) "发送中" else message.time,
+                        color = MaterialTheme.colorScheme.secondary,
+                        fontSize = 9.sp,
+                        lineHeight = 11.sp,
+                    )
+                    if (message.fromUser) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        AppIcon(
+                            icon = NenoIcon.DoubleCheck,
+                            modifier = Modifier.size(13.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start,
@@ -531,12 +878,25 @@ private fun MessageBubble(message: ChatBubbleModel) {
             shadowElevation = 2.dp,
         ) {
             Column(modifier = Modifier.padding(start = 11.dp, top = 7.dp, end = 10.dp, bottom = 6.dp)) {
-                Text(
-                    text = message.text,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                )
+                imageAttachments.forEach { attachment ->
+                    AttachmentImage(
+                        repository = repository,
+                        attachment = attachment,
+                        onClick = { onPreviewImage(attachment) },
+                        onImageLoaded = onImageLoaded,
+                    )
+                    if (displayText.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                }
+                if (displayText.isNotBlank()) {
+                    Text(
+                        text = displayText,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -560,6 +920,150 @@ private fun MessageBubble(message: ChatBubbleModel) {
 }
 
 @Composable
+private fun AttachmentImage(
+    repository: NenoRepository,
+    attachment: MobileAttachment,
+    onClick: () -> Unit,
+    onImageLoaded: () -> Unit,
+) {
+    val context = LocalContext.current
+    var imageBytes by remember(attachment.localUri, attachment.url, attachment.mediaPath) {
+        mutableStateOf<ByteArray?>(null)
+    }
+
+    LaunchedEffect(attachment.localUri, attachment.url, attachment.mediaPath) {
+        imageBytes = when {
+            !attachment.localUri.isNullOrBlank() -> runCatching {
+                readLocalAttachmentBytes(context, Uri.parse(attachment.localUri))
+            }.getOrNull()
+            else -> repository.downloadAttachment(attachment).getOrNull()
+        }
+    }
+
+    val bitmap = remember(imageBytes) {
+        imageBytes?.let { bytes ->
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+    val ratio = remember(bitmap) {
+        bitmap?.let { image ->
+            image.width.toFloat() / image.height.coerceAtLeast(1).toFloat()
+        } ?: 1.33f
+    }
+
+    LaunchedEffect(bitmap) {
+        if (bitmap != null) {
+            onImageLoaded()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .width(210.dp)
+            .aspectRatio(ratio)
+            .clickable(enabled = bitmap != null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "图片",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            Text(
+                text = "图片",
+                color = MaterialTheme.colorScheme.secondary,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttachmentImagePreview(
+    repository: NenoRepository,
+    attachment: MobileAttachment,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var imageBytes by remember(attachment.localUri, attachment.url, attachment.mediaPath) {
+        mutableStateOf<ByteArray?>(null)
+    }
+
+    LaunchedEffect(attachment.localUri, attachment.url, attachment.mediaPath) {
+        imageBytes = when {
+            !attachment.localUri.isNullOrBlank() -> runCatching {
+                readLocalAttachmentBytes(context, Uri.parse(attachment.localUri))
+            }.getOrNull()
+            else -> repository.downloadAttachment(attachment).getOrNull()
+        }
+    }
+
+    val bitmap = remember(imageBytes) {
+        imageBytes?.let { bytes ->
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+    var previewScale by remember(attachment.localUri, attachment.url, attachment.mediaPath) {
+        mutableStateOf(1f)
+    }
+    var previewOffset by remember(attachment.localUri, attachment.url, attachment.mediaPath) {
+        mutableStateOf(Offset.Zero)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .clickable(onClick = onDismiss)
+                .padding(14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "图片预览",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(bitmap) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                val nextScale = (previewScale * zoom).coerceIn(1f, 5f)
+                                previewScale = nextScale
+                                previewOffset = if (nextScale == 1f) {
+                                    Offset.Zero
+                                } else {
+                                    previewOffset + pan
+                                }
+                            }
+                        }
+                        .graphicsLayer(
+                            scaleX = previewScale,
+                            scaleY = previewScale,
+                            translationX = previewOffset.x,
+                            translationY = previewOffset.y,
+                        ),
+                    contentScale = ContentScale.Fit,
+                )
+            } else {
+                Text(
+                    text = "图片加载中",
+                    color = Color.White.copy(alpha = 0.78f),
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 internal fun KeyboardAwareInputArea(content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
@@ -577,18 +1081,38 @@ internal fun ChatInputBar(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onPickImage: () -> Unit = {},
+    onPickCamera: () -> Unit = {},
+    onPickVoice: () -> Unit = {},
+    onPickFile: () -> Unit = {},
+    onVoiceHoldStart: () -> Unit = {},
+    onVoiceHoldEnd: (Boolean) -> Unit = {},
     isSending: Boolean = false,
+    isRecording: Boolean = false,
     placeholder: String = "发消息给 Neno",
 ) {
     val hasDraft = draft.trim().isNotEmpty()
     var showTools by remember { mutableStateOf(false) }
+    var voiceMode by remember { mutableStateOf(false) }
+    var voiceCanceling by remember { mutableStateOf(false) }
     val menuOffset = with(LocalDensity.current) {
         IntOffset(x = 0, y = -62.dp.roundToPx())
+    }
+    val cancelThresholdPx = with(LocalDensity.current) {
+        54.dp.toPx()
+    }
+
+    fun toggleVoiceRecording() {
+        if (!hasDraft && !isSending) {
+            voiceMode = !voiceMode
+            showTools = false
+        }
     }
 
     LaunchedEffect(hasDraft, isSending) {
         if (hasDraft || isSending) {
             showTools = false
+            voiceMode = false
         }
     }
 
@@ -611,36 +1135,99 @@ internal fun ChatInputBar(
                 PromptBoxActionButton(
                     icon = PromptBoxIcon.Mic,
                     enabled = true,
-                    containerColor = Color.Transparent,
-                    contentColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
+                    onClick = {
+                        onPickVoice()
+                        toggleVoiceRecording()
+                    },
+                    containerColor = if (voiceMode || isRecording) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    contentColor = if (voiceMode || isRecording) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
                 )
                 Spacer(modifier = Modifier.width(5.dp))
-                BasicTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    modifier = Modifier.weight(1f),
-                    textStyle = TextStyle(
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                    ),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() }),
-                    decorationBox = { innerTextField ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (draft.isBlank()) {
-                                Text(
-                                    text = placeholder,
-                                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
-                                    fontSize = 14.sp,
-                                    lineHeight = 18.sp,
-                                )
+                if (voiceMode && !hasDraft) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(38.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (isRecording) {
+                                    if (voiceCanceling) {
+                                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)
+                                    } else {
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f)
+                                    }
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+                                },
+                            )
+                            .pointerInput(voiceMode, isSending, isRecording) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val longPress = awaitLongPressOrCancellation(down.id)
+                                if (longPress != null && voiceMode && !isSending) {
+                                    voiceCanceling = false
+                                    onVoiceHoldStart()
+                                    var cancelled = false
+                                    do {
+                                        val event = awaitPointerEvent()
+                                        val pointer = event.changes.firstOrNull { it.id == down.id }
+                                            ?: event.changes.firstOrNull()
+                                        cancelled = pointer?.position?.y?.let { y ->
+                                            y < down.position.y - cancelThresholdPx
+                                        } ?: false
+                                        voiceCanceling = cancelled
+                                    } while (event.changes.any { it.pressed })
+                                    onVoiceHoldEnd(cancelled)
+                                    voiceCanceling = false
+                                }
                             }
-                            innerTextField()
-                        }
-                    },
-                )
+                        },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = when {
+                                isRecording && voiceCanceling -> "松开取消"
+                                isRecording -> "松开发送 · 上滑取消"
+                                else -> "按住说话"
+                            },
+                            color = if (isRecording && voiceCanceling) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.secondary.copy(alpha = 0.86f)
+                            },
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                } else {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = onDraftChange,
+                        modifier = Modifier.weight(1f),
+                        textStyle = TextStyle(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                        ),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { onSend() }),
+                        decorationBox = { innerTextField ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (draft.isBlank()) {
+                                    Text(
+                                        text = placeholder,
+                                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
+                                        fontSize = 14.sp,
+                                        lineHeight = 18.sp,
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        },
+                    )
+                }
                 Spacer(modifier = Modifier.width(7.dp))
                 Crossfade(
                     targetState = when {
@@ -687,7 +1274,20 @@ internal fun ChatInputBar(
                     dismissOnClickOutside = true,
                 ),
             ) {
-                PromptBoxToolMenu(onToolSelected = { showTools = false })
+                PromptBoxToolMenu(
+                    onPickImage = {
+                        showTools = false
+                        onPickImage()
+                    },
+                    onPickCamera = {
+                        showTools = false
+                        onPickCamera()
+                    },
+                    onPickFile = {
+                        showTools = false
+                        onPickFile()
+                    },
+                )
             }
         }
     }
@@ -706,7 +1306,9 @@ private enum class PromptBoxIcon {
 @Composable
 private fun PromptBoxToolMenu(
     modifier: Modifier = Modifier,
-    onToolSelected: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickCamera: () -> Unit,
+    onPickFile: () -> Unit,
 ) {
     Surface(
         modifier = modifier.width(148.dp),
@@ -720,19 +1322,19 @@ private fun PromptBoxToolMenu(
                 icon = PromptBoxIcon.Image,
                 label = "图片",
                 tint = Color(0xFF3B82F6),
-                onClick = onToolSelected,
+                onClick = onPickImage,
             )
             PromptBoxToolItem(
                 icon = PromptBoxIcon.Camera,
                 label = "相机",
                 tint = Color(0xFF8B5CF6),
-                onClick = onToolSelected,
+                onClick = onPickCamera,
             )
             PromptBoxToolItem(
                 icon = PromptBoxIcon.File,
                 label = "文件",
                 tint = Color(0xFF10B981),
-                onClick = onToolSelected,
+                onClick = onPickFile,
             )
         }
     }
@@ -904,9 +1506,71 @@ internal fun IconTapTarget(
     }
 }
 
+private data class MobileUploadPayload(
+    val filename: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)
+
+private fun readMobileUploadPayload(
+    context: Context,
+    uri: Uri,
+    kind: String,
+): MobileUploadPayload {
+    val resolver = context.contentResolver
+    val isFileUri = uri.scheme == "file"
+    val filename = if (isFileUri) {
+        File(uri.path.orEmpty()).name.takeIf { it.isNotBlank() }
+    } else {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+            }
+            ?.takeIf { it.isNotBlank() }
+    }
+        ?: uri.lastPathSegment
+        ?: "upload"
+    val mimeType = resolver.getType(uri) ?: when (kind) {
+        "image" -> "image/jpeg"
+        "voice" -> "audio/mp4"
+        else -> "application/octet-stream"
+    }
+    val bytes = if (isFileUri) {
+        File(uri.path.orEmpty()).readBytes()
+    } else {
+        resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalArgumentException("无法读取文件")
+    }
+    return MobileUploadPayload(filename = filename, mimeType = mimeType, bytes = bytes)
+}
+
+private fun createCameraCaptureUri(context: Context): Uri {
+    val file = File(context.cacheDir, "neno_camera_${captureTimestamp()}.jpg")
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
+}
+
+private fun createVoiceCaptureFile(context: Context): File =
+    File(context.cacheDir, "neno_voice_${captureTimestamp()}.m4a")
+
+private fun captureTimestamp(): String =
+    SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+
+private fun readLocalAttachmentBytes(context: Context, uri: Uri): ByteArray? =
+    if (uri.scheme == "file") {
+        File(uri.path.orEmpty()).readBytes()
+    } else {
+        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }
+
 private data class ChatBubbleModel(
     val id: Long,
     val text: String,
+    val attachments: List<MobileAttachment> = emptyList(),
     val time: String,
     val fromUser: Boolean,
     val pending: Boolean = false,

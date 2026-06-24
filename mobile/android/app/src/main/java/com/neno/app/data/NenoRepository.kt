@@ -111,12 +111,30 @@ class NenoRepository(
                 )
             }
 
-    suspend fun sendToNeno(text: String): Result<MobileSendMessageResponse> {
+    suspend fun uploadAttachment(
+        kind: String,
+        filename: String,
+        mimeType: String,
+        bytes: ByteArray,
+    ): Result<MobileAttachment> =
+        runCatching { api.uploadAttachment(kind, filename, mimeType, bytes) }
+            .onSuccess { markConnected() }
+            .onFailure { markFailure(it) }
+
+    suspend fun downloadAttachment(attachment: MobileAttachment): Result<ByteArray> =
+        runCatching { api.downloadAttachment(attachment) }
+            .onSuccess { markConnected() }
+            .onFailure { markFailure(it) }
+
+    suspend fun sendToNeno(
+        text: String,
+        attachments: List<MobileAttachment> = emptyList(),
+    ): Result<MobileSendMessageResponse> {
         val normalized = text.trim()
-        if (normalized.isBlank()) {
+        if (normalized.isBlank() && attachments.isEmpty()) {
             return Result.failure(IllegalArgumentException("消息不能为空"))
         }
-        return runCatching { api.sendMessage("neno", normalized) }
+        return runCatching { api.sendMessage("neno", normalized, attachments) }
             .onSuccess { response ->
                 markConnected()
                 mergeCachedNenoMessages(listOfNotNull(response.userMessage, response.assistantMessage))

@@ -8,3 +8,4 @@ pytest
 pilk
 dashscope
 apscheduler
+pypdf

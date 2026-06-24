@@ -70,6 +70,19 @@ class SettingsStore(context: Context) {
                 put("text", message.text)
                 put("created_at", message.createdAt)
                 put("display_time", message.displayTime)
+                put("attachments", org.json.JSONArray().apply {
+                    message.attachments.forEach { attachment ->
+                        put(org.json.JSONObject().apply {
+                            put("kind", attachment.kind)
+                            put("url", attachment.url)
+                            put("media_path", attachment.mediaPath)
+                            put("mime_type", attachment.mimeType)
+                            put("source", attachment.source)
+                            put("text_hint", attachment.textHint)
+                            put("local_uri", attachment.localUri)
+                        })
+                    }
+                })
                 put("pending", message.pending)
             })
         }
@@ -89,6 +102,7 @@ class SettingsStore(context: Context) {
                     text = item.optString("text"),
                     createdAt = item.optNullableString("created_at"),
                     displayTime = item.optNullableString("display_time"),
+                    attachments = item.optJSONArray("attachments")?.let(::parseCachedAttachments).orEmpty(),
                     pending = item.optBoolean("pending"),
                 ),
             )
@@ -125,3 +139,17 @@ class SettingsStore(context: Context) {
 
 private fun org.json.JSONObject.optNullableString(name: String): String? =
     if (isNull(name)) null else optString(name)
+
+private fun parseCachedAttachments(items: org.json.JSONArray): List<MobileAttachment> =
+    (0 until items.length()).mapNotNull { index ->
+        val item = items.optJSONObject(index) ?: return@mapNotNull null
+        MobileAttachment(
+            kind = item.optString("kind"),
+            url = item.optNullableString("url"),
+            mediaPath = item.optNullableString("media_path"),
+            mimeType = item.optNullableString("mime_type"),
+            source = item.optNullableString("source"),
+            textHint = item.optNullableString("text_hint"),
+            localUri = item.optNullableString("local_uri"),
+        )
+    }

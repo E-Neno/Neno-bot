@@ -32,7 +32,18 @@ data class MobileMessage(
     val text: String,
     val createdAt: String? = null,
     val displayTime: String? = null,
+    val attachments: List<MobileAttachment> = emptyList(),
     val pending: Boolean = false,
+)
+
+data class MobileAttachment(
+    val kind: String,
+    val url: String? = null,
+    val mediaPath: String? = null,
+    val mimeType: String? = null,
+    val source: String? = null,
+    val textHint: String? = null,
+    val localUri: String? = null,
 )
 
 data class MobileMessagesResult(

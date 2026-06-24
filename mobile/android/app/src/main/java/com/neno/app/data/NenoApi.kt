@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URLEncoder
 import java.net.URL
 
 class NenoApi(
@@ -40,8 +41,33 @@ class NenoApi(
         )
     }
 
-    suspend fun sendMessage(conversationId: String, text: String): MobileSendMessageResponse {
-        val body = JSONObject().put("text", text).toString()
+    suspend fun uploadAttachment(
+        kind: String,
+        filename: String,
+        mimeType: String,
+        bytes: ByteArray,
+    ): MobileAttachment {
+        val path = "mobile/uploads?kind=${kind.urlEncode()}&filename=${filename.urlEncode()}"
+        val json = requestJson(
+            path = path,
+            method = "POST",
+            rawBody = bytes,
+            contentType = mimeType,
+        )
+        return parseAttachment(json.getJSONObject("attachment"))
+    }
+
+    suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+        attachments: List<MobileAttachment> = emptyList(),
+    ): MobileSendMessageResponse {
+        val body = JSONObject()
+            .put("text", text)
+            .put("attachments", JSONArray().apply {
+                attachments.forEach { put(attachmentToJson(it)) }
+            })
+            .toString()
         val json = requestJson(
             path = "mobile/conversations/$conversationId/messages",
             method = "POST",
@@ -55,10 +81,20 @@ class NenoApi(
         )
     }
 
+    suspend fun downloadAttachment(attachment: MobileAttachment): ByteArray {
+        val pathOrUrl = attachment.url?.trim().orEmpty()
+        if (pathOrUrl.isBlank()) {
+            throw IOException("附件没有可下载地址")
+        }
+        return requestBytes(pathOrUrl)
+    }
+
     private suspend fun requestJson(
         path: String,
         method: String = "GET",
         body: String? = null,
+        rawBody: ByteArray? = null,
+        contentType: String? = null,
     ): JSONObject = withContext(Dispatchers.IO) {
         val token = settingsStore.token
         if (token.isBlank()) {
@@ -72,7 +108,11 @@ class NenoApi(
             readTimeout = 30_000
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Accept", "application/json")
-            if (body != null) {
+            if (rawBody != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", contentType ?: "application/octet-stream")
+                outputStream.use { it.write(rawBody) }
+            } else if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
@@ -87,9 +127,47 @@ class NenoApi(
             }
             val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (connection.responseCode !in 200..299) {
+                val errorDetail = response.errorDetail()
+                if (errorDetail.isNotBlank()) {
+                    throw IOException(errorDetail)
+                }
                 throw IOException("请求失败：HTTP ${connection.responseCode}")
             }
             JSONObject(response)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun requestBytes(pathOrUrl: String): ByteArray = withContext(Dispatchers.IO) {
+        val token = settingsStore.token
+        if (token.isBlank()) {
+            throw IOException("请先在设置里填写访问令牌")
+        }
+
+        val url = URL(resolveUrl(pathOrUrl))
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 30_000
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+
+        try {
+            val stream = if (connection.responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+            val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+            if (connection.responseCode !in 200..299) {
+                val detail = bytes.toString(Charsets.UTF_8).errorDetail()
+                if (detail.isNotBlank()) {
+                    throw IOException(detail)
+                }
+                throw IOException("请求失败：HTTP ${connection.responseCode}")
+            }
+            bytes
         } finally {
             connection.disconnect()
         }
@@ -121,9 +199,49 @@ class NenoApi(
             text = item.optString("text"),
             createdAt = item.optNullableString("created_at"),
             displayTime = item.optNullableString("display_time"),
+            attachments = parseAttachments(item.optJSONArray("attachments") ?: JSONArray()),
             pending = item.optBoolean("pending"),
         )
 
+    private fun parseAttachments(items: JSONArray): List<MobileAttachment> =
+        (0 until items.length()).map { index -> parseAttachment(items.getJSONObject(index)) }
+
+    private fun parseAttachment(item: JSONObject): MobileAttachment =
+        MobileAttachment(
+            kind = item.optString("kind"),
+            url = item.optNullableString("url"),
+            mediaPath = item.optNullableString("media_path"),
+            mimeType = item.optNullableString("mime_type"),
+            source = item.optNullableString("source"),
+            textHint = item.optNullableString("text_hint"),
+        )
+
+    private fun attachmentToJson(item: MobileAttachment): JSONObject =
+        JSONObject()
+            .put("kind", item.kind)
+            .put("url", item.url)
+            .put("media_path", item.mediaPath)
+            .put("mime_type", item.mimeType)
+            .put("source", item.source)
+            .put("text_hint", item.textHint)
+
     private fun JSONObject.optNullableString(name: String): String? =
         if (isNull(name)) null else optString(name)
+
+    private fun String.urlEncode(): String =
+        URLEncoder.encode(this, Charsets.UTF_8.name())
+
+    private fun resolveUrl(pathOrUrl: String): String =
+        when {
+            pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://") -> pathOrUrl
+            pathOrUrl.startsWith("/") -> "${settingsStore.baseUrl}${pathOrUrl}"
+            else -> "${settingsStore.baseUrl}/${pathOrUrl.trimStart('/')}"
+        }
+
+    private fun String.errorDetail(): String =
+        try {
+            JSONObject(this).optString("detail").trim()
+        } catch (_: Exception) {
+            ""
+        }
 }

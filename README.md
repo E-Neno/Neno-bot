@@ -114,9 +114,10 @@ powershell -ExecutionPolicy Bypass -File scripts\neno-llm.ps1 off
 | `POST /chat` | 无 | Web/控制台聊天入口，建议只本机监听 |
 | `POST /platform/openclaw/message` | loopback 或 `X-Platform-Token` | OpenClaw 平台消息入口 |
 | `GET /mobile/status` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 连接检测 |
+| `POST /mobile/uploads` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 上传图片、语音和文件，返回 `MediaAttachment` |
 | `GET /mobile/conversations` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 对话列表 |
 | `GET /mobile/conversations/{id}/messages` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 消息历史和状态提示 |
-| `POST /mobile/conversations/{id}/messages` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 发送消息，当前只支持 `neno` |
+| `POST /mobile/conversations/{id}/messages` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 发送文本或已上传附件，当前只支持 `neno` |
 | `WS /mobile/ws` | `Authorization: Bearer <MOBILE_TOKEN>` | Android App 前台长连接，推送 `hello`、`presence`、`pong` |
 | `/memory/*` | `X-Admin-Token` | 记忆管理 |
 | `/session/*` | `X-Admin-Token` | 会话查询和清理 |

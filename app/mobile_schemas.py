@@ -1,10 +1,12 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas import MediaAttachment
 
 
 class MobileFeatureFlags(BaseModel):
-    attachments: bool = False
+    attachments: bool = True
     notifications: bool = False
     quick_reply: bool = False
 
@@ -40,6 +42,7 @@ class MobileMessage(BaseModel):
     text: str
     created_at: str | None = None
     display_time: str | None = None
+    attachments: list[MediaAttachment] = Field(default_factory=list)
     pending: bool = False
 
 
@@ -51,7 +54,14 @@ class MobileMessagesResponse(BaseModel):
 
 
 class MobileSendMessageRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=2000)
+    text: str = Field(default="", max_length=2000)
+    attachments: list[MediaAttachment] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def text_or_attachment_required(self):
+        if not self.text.strip() and not self.attachments:
+            raise ValueError("text or attachment required")
+        return self
 
 
 class MobileSendMessageResponse(BaseModel):
@@ -59,3 +69,8 @@ class MobileSendMessageResponse(BaseModel):
     conversation_id: str
     user_message: MobileMessage
     assistant_message: MobileMessage | None = None
+
+
+class MobileUploadResponse(BaseModel):
+    success: bool = True
+    attachment: MediaAttachment

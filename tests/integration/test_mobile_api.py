@@ -32,10 +32,29 @@ def test_mobile_status_accepts_bearer_token(client, monkeypatch):
     assert body["success"] is True
     assert body["api"] == "mobile-v0"
     assert body["features"] == {
-        "attachments": False,
+        "attachments": True,
         "notifications": False,
         "quick_reply": False,
     }
+
+
+def test_mobile_upload_saves_file_and_returns_attachment(client, monkeypatch):
+    response = client.post(
+        "/mobile/uploads",
+        params={"kind": "file", "filename": "笔记.txt"},
+        headers={**mobile_headers(monkeypatch), "Content-Type": "text/plain"},
+        content=b"hello from mobile",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    attachment = body["attachment"]
+    assert attachment["kind"] == "file"
+    assert attachment["source"] == "mobile"
+    assert attachment["mime_type"] == "text/plain"
+    assert attachment["text_hint"] == "笔记.txt"
+    assert attachment["media_path"].endswith(".txt")
 
 
 def test_mobile_conversations_returns_chinese_contacts(client, monkeypatch):
@@ -48,6 +67,46 @@ def test_mobile_conversations_returns_chinese_contacts(client, monkeypatch):
     assert data["conversations"][0]["id"] == "neno"
     assert data["conversations"][0]["pinned"] is True
     assert data["conversations"][0]["kind"] == "primary"
+
+
+def test_mobile_conversations_summarize_attachment_only_messages(client, monkeypatch):
+    from app.storage.db import add_message
+
+    add_message(
+        "mobile:neno",
+        "user",
+        "[用户发送了一张图片]\n图片内容：一张截图",
+        trace_id="mobile-preview-image",
+        message_type="image",
+        source="mobile",
+        metadata={
+            "raw_input": "",
+            "attachments": [{"kind": "image", "url": "https://example.com/a.png", "source": "mobile"}],
+        },
+    )
+
+    response = client.get("/mobile/conversations", headers=mobile_headers(monkeypatch))
+
+    assert response.status_code == 200
+    assert response.json()["conversations"][0]["last_message"] == "发来一张图片"
+
+    add_message(
+        "mobile:neno",
+        "user",
+        "语音识别出来的话",
+        trace_id="mobile-preview-voice",
+        message_type="voice",
+        source="mobile",
+        metadata={
+            "raw_input": "",
+            "attachments": [{"kind": "voice", "media_path": "uploads/mobile/voice/a.m4a", "source": "mobile"}],
+        },
+    )
+
+    response = client.get("/mobile/conversations", headers=mobile_headers(monkeypatch))
+
+    assert response.status_code == 200
+    assert response.json()["conversations"][0]["last_message"] == "发来一段语音"
 
 
 def test_presence_mapping_pure():
@@ -244,6 +303,7 @@ def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client,
         "text": "在吗",
         "created_at": body["user_message"]["created_at"],
         "display_time": "14:37",
+        "attachments": [],
         "pending": False,
     }
     assert body["assistant_message"] == {
@@ -252,6 +312,7 @@ def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client,
         "text": "在。",
         "created_at": body["assistant_message"]["created_at"],
         "display_time": "14:37",
+        "attachments": [],
         "pending": False,
     }
     assert captured["session_id"] == "mobile:neno"
@@ -259,6 +320,181 @@ def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client,
     assert captured["trace_id"]
     assert captured["input_record"]["source"] == "mobile"
     assert captured["input_record"]["message_type"] == "text"
+
+
+def test_mobile_send_message_normalizes_file_attachment(client, monkeypatch, tmp_path):
+    import app.services.mobile_api_service as mobile_service
+    from app.storage.db import add_message
+
+    note = tmp_path / "note.txt"
+    note.write_text("文件里的内容", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def fake_run_chat_turn(session_id, message, trace_id=None, input_record=None):
+        captured.update(
+            {
+                "session_id": session_id,
+                "message": message,
+                "trace_id": trace_id,
+                "input_record": input_record,
+            }
+        )
+        user_id = add_message("mobile:neno", "user", message, trace_id=trace_id, source="mobile")
+        return {
+            "reply": "",
+            "trace_id": trace_id,
+            "user_message_id": user_id,
+            "assistant_message_id": None,
+        }
+
+    monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
+
+    response = client.post(
+        "/mobile/conversations/neno/messages",
+        headers=mobile_headers(monkeypatch),
+        json={
+            "text": "看看这个",
+            "attachments": [
+                {
+                    "kind": "file",
+                    "media_path": str(note),
+                    "mime_type": "text/plain",
+                    "source": "mobile",
+                    "text_hint": "note.txt",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["input_record"]["message_type"] == "file"
+    assert captured["input_record"]["pipeline"]["file"]["success"] is True
+    assert "文件里的内容" in captured["message"]
+    assert "看看这个" in captured["message"]
+
+
+def test_mobile_send_message_normalizes_voice_attachment(client, monkeypatch, tmp_path):
+    import app.services.mobile_api_service as mobile_service
+    from app.storage.db import add_message
+
+    audio = tmp_path / "voice.wav"
+    audio.write_bytes(b"fake")
+    captured: dict[str, Any] = {}
+
+    def fake_transcribe_voice(media_path: str, trace_id: str) -> str:
+        assert media_path == str(audio)
+        assert trace_id
+        return "语音识别出来的话"
+
+    def fake_run_chat_turn(session_id, message, trace_id=None, input_record=None):
+        captured.update({"message": message, "input_record": input_record})
+        user_id = add_message(
+            "mobile:neno",
+            "user",
+            message,
+            trace_id=trace_id,
+            message_type="image",
+            source="mobile",
+            metadata=input_record,
+        )
+        return {"reply": "", "trace_id": trace_id, "user_message_id": user_id, "assistant_message_id": None}
+
+    monkeypatch.setattr(mobile_service, "transcribe_voice", fake_transcribe_voice)
+    monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
+
+    response = client.post(
+        "/mobile/conversations/neno/messages",
+        headers=mobile_headers(monkeypatch),
+        json={
+            "text": "",
+            "attachments": [
+                {
+                    "kind": "voice",
+                    "media_path": str(audio),
+                    "mime_type": "audio/wav",
+                    "source": "mobile",
+                    "text_hint": "voice.wav",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["input_record"]["message_type"] == "voice"
+    assert captured["input_record"]["pipeline"]["asr"]["success"] is True
+    assert "语音识别出来的话" in captured["message"]
+
+
+def test_mobile_send_message_normalizes_image_attachment(client, monkeypatch):
+    import app.services.mobile_api_service as mobile_service
+    from app.storage.db import add_message
+
+    captured: dict[str, Any] = {}
+
+    def fake_normalize_multimodal_message(*, message, attachments, trace_id=None):
+        assert message == "这张图呢"
+        assert attachments[0].kind == "image"
+        return "[用户发送了一张图片]\n图片内容：一张截图"
+
+    def fake_run_chat_turn(session_id, message, trace_id=None, input_record=None):
+        captured.update({"message": message, "input_record": input_record})
+        user_id = add_message(
+            "mobile:neno",
+            "user",
+            message,
+            trace_id=trace_id,
+            message_type="image",
+            source="mobile",
+            metadata=input_record,
+        )
+        return {"reply": "", "trace_id": trace_id, "user_message_id": user_id, "assistant_message_id": None}
+
+    monkeypatch.setattr(mobile_service, "normalize_multimodal_message", fake_normalize_multimodal_message)
+    monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
+
+    response = client.post(
+        "/mobile/conversations/neno/messages",
+        headers=mobile_headers(monkeypatch),
+        json={
+            "text": "这张图呢",
+            "attachments": [{"kind": "image", "url": "https://example.com/a.png", "source": "mobile"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_message"]["text"] == "这张图呢"
+    assert body["user_message"]["attachments"][0]["kind"] == "image"
+    assert captured["input_record"]["message_type"] == "image"
+    assert captured["input_record"]["pipeline"]["vision"]["success"] is True
+    assert "图片内容" in captured["message"]
+    assert "图片内容" not in body["user_message"]["text"]
+
+
+def test_mobile_send_message_returns_400_when_image_normalization_fails(client, monkeypatch):
+    import app.services.mobile_api_service as mobile_service
+    from app.services.chat.multimodal_input_service import MultimodalInputError
+
+    def fake_normalize_multimodal_message(*, message, attachments, trace_id=None):
+        raise MultimodalInputError("image attachment missing input")
+
+    def fake_run_chat_turn(*args, **kwargs):
+        raise AssertionError("chat core must not run after attachment normalization fails")
+
+    monkeypatch.setattr(mobile_service, "normalize_multimodal_message", fake_normalize_multimodal_message)
+    monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
+
+    response = client.post(
+        "/mobile/conversations/neno/messages",
+        headers=mobile_headers(monkeypatch),
+        json={
+            "text": "",
+            "attachments": [{"kind": "image", "media_path": "uploads/mobile/image/a.png", "source": "mobile"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]
 
 
 def test_mobile_send_message_handles_silent_reply(client, monkeypatch):

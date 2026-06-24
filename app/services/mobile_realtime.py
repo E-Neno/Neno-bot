@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from app import config
+from app.services.mobile_api_service import _message_attachments, _message_display_text
 from app.storage.db import get_message_by_id
 
 
@@ -61,12 +62,14 @@ def _message_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     display_time = None
     if isinstance(world_time, dict):
         display_time = str(world_time.get("display_time") or "").strip() or None
+    attachments = _message_attachments(row)
     return {
         "id": int(row["id"]),
         "role": role,
-        "text": str(row.get("content") or ""),
+        "text": _message_display_text(row, attachments),
         "created_at": row.get("created_at"),
         "display_time": display_time,
+        "attachments": [item.model_dump() for item in attachments],
         "pending": False,
     }
 

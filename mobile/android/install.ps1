@@ -13,8 +13,9 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 if (-not (Test-Path $adb)) { Write-Error "adb not found: $adb"; exit 1 }
 
 # Pick the first connected device.
-$device = (& $adb devices | Select-String "device$" | Select-Object -First 1).ToString().Split("`t")[0]
-if (-not $device) { Write-Error "No connected device (adb devices is empty)"; exit 1 }
+$deviceLine = & $adb devices | Select-String "device$" | Select-Object -First 1
+if (-not $deviceLine) { Write-Error "No connected device (adb devices is empty)"; exit 1 }
+$device = $deviceLine.ToString().Split("`t")[0]
 Write-Host "Device: $device  Variant: $Variant"
 
 if ($Variant -eq "release") {

@@ -27,6 +27,7 @@ pnpm-debug.log*
 logs/
 backups/
 backup/
+uploads/
 *.bak
 *.tmp
 

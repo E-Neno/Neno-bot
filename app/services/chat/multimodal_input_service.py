@@ -39,19 +39,20 @@ def normalize_multimodal_message(
         kind=primary.kind,
         source=primary.source,
         has_url=bool(primary.url),
+        has_media_path=bool(primary.media_path),
         text_hint=bool(primary.text_hint),
         message_len=len(base_message),
     )
 
-    if not primary.url:
+    if not primary.url and not primary.media_path:
         log_event(
             "multimodal",
-            "image_attachment_missing_url",
+            "image_attachment_missing_input",
             trace_id=trace_id,
             kind=primary.kind,
             source=primary.source,
         )
-        raise MultimodalInputError("image attachment missing url")
+        raise MultimodalInputError("image attachment missing input")
 
     prompt = build_image_understanding_prompt(base_message, primary)
     log_event(

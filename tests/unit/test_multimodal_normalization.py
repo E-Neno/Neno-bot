@@ -9,6 +9,37 @@ def make_attachment() -> MediaAttachment:
         source="wx",
     )
 
+
+def test_multimodal_normalization_accepts_local_mobile_image(tmp_path):
+    image = tmp_path / "mobile.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    attachment = MediaAttachment(
+        kind="image",
+        media_path=str(image),
+        mime_type="image/png",
+        source="mobile",
+    )
+    original = service.generate_multimodal_chat_reply
+
+    def fake_generate_multimodal_chat_reply(
+        *, text_prompt: str, attachments: list[MediaAttachment], trace_id: str | None = None
+    ) -> str:
+        assert attachments[0].media_path == str(image)
+        return "image content"
+
+    service.generate_multimodal_chat_reply = fake_generate_multimodal_chat_reply
+    try:
+        normalized = service.normalize_multimodal_message(
+            message="look",
+            attachments=[attachment],
+            trace_id="test-local-mobile-image",
+        )
+    finally:
+        service.generate_multimodal_chat_reply = original
+
+    assert "image content" in normalized
+
+
 @pytest.mark.parametrize("name,message,model_output,expected_text_in_prompt,expected_in_result", [
     (
         "pure_image",

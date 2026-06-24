@@ -1,6 +1,6 @@
 # Neno Android App Handoff
 
-> Status date: 2026-06-23.
+> Status date: 2026-06-24.
 > Audience: Claude or another coding agent continuing the native Android app.
 
 ## Read First
@@ -35,18 +35,24 @@ Backend mobile API files:
 - `app/mobile_schemas.py`
 - `app/routers/mobile.py`
 - `app/services/mobile_api_service.py`
+- `app/services/mobile_upload_service.py`
+- `app/services/mobile_file_parser.py`
 - Tests: `tests/integration/test_mobile_api.py`
 
 Mobile API contract:
 
 - `GET /mobile/status`
 - `WS /mobile/ws`
+- `POST /mobile/uploads`
 - `GET /mobile/conversations`
 - `GET /mobile/conversations/neno/messages?limit=50`
 - `POST /mobile/conversations/neno/messages`
 - Authentication uses `Authorization: Bearer <MOBILE_TOKEN>`.
 - Default mobile session is controlled by `MOBILE_DEFAULT_SESSION_ID`, defaulting to `mobile:neno`.
 - `/mobile/ws` sends `hello`, then `presence`; it responds to text `ping` with `pong` and refreshes presence on idle. It is a lightweight foreground connection, not a replacement for the chat POST route.
+- `/mobile/uploads` accepts raw request bytes plus `kind` and `filename` query parameters. Supported kinds are `image`, `voice`, and `file`; files are stored under ignored `uploads/mobile/`.
+- `/mobile/conversations/neno/messages` accepts `attachments` using the existing `MediaAttachment` shape. Images reuse `normalize_multimodal_message()`, voice reuses `transcribe_voice()`, and files are parsed into text before entering the chat core.
+- File parsing supports text-like files, Markdown, CSV/TSV, JSON, log files, DOCX, and PDF via `pypdf`.
 
 Android app files:
 
@@ -71,6 +77,9 @@ Implemented UI details:
 - The app is locked to portrait in `AndroidManifest.xml`.
 - The chat screen has a Neno header, date divider, preview bubbles when there are no backend messages, and a bottom input bar.
 - The real chat loop is wired in `NenoChatScreen.kt`: optimistic pending user bubble, send via `/mobile/conversations/neno/messages`, append the real user and assistant messages, auto-scroll to the newest message, and a Neno typing indicator (three animated dots) while the reply is in flight.
+- The chat input has image/audio/file pickers. The UI reads the selected Android `Uri`, uploads raw bytes to `/mobile/uploads`, then sends the returned attachment through `/mobile/conversations/neno/messages`.
+- The mic button currently opens an audio picker. It is not a press-and-hold recorder yet.
+- The camera action currently reuses image picking. It is not a real camera capture flow yet.
 - On send failure the optimistic bubble is removed, the typed text is restored into the input box, and a Chinese error bar with `点这里重试` resends the draft.
 - If the backend returns no assistant message (presence gate stashed it), the chat shows a soft Chinese hint `她看到了，晚点回你。` instead of a silent gap.
 - The conversation list refreshes the Neno last-message preview on every return because the `when`-based nav in `AppNav.kt` disposes and re-runs `ConversationListScreen`'s `LaunchedEffect`.
@@ -118,15 +127,19 @@ Runtime evidence:
 
 ## Next Best Task
 
-The backend `/mobile/*` HTTP contract, `/mobile/ws` presence channel, Android connection state, and settings visual offset are implemented and validated on a real device.
+The backend `/mobile/*` HTTP contract, `/mobile/ws` presence channel, Android connection state, settings visual offset, and mobile attachment v1 are implemented.
 
-The next useful task is a real chat-message interaction pass:
+The next useful task is a real-device attachment pass:
 
-1. Open Neno chat on the device.
-2. Send one Chinese message.
-3. Confirm pending bubble -> typing dots -> assistant reply, auto-scrolled into view.
-4. Kill the backend mid-send and confirm the Chinese error bar appears and the typed text is restored.
-5. Return to the conversation list and confirm the Neno last-message preview updated.
+1. Reconnect wireless ADB and install the current debug APK.
+2. Open Neno chat on the device.
+3. Send one text-only Chinese message and confirm pending bubble -> typing dots -> assistant reply.
+4. Use the plus menu to send one image and one text file.
+5. Use the mic button to pick one audio file and confirm it goes through ASR.
+6. Confirm backend `uploads/mobile/` receives files and does not get tracked by git.
+7. Return to the conversation list and confirm the Neno last-message preview updated.
+
+After that, the next product-quality pass is real camera capture, press-and-hold recording, and attachment preview bubbles.
 
 Suggested backend command for local validation:
 
@@ -170,3 +183,18 @@ git diff --check
 ```
 
 If only Android UI code changed, the two Gradle commands and `git diff --check` are the minimum.
+
+Additional verification run on 2026-06-24 for mobile attachments:
+
+```powershell
+python -m pytest tests/integration/test_mobile_api.py tests/unit/test_multimodal_normalization.py tests/unit/test_multimodal_polish.py tests/unit/test_mobile_upload_service.py -q
+.\mobile\android\gradlew.bat -p .\mobile\android :app:testDebugUnitTest :app:assembleDebug --rerun-tasks
+git diff --check
+```
+
+Backend smoke checks on 2026-06-24:
+
+- `GET /mobile/status` returned `features.attachments=true`.
+- `POST /mobile/uploads?kind=file&filename=smoke.txt` returned 200 and a `MediaAttachment`.
+
+Real-device APK install was not re-run for this attachment pass because `adb devices` was empty. `adb mdns services` saw `192.168.1.5:44043`, but direct `adb connect` was refused, likely because the phone-side wireless debugging session had expired.
