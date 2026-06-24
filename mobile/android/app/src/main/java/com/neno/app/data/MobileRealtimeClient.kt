@@ -26,6 +26,7 @@ sealed interface MobileRealtimeEvent {
     data object Hello : MobileRealtimeEvent
     data object Pong : MobileRealtimeEvent
     data class Presence(val conversationId: String, val presence: String) : MobileRealtimeEvent
+    data class Message(val conversationId: String, val message: MobileMessage) : MobileRealtimeEvent
 
     companion object {
         fun parse(text: String): MobileRealtimeEvent? {
@@ -37,11 +38,28 @@ sealed interface MobileRealtimeEvent {
                     conversationId = json.optString("conversation_id"),
                     presence = json.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
                 )
+                "message" -> {
+                    val item = json.optJSONObject("message") ?: return null
+                    Message(
+                        conversationId = json.optString("conversation_id"),
+                        message = MobileMessage(
+                            id = item.optLong("id"),
+                            role = item.optString("role"),
+                            text = item.optString("text"),
+                            createdAt = item.optNullableString("created_at"),
+                            displayTime = item.optNullableString("display_time"),
+                            pending = item.optBoolean("pending"),
+                        ),
+                    )
+                }
                 else -> null
             }
         }
     }
 }
+
+private fun JSONObject.optNullableString(name: String): String? =
+    if (isNull(name)) null else optString(name)
 
 class MobileRealtimeClient(
     private val settingsStore: SettingsStore,

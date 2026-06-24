@@ -26,4 +26,32 @@ class MobileRealtimeEventTest {
         assertTrue(event is MobileRealtimeEvent.Presence)
         assertEquals("睡着了", (event as MobileRealtimeEvent.Presence).presence)
     }
+
+    @Test
+    fun parsesMessageEvent() {
+        val event = MobileRealtimeEvent.parse(
+            """
+            {
+              "type": "message",
+              "conversation_id": "neno",
+              "message": {
+                "id": 42,
+                "role": "assistant",
+                "text": "late reply",
+                "created_at": null,
+                "display_time": "23:41",
+                "pending": false
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(event is MobileRealtimeEvent.Message)
+        val messageEvent = event as MobileRealtimeEvent.Message
+        assertEquals("neno", messageEvent.conversationId)
+        assertEquals(42L, messageEvent.message.id)
+        assertEquals("assistant", messageEvent.message.role)
+        assertEquals("late reply", messageEvent.message.text)
+        assertEquals("23:41", messageEvent.message.displayTime)
+    }
 }

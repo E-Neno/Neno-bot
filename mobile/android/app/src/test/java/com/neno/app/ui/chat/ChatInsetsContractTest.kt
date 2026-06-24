@@ -33,6 +33,43 @@ class ChatInsetsContractTest {
         )
     }
 
+    @Test
+    fun mainManifestAllowsLanCleartextHttpForSideLoadedBuilds() {
+        val manifest = readMainSource("AndroidManifest.xml")
+
+        assertTrue(
+            "Main manifest must allow cleartext HTTP because side-loaded release builds talk to LAN dev servers.",
+            manifest.contains("android:usesCleartextTraffic=\"true\""),
+        )
+    }
+
+    @Test
+    fun chatInputUsesPromptBoxStyleWithoutPersistentPlaceholderTools() {
+        val source = readMainSource("com/neno/app/ui/chat/NenoChatScreen.kt")
+
+        assertTrue(
+            "Chat input should use the prompt-box composer surface.",
+            source.contains("PromptBoxActionButton") && source.contains("PromptBoxIcon"),
+        )
+        assertTrue(
+            "Prompt-box plus button should open a tool menu with image/camera/file actions.",
+            source.contains("PromptBoxToolMenu") &&
+                source.contains("\"图片\"") &&
+                source.contains("\"相机\"") &&
+                source.contains("\"文件\""),
+        )
+        assertTrue(
+            "Prompt-box tool menu must be rendered in a Popup so it does not resize the input bar or cover the plus button.",
+            source.contains("Popup(") &&
+                source.contains("PopupProperties") &&
+                !source.contains(".offset(y = (-62).dp)"),
+        )
+        assertTrue(
+            "Chat input must not keep fake smile/paperclip tools permanently visible.",
+            !source.contains("icon = NenoIcon.Smile") && !source.contains("icon = NenoIcon.Paperclip"),
+        )
+    }
+
     private fun readMainSource(relativePath: String): String {
         val userDir = Path.of(System.getProperty("user.dir"))
         val candidates = listOf(

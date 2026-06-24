@@ -305,6 +305,7 @@ private fun HermesChatShell(
                 draft = draft,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
+                isSending = isSending,
                 placeholder = "发消息给 Hermes",
             )
         }

@@ -31,6 +31,7 @@ data class MobileMessage(
     val role: String,
     val text: String,
     val createdAt: String? = null,
+    val displayTime: String? = null,
     val pending: Boolean = false,
 )
 

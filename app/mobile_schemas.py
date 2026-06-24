@@ -39,6 +39,7 @@ class MobileMessage(BaseModel):
     role: Literal["user", "assistant"]
     text: str
     created_at: str | None = None
+    display_time: str | None = None
     pending: bool = False
 
 

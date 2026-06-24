@@ -15,6 +15,18 @@ from app.storage.relationship import ensure_relationship_state
 from app.utils.logging_utils import log_event
 
 
+def _history_content_with_time(item: dict) -> str:
+    content = str(item.get("content") or "")
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    world_time = metadata.get("world_time") if isinstance(metadata, dict) else None
+    display_time = ""
+    if isinstance(world_time, dict):
+        display_time = str(world_time.get("display_time") or "").strip()
+    if display_time:
+        return f"【当时世界时间】{display_time}\n{content}"
+    return content
+
+
 def build_chat_messages(
     history: list[dict],
     message: str,
@@ -38,7 +50,7 @@ def build_chat_messages(
     # ── 会话历史（可缓存）：断点打在最后一条历史上，缓存 [系统+全部历史] 这段大头。──
     # 关键：动态上下文（时间/关系/记忆/self_state）绝不能排在历史之前，否则每次变化
     # 会把缓存前缀在历史之前打断，导致历史永远缓存不到（这是之前缓存一直不命中的根因）。
-    hist = [{"role": item["role"], "content": item["content"]} for item in history]
+    hist = [{"role": item["role"], "content": _history_content_with_time(item)} for item in history]
     if hist:
         last = hist[-1]
         content = last["content"]

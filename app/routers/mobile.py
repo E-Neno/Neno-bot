@@ -10,6 +10,7 @@ from app.mobile_schemas import (
     MobileStatusResponse,
 )
 from app.security import require_mobile_token, validate_mobile_authorization
+from app.services.mobile_realtime import register_mobile_client, unregister_mobile_client
 from app.services.mobile_api_service import (
     NENO_CONVERSATION_ID,
     DEFAULT_PRESENCE,
@@ -37,28 +38,32 @@ async def mobile_websocket(websocket: WebSocket):
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail)) from exc
 
     await websocket.accept()
+    await register_mobile_client(websocket)
     await websocket.send_json({"type": "hello", "api": "mobile-v0"})
     await _send_presence_event(websocket)
 
-    while True:
-        try:
-            message = await asyncio.wait_for(websocket.receive_text(), timeout=15)
-        except asyncio.TimeoutError:
+    try:
+        while True:
             try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=15)
+            except asyncio.TimeoutError:
+                try:
+                    await _send_presence_event(websocket)
+                except WebSocketDisconnect:
+                    break
+                continue
+            except WebSocketDisconnect:
+                break
+
+            try:
+                if message == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    continue
                 await _send_presence_event(websocket)
             except WebSocketDisconnect:
                 break
-            continue
-        except WebSocketDisconnect:
-            break
-
-        try:
-            if message == "ping":
-                await websocket.send_json({"type": "pong"})
-                continue
-            await _send_presence_event(websocket)
-        except WebSocketDisconnect:
-            break
+    finally:
+        unregister_mobile_client(websocket)
 
 
 async def _send_presence_event(websocket: WebSocket):

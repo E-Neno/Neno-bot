@@ -69,6 +69,23 @@ def test_no_dynamic_context_message_block_only():
     assert not _cache_blocks(user["content"])
 
 
+def test_history_messages_include_frozen_world_time():
+    msgs, _ = build_chat_messages(
+        history=[
+            {
+                "role": "user",
+                "content": "last night",
+                "metadata": {"world_time": {"display_time": "23:41"}},
+            },
+        ],
+        message="continue",
+    )
+
+    content = msgs[1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["text"] == "【当时世界时间】23:41\nlast night"
+
+
 def test_empty_history_no_crash_system_still_cached():
     msgs, _ = build_chat_messages(history=[], message="在吗", self_state_context="你在睡觉")
     assert msgs[0]["role"] == "system"

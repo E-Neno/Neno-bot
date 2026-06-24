@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from starlette.websockets import WebSocketDisconnect
@@ -122,6 +123,36 @@ def test_mobile_websocket_sends_hello_and_presence(client, monkeypatch):
     }
 
 
+def test_mobile_websocket_pushes_message_events(client, monkeypatch):
+    from app.services.mobile_realtime import publish_mobile_event
+
+    headers = mobile_headers(monkeypatch)
+
+    with client.websocket_connect("/mobile/ws", headers=headers) as websocket:
+        websocket.receive_json()
+        websocket.receive_json()
+        publish_mobile_event(
+            {
+                "type": "message",
+                "conversation_id": "neno",
+                "message": {
+                    "id": 42,
+                    "role": "assistant",
+                    "text": "late reply",
+                    "created_at": None,
+                    "display_time": "23:41",
+                    "pending": False,
+                },
+            }
+        )
+        event = websocket.receive_json()
+
+    assert event["type"] == "message"
+    assert event["conversation_id"] == "neno"
+    assert event["message"]["text"] == "late reply"
+    assert event["message"]["display_time"] == "23:41"
+
+
 def test_mobile_conversations_include_neno_presence(client, monkeypatch):
     import app.services.mobile_api_service as mobile_service
 
@@ -136,7 +167,16 @@ def test_mobile_conversations_include_neno_presence(client, monkeypatch):
 
 
 def test_mobile_messages_do_not_expose_debug_fields(client, monkeypatch):
+    import app.storage.db as db_storage
     from app.storage.db import add_message
+
+    db_storage.execute_write(
+        "INSERT INTO life_world_state (id, state_json, updated_at) VALUES (1, ?, ?)",
+        (
+            json.dumps({"sim_minutes": 14 * 60 + 37}),
+            "2026-06-24T14:37:00+08:00",
+        ),
+    )
 
     add_message("mobile:neno", "user", "在吗", trace_id="trace-mobile")
     add_message("mobile:neno", "assistant", "在。", trace_id="trace-mobile")
@@ -147,6 +187,7 @@ def test_mobile_messages_do_not_expose_debug_fields(client, monkeypatch):
     body = response.json()
     assert body["conversation_id"] == "neno"
     assert [item["text"] for item in body["messages"]] == ["在吗", "在。"]
+    assert [item["display_time"] for item in body["messages"]] == ["14:37", "14:37"]
     encoded = str(body)
     assert "candidate_memory_debug" not in encoded
     assert "relationship_context" not in encoded
@@ -155,6 +196,16 @@ def test_mobile_messages_do_not_expose_debug_fields(client, monkeypatch):
 
 def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client, monkeypatch):
     import app.services.mobile_api_service as mobile_service
+    import app.storage.db as db_storage
+    from app.storage.db import add_message
+
+    db_storage.execute_write(
+        "INSERT INTO life_world_state (id, state_json, updated_at) VALUES (1, ?, ?)",
+        (
+            json.dumps({"sim_minutes": 14 * 60 + 37}),
+            "2026-06-24T14:37:00+08:00",
+        ),
+    )
 
     captured: dict[str, Any] = {}
 
@@ -167,11 +218,13 @@ def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client,
                 "input_record": input_record,
             }
         )
+        user_id = add_message("mobile:neno", "user", message, trace_id=trace_id, source="mobile")
+        assistant_id = add_message("mobile:neno", "assistant", "在。", trace_id=trace_id, source="mobile")
         return {
             "reply": "在。",
             "trace_id": trace_id,
-            "user_message_id": 201,
-            "assistant_message_id": 202,
+            "user_message_id": user_id,
+            "assistant_message_id": assistant_id,
         }
 
     monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
@@ -186,17 +239,19 @@ def test_mobile_send_message_uses_mobile_source_and_returns_public_shape(client,
     body = response.json()
     assert body["conversation_id"] == "neno"
     assert body["user_message"] == {
-        "id": 201,
+        "id": body["user_message"]["id"],
         "role": "user",
         "text": "在吗",
-        "created_at": None,
+        "created_at": body["user_message"]["created_at"],
+        "display_time": "14:37",
         "pending": False,
     }
     assert body["assistant_message"] == {
-        "id": 202,
+        "id": body["assistant_message"]["id"],
         "role": "assistant",
         "text": "在。",
-        "created_at": None,
+        "created_at": body["assistant_message"]["created_at"],
+        "display_time": "14:37",
         "pending": False,
     }
     assert captured["session_id"] == "mobile:neno"

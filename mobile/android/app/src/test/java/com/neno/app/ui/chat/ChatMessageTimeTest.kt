@@ -13,4 +13,15 @@ class ChatMessageTimeTest {
     fun spaceSeparatedTimestampDisplaysHourAndMinuteOnly() {
         assertEquals("16:05", formatChatMessageTime("2026-06-23 16:05:01", "assistant"))
     }
+
+    @Test
+    fun worldClockTimeDisplaysDirectly() {
+        assertEquals("14:37", formatChatMessageTime("14:37", "assistant"))
+    }
+
+    @Test
+    fun missingTimestampDoesNotUseTemplateFallback() {
+        assertEquals("", formatChatMessageTime(null, "user"))
+        assertEquals("", formatChatMessageTime("", "assistant"))
+    }
 }

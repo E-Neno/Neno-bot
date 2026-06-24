@@ -6,7 +6,7 @@ from app import config
 from app.mobile_schemas import MobileConversation, MobileMessage
 from app.services.chat.context_builder import mask_session_id
 from app.services.chat_service import run_chat_turn
-from app.storage.db import get_session_messages
+from app.storage.db import get_message_by_id, get_session_messages
 from app.utils.logging_utils import new_trace_id
 
 
@@ -78,6 +78,16 @@ def get_mobile_status() -> dict[str, Any]:
     }
 
 
+def _message_display_time(row: dict[str, Any]) -> str | None:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    world_time = metadata.get("world_time") if isinstance(metadata, dict) else None
+    if isinstance(world_time, dict):
+        value = str(world_time.get("display_time") or "").strip()
+        if value:
+            return value
+    return None
+
+
 def _to_mobile_message(row: dict[str, Any]) -> MobileMessage | None:
     role = row.get("role")
     if role not in {"user", "assistant"}:
@@ -87,6 +97,7 @@ def _to_mobile_message(row: dict[str, Any]) -> MobileMessage | None:
         role=role,
         text=str(row.get("content") or ""),
         created_at=row.get("created_at"),
+        display_time=_message_display_time(row),
         pending=False,
     )
 
@@ -147,7 +158,8 @@ def send_mobile_message(conversation_id: str, text: str) -> tuple[MobileMessage,
             "attachments": [],
         },
     )
-    user_message = MobileMessage(
+    user_row = get_message_by_id(int(result["user_message_id"]))
+    user_message = _to_mobile_message(user_row or {}) or MobileMessage(
         id=int(result["user_message_id"]),
         role="user",
         text=normalized_text,
@@ -166,4 +178,6 @@ def send_mobile_message(conversation_id: str, text: str) -> tuple[MobileMessage,
             text=str(reply),
             created_at=None,
         )
+        assistant_row = get_message_by_id(int(assistant_message_id))
+        assistant_message = _to_mobile_message(assistant_row or {}) or assistant_message
     return user_message, assistant_message

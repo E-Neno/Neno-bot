@@ -120,6 +120,7 @@ class NenoApi(
             role = item.optString("role"),
             text = item.optString("text"),
             createdAt = item.optNullableString("created_at"),
+            displayTime = item.optNullableString("display_time"),
             pending = item.optBoolean("pending"),
         )
 

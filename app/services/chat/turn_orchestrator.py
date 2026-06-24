@@ -291,6 +291,12 @@ def run_chat_turn(
             message_type="assistant",
             source=str((input_record or {}).get("source") or "chat"),
         )
+        try:
+            from app.services.mobile_realtime import publish_mobile_message
+
+            publish_mobile_message(assistant_message_id)
+        except Exception:  # noqa: BLE001
+            pass
         # 她回应了这条消息 → 那段经历从 unspoken 翻成 expressed（已搭理）。
         mark_message_experience_expressed(msg_experience_id, trace_id=trace_id)
 
@@ -398,6 +404,12 @@ def run_chat_turn_from_persisted_user_messages(
         session_id, "assistant", reply, trace_id=trace_id,
         message_type="assistant", source=source,
     )
+    try:
+        from app.services.mobile_realtime import publish_mobile_message
+
+        publish_mobile_message(assistant_message_id)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         apply_relationship_update(session_id, message)
     except Exception:  # noqa: BLE001

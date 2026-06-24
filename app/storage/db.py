@@ -398,6 +398,17 @@ def add_message(
     metadata: dict[str, Any] | None = None,
     preview_payload: dict[str, Any] | None = None,
 ) -> int:
+    message_metadata = dict(metadata or {})
+    if "world_time" not in message_metadata:
+        try:
+            from app.services.consciousness.world_time import read_world_time_snapshot
+
+            world_time = read_world_time_snapshot()
+        except Exception:
+            world_time = None
+        if world_time is not None:
+            message_metadata["world_time"] = world_time
+
     with get_conn() as conn:
         cursor = conn.execute(
             """
@@ -420,7 +431,7 @@ def add_message(
                 trace_id,
                 message_type,
                 source,
-                json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
+                json.dumps(message_metadata, ensure_ascii=False) if message_metadata else None,
                 json.dumps(preview_payload, ensure_ascii=False) if preview_payload is not None else None,
             ),
         )
@@ -518,7 +529,7 @@ def get_recent_messages(session_id: str, limit: int = 8):
 def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dict]:
     rows = fetch_all(
         """
-        SELECT id, role, content, created_at
+        SELECT id, role, content, created_at, metadata_json
         FROM messages
         WHERE session_id = ? AND role IN ('user', 'assistant')
         ORDER BY id DESC
@@ -536,6 +547,7 @@ def get_recent_messages_by_tokens(session_id: str, token_limit: int) -> list[dic
             "role": row["role"],
             "content": row["content"],
             "created_at": row["created_at"],
+            "metadata": _decode_json_field(row["metadata_json"]),
         })
         if total >= token_limit:
             break

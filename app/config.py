@@ -48,6 +48,14 @@ DASHSCOPE_ASR_MODEL = os.getenv("DASHSCOPE_ASR_MODEL", "qwen3-asr-flash").strip(
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_PROXY = os.getenv("OPENROUTER_PROXY", "").strip() or None
 CHAT_MODEL_NAME = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
+# 主聊天回复长度上限。她是发微信不是写小作文，正常回复就几十字；
+# 这道上限主要兜住模型偶发「脑补一长串假对话」的跑飞（截断尾巴 + 不狂烧额度）。
+# 觉得截到真回复就调大，跑飞尾巴还露就调小。
+CHAT_MAX_TOKENS = _env_int("CHAT_MAX_TOKENS", 220)
+# 模型偶发会吐出对话轮次标记（如换行后的 "Assistant"/"Human"），把回复变成假的多轮转录。
+# stop 序列让生成一碰到这些标记就立即停 —— Anthropic 文档里对「模型续写角色轮次」的标准解法。
+# 都是「换行 + 英文角色词」，她真实中文回复绝不会这么写，几乎不会误伤。
+CHAT_STOP_SEQUENCES = ["\nAssistant", "\nHuman", "\nassistant", "\nUser"]
 VISION_MODEL_NAME = os.getenv("OPENROUTER_VISION_MODEL", CHAT_MODEL_NAME)
 MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 # 理解+选择层（真人感取舍）：极简 JSON 决策，要快。用 MiMo（复用上面 MIMO_* 凭据）+ 关深度思考

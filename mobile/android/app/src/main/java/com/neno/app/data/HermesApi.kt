@@ -274,27 +274,21 @@ class HermesApi(
             // Sort by timestamp
             allMessages.sortBy { it.ts }
 
-            // Phase 2: deduplicate consecutive identical user messages
-            val deduped = mutableListOf<TimestampedMsg>()
-            for (msg in allMessages) {
-                val prev = deduped.lastOrNull()
-                if (msg.role == "user" && prev != null && prev.role == "user" && prev.text == msg.text) {
-                    continue
-                }
-                deduped.add(msg)
-            }
+            // Phase 2: remove assistant tool-call-only entries (no visible content)
+            // Do this BEFORE any user-message dedup to avoid false merges
+            val cleaned = allMessages.filter { !(it.role == "assistant" && it.hasToolCalls) }
 
-            // Phase 3: (removed - trailing user messages are valid from local storage)
-
-            // Phase 4: remove assistant tool-call-only entries
-            val cleaned = deduped.filter { !(it.role == "assistant" && it.hasToolCalls) }
-
-            // Phase 5: re-dedup (Phase 4 may expose new adjacencies)
+            // Phase 3: Deduplicate ONLY truly identical adjacent messages.
+            // Use role + text + timestamp proximity (within 2s) to avoid
+            // removing same-text user messages from different conversation turns.
             val final = mutableListOf<HermesHistoryMessage>()
             for (msg in cleaned) {
                 val prev = final.lastOrNull()
-                if (msg.role == "user" && prev != null && prev.role == "user" && prev.text == msg.text) {
-                    continue
+                if (prev != null && prev.role == msg.role && prev.text == msg.text
+                    && prev.timestamp != 0.0 && msg.ts != 0.0
+                    && kotlin.math.abs(prev.timestamp - msg.ts) < 2.0
+                ) {
+                    continue  // truly duplicate (same role, text, and ~same timestamp)
                 }
                 final.add(HermesHistoryMessage(role = msg.role, text = msg.text, timestamp = msg.ts))
             }

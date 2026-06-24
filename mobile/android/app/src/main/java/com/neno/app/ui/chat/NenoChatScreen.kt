@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,14 +48,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.neno.app.data.AppConnectionState
 import com.neno.app.data.MobileMessage
 import com.neno.app.data.NenoRepository
@@ -128,6 +136,13 @@ fun NenoChatScreen(
 
     LaunchedEffect(repository) {
         reloadMessages()
+    }
+
+    LaunchedEffect(repository) {
+        repository.incomingNenoMessages.collect { incoming ->
+            messages = (messages.orEmpty().filterNot { it.id == incoming.id } + incoming)
+                .sortedBy { it.id }
+        }
     }
 
     BoxWithConstraints(
@@ -216,6 +231,7 @@ private fun ChatShell(
                 draft = draft,
                 onDraftChange = onDraftChange,
                 onSend = onSend,
+                isSending = isSending,
             )
         }
     }
@@ -441,7 +457,7 @@ private fun toChatBubbleModel(message: MobileMessage): ChatBubbleModel =
     ChatBubbleModel(
         id = message.id,
         text = message.text,
-        time = formatChatMessageTime(message.createdAt, message.role),
+        time = formatChatMessageTime(message.displayTime ?: message.createdAt, message.role),
         fromUser = message.role == "user",
         pending = message.pending,
     )
@@ -457,7 +473,7 @@ internal fun formatChatMessageTime(createdAt: String?, role: String): String {
         return "$hour:${match.groupValues[2]}"
     }
 
-    return if (role == "user") "8:41" else "8:37"
+    return ""
 }
 
 @Composable
@@ -561,70 +577,308 @@ internal fun ChatInputBar(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    isSending: Boolean = false,
     placeholder: String = "发消息给 Neno",
 ) {
+    val hasDraft = draft.trim().isNotEmpty()
+    var showTools by remember { mutableStateOf(false) }
+    val menuOffset = with(LocalDensity.current) {
+        IntOffset(x = 0, y = -62.dp.roundToPx())
+    }
+
+    LaunchedEffect(hasDraft, isSending) {
+        if (hasDraft || isSending) {
+            showTools = false
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.46f)),
+            shadowElevation = 6.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 8.dp, top = 7.dp, end = 8.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PromptBoxActionButton(
+                    icon = PromptBoxIcon.Mic,
+                    enabled = true,
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                BasicTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    textStyle = TextStyle(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (draft.isBlank()) {
+                                Text(
+                                    text = placeholder,
+                                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
+                                    fontSize = 14.sp,
+                                    lineHeight = 18.sp,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+                Spacer(modifier = Modifier.width(7.dp))
+                Crossfade(
+                    targetState = when {
+                        isSending -> PromptBoxIcon.Stop
+                        hasDraft -> PromptBoxIcon.Send
+                        else -> PromptBoxIcon.Plus
+                    },
+                    animationSpec = tween(durationMillis = 140),
+                    label = "composerAction",
+                ) { icon ->
+                    PromptBoxActionButton(
+                        icon = icon,
+                        enabled = icon != PromptBoxIcon.Stop,
+                        onClick = {
+                            when (icon) {
+                                PromptBoxIcon.Send -> onSend()
+                                PromptBoxIcon.Plus -> showTools = !showTools
+                                else -> Unit
+                            }
+                        },
+                        containerColor = if (icon == PromptBoxIcon.Send) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            Color.Transparent
+                        },
+                        contentColor = if (icon == PromptBoxIcon.Send) {
+                            MaterialTheme.colorScheme.surface
+                        } else {
+                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f)
+                        },
+                    )
+                }
+            }
+        }
+
+        if (showTools && !hasDraft && !isSending) {
+            Popup(
+                alignment = Alignment.BottomEnd,
+                offset = menuOffset,
+                onDismissRequest = { showTools = false },
+                properties = PopupProperties(
+                    focusable = true,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true,
+                ),
+            ) {
+                PromptBoxToolMenu(onToolSelected = { showTools = false })
+            }
+        }
+    }
+}
+
+private enum class PromptBoxIcon {
+    Mic,
+    Plus,
+    Send,
+    Stop,
+    Image,
+    Camera,
+    File,
+}
+
+@Composable
+private fun PromptBoxToolMenu(
+    modifier: Modifier = Modifier,
+    onToolSelected: () -> Unit,
+) {
     Surface(
+        modifier = modifier.width(148.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)),
+        shadowElevation = 10.dp,
+    ) {
+        Column(modifier = Modifier.padding(6.dp)) {
+            PromptBoxToolItem(
+                icon = PromptBoxIcon.Image,
+                label = "图片",
+                tint = Color(0xFF3B82F6),
+                onClick = onToolSelected,
+            )
+            PromptBoxToolItem(
+                icon = PromptBoxIcon.Camera,
+                label = "相机",
+                tint = Color(0xFF8B5CF6),
+                onClick = onToolSelected,
+            )
+            PromptBoxToolItem(
+                icon = PromptBoxIcon.File,
+                label = "文件",
+                tint = Color(0xFF10B981),
+                onClick = onToolSelected,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PromptBoxToolItem(
+    icon: PromptBoxIcon,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
-        shadowElevation = 1.dp,
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(
-                icon = NenoIcon.Smile,
-                modifier = Modifier.size(19.dp),
-                tint = MaterialTheme.colorScheme.secondary,
-            )
-            Spacer(modifier = Modifier.width(9.dp))
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                modifier = Modifier.weight(1f),
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                ),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-                decorationBox = { innerTextField ->
-                    if (draft.isBlank()) {
-                        Text(
-                            text = placeholder,
-                            color = MaterialTheme.colorScheme.secondary,
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                        )
-                    }
-                    innerTextField()
-                },
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            AppIcon(
-                icon = NenoIcon.Paperclip,
-                modifier = Modifier.size(19.dp),
-                tint = MaterialTheme.colorScheme.secondary,
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onSend),
-                contentAlignment = Alignment.Center,
-            ) {
-                AppIcon(
-                    icon = NenoIcon.Mic,
-                    modifier = Modifier.size(19.dp),
-                    tint = MaterialTheme.colorScheme.secondary,
+        PromptBoxIcon(icon = icon, modifier = Modifier.size(18.dp), tint = tint)
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
+        )
+    }
+}
+
+@Composable
+private fun PromptBoxActionButton(
+    icon: PromptBoxIcon,
+    enabled: Boolean = true,
+    onClick: () -> Unit = {},
+    containerColor: Color,
+    contentColor: Color,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(containerColor)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        PromptBoxIcon(
+            icon = icon,
+            modifier = Modifier.size(20.dp),
+            tint = contentColor,
+        )
+    }
+}
+
+@Composable
+private fun PromptBoxIcon(
+    icon: PromptBoxIcon,
+    modifier: Modifier = Modifier,
+    tint: Color,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val strokeWidth = w * 0.10f
+        val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        when (icon) {
+            PromptBoxIcon.Mic -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.39f, h * 0.12f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.22f, h * 0.48f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.11f, w * 0.11f),
+                    style = stroke,
                 )
+                drawArc(
+                    color = tint,
+                    startAngle = 20f,
+                    sweepAngle = 140f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.25f, h * 0.36f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.50f, h * 0.36f),
+                    style = stroke,
+                )
+                drawLine(tint, Offset(w * 0.50f, h * 0.72f), Offset(w * 0.50f, h * 0.86f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+
+            PromptBoxIcon.Plus -> {
+                drawLine(tint, Offset(w * 0.50f, h * 0.24f), Offset(w * 0.50f, h * 0.76f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.24f, h * 0.50f), Offset(w * 0.76f, h * 0.50f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+
+            PromptBoxIcon.Send -> {
+                drawLine(tint, Offset(w * 0.50f, h * 0.78f), Offset(w * 0.50f, h * 0.22f), strokeWidth = strokeWidth * 1.15f, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.50f, h * 0.22f), Offset(w * 0.28f, h * 0.44f), strokeWidth = strokeWidth * 1.15f, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.50f, h * 0.22f), Offset(w * 0.72f, h * 0.44f), strokeWidth = strokeWidth * 1.15f, cap = StrokeCap.Round)
+            }
+
+            PromptBoxIcon.Stop -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.30f, h * 0.30f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.40f, h * 0.40f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
+                )
+            }
+
+            PromptBoxIcon.Image -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.16f, h * 0.22f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.68f, h * 0.56f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
+                    style = stroke,
+                )
+                drawCircle(tint, radius = w * 0.07f, center = Offset(w * 0.36f, h * 0.38f))
+                drawLine(tint, Offset(w * 0.22f, h * 0.72f), Offset(w * 0.44f, h * 0.54f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.44f, h * 0.54f), Offset(w * 0.58f, h * 0.66f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.58f, h * 0.66f), Offset(w * 0.78f, h * 0.46f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+
+            PromptBoxIcon.Camera -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.16f, h * 0.30f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.68f, h * 0.44f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
+                    style = stroke,
+                )
+                drawLine(tint, Offset(w * 0.38f, h * 0.30f), Offset(w * 0.44f, h * 0.20f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.44f, h * 0.20f), Offset(w * 0.62f, h * 0.20f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.62f, h * 0.20f), Offset(w * 0.68f, h * 0.30f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawCircle(tint, radius = w * 0.13f, center = Offset(w * 0.50f, h * 0.52f), style = stroke)
+            }
+
+            PromptBoxIcon.File -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.24f, h * 0.14f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.52f, h * 0.72f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f, w * 0.06f),
+                    style = stroke,
+                )
+                drawLine(tint, Offset(w * 0.36f, h * 0.40f), Offset(w * 0.64f, h * 0.40f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.36f, h * 0.56f), Offset(w * 0.64f, h * 0.56f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.36f, h * 0.72f), Offset(w * 0.54f, h * 0.72f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
             }
         }
     }

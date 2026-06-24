@@ -2,12 +2,27 @@ import base64
 import mimetypes
 from pathlib import Path
 
+import re
+
 from app.config import (
+    CHAT_MAX_TOKENS,
     CHAT_MODEL_NAME,
+    CHAT_STOP_SEQUENCES,
     OPENROUTER_API_KEY,
     OPENROUTER_URL,
     VISION_MODEL_NAME,
 )
+
+# 兜底：stop 序列拦不住出现在「最开头」（前面没换行）的角色标签，这里把开头的剥掉。
+_LEADING_ROLE_LABEL = re.compile(r"^\s*(?:assistant|human|user)\s*[:：]?\s*", re.IGNORECASE)
+
+
+def _strip_leading_role_label(text: str) -> str:
+    out, prev = text, None
+    while out != prev:
+        prev = out
+        out = _LEADING_ROLE_LABEL.sub("", out, count=1)
+    return out
 from app.llm.openrouter_client import chat_with_openrouter, multimodal_chat_with_openrouter
 from app.schemas import MediaAttachment
 from app.utils.logging_utils import log_event
@@ -25,6 +40,8 @@ def request_model_response(
     messages: list[dict],
     timeout: int = 60,
     trace_id: str | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
 ) -> str:
     return chat_with_openrouter(
         api_key=require_api_key(),
@@ -33,16 +50,21 @@ def request_model_response(
         messages=messages,
         timeout=timeout,
         trace_id=trace_id,
+        max_tokens=max_tokens,
+        stop=stop,
     )
 
 
 def generate_chat_reply(messages: list[dict], trace_id: str | None = None) -> str:
-    return request_model_response(
+    reply = request_model_response(
         model_name=CHAT_MODEL_NAME,
         messages=messages,
         timeout=60,
         trace_id=trace_id,
+        max_tokens=CHAT_MAX_TOKENS,
+        stop=CHAT_STOP_SEQUENCES,
     )
+    return _strip_leading_role_label(reply)
 
 
 def generate_multimodal_chat_reply(

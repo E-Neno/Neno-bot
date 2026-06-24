@@ -20,6 +20,8 @@ def chat_with_openrouter(
     timeout: int = 60,
     trace_id: str | None = None,
     extra_body: dict | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
 ) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -30,6 +32,12 @@ def chat_with_openrouter(
         "model": model_name,
         "messages": messages,
     }
+    if max_tokens is not None:
+        # 回复长度上限：兜住模型偶发跑飞（脑补一长串假对话），顺便省 token。
+        payload["max_tokens"] = int(max_tokens)
+    if stop:
+        # 角色轮次标记（如换行后的 "Assistant"）一出现就停，防止污染入库引发反馈环。
+        payload["stop"] = list(stop)
     if model_name.startswith("anthropic/"):
         payload["provider"] = {"order": ["Anthropic"]}
     if extra_body:

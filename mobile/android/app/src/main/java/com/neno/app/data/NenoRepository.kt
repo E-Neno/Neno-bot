@@ -3,10 +3,12 @@ package com.neno.app.data
 import android.util.Log
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class NenoRepository(
     private val api: NenoApi,
@@ -15,6 +17,8 @@ class NenoRepository(
 ) {
     private val _connectionState = MutableStateFlow(AppConnectionState())
     val connectionState: StateFlow<AppConnectionState> = _connectionState.asStateFlow()
+    private val _incomingNenoMessages = MutableSharedFlow<MobileMessage>(extraBufferCapacity = 32)
+    val incomingNenoMessages = _incomingNenoMessages.asSharedFlow()
 
     private var realtimeStarted = false
     private val realtimeClient = MobileRealtimeClient(
@@ -29,6 +33,13 @@ class NenoRepository(
                     MobileRealtimeEvent.Hello,
                     MobileRealtimeEvent.Pong -> markConnected()
                     is MobileRealtimeEvent.Presence -> markConnected(event.presence)
+                    is MobileRealtimeEvent.Message -> {
+                        markConnected()
+                        if (event.conversationId == "neno") {
+                            mergeCachedNenoMessages(listOf(event.message))
+                            _incomingNenoMessages.tryEmit(event.message)
+                        }
+                    }
                 }
             }
 
@@ -88,11 +99,14 @@ class NenoRepository(
 
     suspend fun loadNenoMessages(): MobileMessagesResult =
         runCatching { api.messages("neno") }
-            .onSuccess { result -> markConnected(result.presence) }
+            .onSuccess { result ->
+                markConnected(result.presence)
+                settingsStore.saveNenoMessages(result.messages)
+            }
             .onFailure { markFailure(it) }
             .getOrElse {
                 MobileMessagesResult(
-                    messages = emptyList(),
+                    messages = settingsStore.getNenoMessages(),
                     presence = _connectionState.value.presence ?: DEFAULT_NENO_PRESENCE,
                 )
             }
@@ -103,7 +117,10 @@ class NenoRepository(
             return Result.failure(IllegalArgumentException("消息不能为空"))
         }
         return runCatching { api.sendMessage("neno", normalized) }
-            .onSuccess { markConnected() }
+            .onSuccess { response ->
+                markConnected()
+                mergeCachedNenoMessages(listOfNotNull(response.userMessage, response.assistantMessage))
+            }
             .onFailure { markFailure(it) }
     }
 
@@ -216,6 +233,15 @@ class NenoRepository(
 
     private fun markFailure(error: Throwable) {
         _connectionState.value = _connectionState.value.failed(error)
+    }
+
+    private fun mergeCachedNenoMessages(newMessages: List<MobileMessage>) {
+        if (newMessages.isEmpty()) return
+        val merged = (settingsStore.getNenoMessages() + newMessages)
+            .filterNot { it.pending }
+            .distinctBy { it.id }
+            .sortedBy { it.id }
+        settingsStore.saveNenoMessages(merged)
     }
 
     private var hermesSessionId: String?

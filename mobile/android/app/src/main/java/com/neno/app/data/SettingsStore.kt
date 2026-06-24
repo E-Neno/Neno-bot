@@ -61,6 +61,41 @@ class SettingsStore(context: Context) {
         prefs.edit().remove(KEY_HERMES_USER_MSGS).apply()
     }
 
+    fun saveNenoMessages(messages: List<MobileMessage>) {
+        val arr = org.json.JSONArray()
+        messages.takeLast(MAX_CACHED_NENO_MESSAGES).forEach { message ->
+            arr.put(org.json.JSONObject().apply {
+                put("id", message.id)
+                put("role", message.role)
+                put("text", message.text)
+                put("created_at", message.createdAt)
+                put("display_time", message.displayTime)
+                put("pending", message.pending)
+            })
+        }
+        prefs.edit().putString(KEY_NENO_MESSAGES, arr.toString()).apply()
+    }
+
+    fun getNenoMessages(): List<MobileMessage> {
+        val raw = prefs.getString(KEY_NENO_MESSAGES, "[]") ?: "[]"
+        val arr = runCatching { org.json.JSONArray(raw) }.getOrDefault(org.json.JSONArray())
+        val result = mutableListOf<MobileMessage>()
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            result.add(
+                MobileMessage(
+                    id = item.optLong("id"),
+                    role = item.optString("role"),
+                    text = item.optString("text"),
+                    createdAt = item.optNullableString("created_at"),
+                    displayTime = item.optNullableString("display_time"),
+                    pending = item.optBoolean("pending"),
+                ),
+            )
+        }
+        return result
+    }
+
     val hermesConfigured: Boolean
         get() = hermesBaseUrl.isNotBlank() && hermesApiKey.isNotBlank()
 
@@ -78,6 +113,8 @@ class SettingsStore(context: Context) {
         private const val KEY_HERMES_API_KEY = "hermes_api_key"
         private const val KEY_HERMES_SESSION_ID = "hermes_session_id"
         private const val KEY_HERMES_USER_MSGS = "hermes_user_msgs"
+        private const val KEY_NENO_MESSAGES = "neno_messages"
+        private const val MAX_CACHED_NENO_MESSAGES = 100
 
         fun normalizeBaseUrl(value: String): String {
             val normalized = value.trim().trimEnd('/')
@@ -85,3 +122,6 @@ class SettingsStore(context: Context) {
         }
     }
 }
+
+private fun org.json.JSONObject.optNullableString(name: String): String? =
+    if (isNull(name)) null else optString(name)

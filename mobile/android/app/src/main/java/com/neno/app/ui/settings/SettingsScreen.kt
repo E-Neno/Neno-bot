@@ -1,6 +1,7 @@
 package com.neno.app.ui.settings
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,12 +16,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -36,6 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -371,6 +379,13 @@ private fun NenoField(
     label: String,
     isPassword: Boolean = false,
 ) {
+    var passwordVisible by remember { mutableStateOf(false) }
+    val visualTransformation = if (isPassword && !passwordVisible) {
+        PasswordVisualTransformation()
+    } else {
+        VisualTransformation.None
+    }
+
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -378,7 +393,19 @@ private fun NenoField(
         label = { Text(label) },
         singleLine = true,
         shape = RoundedCornerShape(8.dp),
-        visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+        visualTransformation = visualTransformation,
+        trailingIcon = if (isPassword) {
+            {
+                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    PasswordVisibilityIcon(
+                        visible = passwordVisible,
+                        contentDescription = if (passwordVisible) "隐藏$label" else "显示$label",
+                    )
+                }
+            }
+        } else {
+            null
+        },
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
@@ -386,6 +413,43 @@ private fun NenoField(
             unfocusedContainerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.50f),
         ),
     )
+}
+
+@Composable
+private fun PasswordVisibilityIcon(
+    visible: Boolean,
+    contentDescription: String,
+) {
+    val color = MaterialTheme.colorScheme.secondary
+    Canvas(
+        modifier = Modifier
+            .size(22.dp)
+            .semantics { this.contentDescription = contentDescription },
+    ) {
+        val strokeWidth = 1.7.dp.toPx()
+        val insetX = 1.5.dp.toPx()
+        val eyeHeight = size.height * 0.52f
+        val eyeTop = (size.height - eyeHeight) / 2f
+        drawOval(
+            color = color,
+            topLeft = Offset(insetX, eyeTop),
+            size = Size(size.width - insetX * 2f, eyeHeight),
+            style = Stroke(width = strokeWidth),
+        )
+        drawCircle(
+            color = color,
+            radius = if (visible) 3.2.dp.toPx() else 2.4.dp.toPx(),
+            center = center,
+        )
+        if (!visible) {
+            drawLine(
+                color = color,
+                start = Offset(size.width * 0.74f, size.height * 0.24f),
+                end = Offset(size.width * 0.26f, size.height * 0.76f),
+                strokeWidth = strokeWidth,
+            )
+        }
+    }
 }
 
 @Composable
