@@ -19,6 +19,7 @@ class NenoAttachmentContractTest {
                 modelSource.contains("url") &&
                 modelSource.contains("mediaPath") &&
                 modelSource.contains("textHint") &&
+                modelSource.contains("durationMs") &&
                 modelSource.contains("localUri"),
         )
         assertTrue(
@@ -34,7 +35,8 @@ class NenoAttachmentContractTest {
         assertTrue(
             "NenoApi.sendMessage must serialize attachments into the message JSON body.",
             apiSource.contains("attachments") &&
-                apiSource.contains("attachmentToJson"),
+                apiSource.contains("attachmentToJson") &&
+                apiSource.contains("duration_ms"),
         )
         assertTrue(
             "NenoApi should surface backend error detail instead of hiding it behind a bare HTTP code.",

@@ -214,6 +214,7 @@ class NenoApi(
             mimeType = item.optNullableString("mime_type"),
             source = item.optNullableString("source"),
             textHint = item.optNullableString("text_hint"),
+            durationMs = item.optNullableLong("duration_ms"),
         )
 
     private fun attachmentToJson(item: MobileAttachment): JSONObject =
@@ -224,9 +225,13 @@ class NenoApi(
             .put("mime_type", item.mimeType)
             .put("source", item.source)
             .put("text_hint", item.textHint)
+            .put("duration_ms", item.durationMs)
 
     private fun JSONObject.optNullableString(name: String): String? =
         if (isNull(name)) null else optString(name)
+
+    private fun JSONObject.optNullableLong(name: String): Long? =
+        if (isNull(name)) null else optLong(name)
 
     private fun String.urlEncode(): String =
         URLEncoder.encode(this, Charsets.UTF_8.name())

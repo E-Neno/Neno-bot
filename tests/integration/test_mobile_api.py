@@ -170,11 +170,18 @@ def test_mobile_websocket_sends_hello_and_presence(client, monkeypatch):
     with client.websocket_connect("/mobile/ws", headers=headers) as websocket:
         hello = websocket.receive_json()
         presence = websocket.receive_json()
+        conversations = websocket.receive_json()
+        messages = websocket.receive_json()
         websocket.send_text("ping")
         pong = websocket.receive_json()
 
     assert hello == {"type": "hello", "api": "mobile-v0"}
     assert pong == {"type": "pong"}
+    assert conversations["type"] == "conversations"
+    assert conversations["conversations"][0]["id"] == "neno"
+    assert messages["type"] == "messages"
+    assert messages["conversation_id"] == "neno"
+    assert isinstance(messages["messages"], list)
     assert presence == {
         "type": "presence",
         "conversation_id": "neno",
@@ -188,6 +195,8 @@ def test_mobile_websocket_pushes_message_events(client, monkeypatch):
     headers = mobile_headers(monkeypatch)
 
     with client.websocket_connect("/mobile/ws", headers=headers) as websocket:
+        websocket.receive_json()
+        websocket.receive_json()
         websocket.receive_json()
         websocket.receive_json()
         publish_mobile_event(

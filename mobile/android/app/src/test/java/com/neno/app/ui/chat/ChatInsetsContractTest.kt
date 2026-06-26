@@ -102,6 +102,14 @@ class ChatInsetsContractTest {
                 !source.contains("ContentScale.Crop") &&
                 !source.contains(".aspectRatio(1.22f)"),
         )
+        assertTrue(
+            "Remote image attachments should be cached on disk so returning to chat does not re-download every photo.",
+            source.contains("loadAttachmentImageBytes") &&
+                source.contains("cachedAttachmentImageFile") &&
+                source.contains("saveCachedAttachmentImageBytes") &&
+                source.contains("mobile_image_cache") &&
+                source.contains("MessageDigest.getInstance(\"SHA-256\")"),
+        )
     }
 
     @Test
@@ -139,7 +147,14 @@ class ChatInsetsContractTest {
         assertTrue(
             "Voice action should record microphone audio instead of opening an audio file picker.",
             source.contains("MediaRecorder") &&
+                source.contains("SystemClock.elapsedRealtime") &&
+                source.contains("activeVoiceStartedAtMs") &&
+                source.contains("durationMsOverride") &&
                 source.contains("Manifest.permission.RECORD_AUDIO") &&
+                source.contains("MediaRecorder.AudioSource.VOICE_RECOGNITION") &&
+                source.contains("setAudioEncodingBitRate(96_000)") &&
+                source.contains("setAudioSamplingRate(44_100)") &&
+                source.contains("setAudioChannels(1)") &&
                 source.contains("toggleVoiceRecording") &&
                 !source.contains("voicePicker.launch(\"audio/*\")"),
         )
@@ -165,13 +180,26 @@ class ChatInsetsContractTest {
         assertTrue(
             "Hold-to-talk should be always available from the empty text composer; switching voice mode only replaces text with a pure voice box.",
             source.contains("voiceHoldModifier") &&
-                source.contains("modifier = Modifier.weight(1f).then(voiceHoldModifier)") &&
+                source.contains("VoiceHoldSurface") &&
+                source.contains("VoiceRecordingOverlay") &&
+                source.contains("inputActive") &&
+                !source.contains("modifier = Modifier.weight(1f).then(voiceHoldModifier)") &&
                 source.contains("if (voiceMode && !hasDraft)") &&
                 source.contains("按住说话"),
         )
         assertTrue(
             "Voice messages should render like chat voice bubbles with listen and transcript actions, not as bare normalized user text.",
-            source.contains("VoiceMessageContent") &&
+                source.contains("VoiceMessageContent") &&
+                source.contains("VoiceWaveIcon") &&
+                source.contains("VoiceTailCorner") &&
+                source.lastIndexOf("VoiceWaveIcon(") < source.lastIndexOf("VoiceTailCorner(") &&
+                source.contains("voiceDurationLabel") &&
+                source.contains("attachment.durationMs") &&
+                source.contains("readVoiceDurationMs") &&
+                source.contains("indication = null") &&
+                source.contains("MutableInteractionSource") &&
+                source.contains("if (voiceAttachments.isNotEmpty())") &&
+                source.contains("return\n    }\n    Row(") &&
                 source.contains("MediaPlayer") &&
                 source.contains("听") &&
                 source.contains("转文字") &&
@@ -184,9 +212,16 @@ class ChatInsetsContractTest {
                 !source.contains("drawVoiceWave"),
         )
         assertTrue(
+            "Neno chat should not show fake double-check delivery/read receipts before real message status exists.",
+            !source.contains("NenoIcon.DoubleCheck"),
+        )
+        assertTrue(
             "Entering the chat should avoid crossfading the entire message list; initial load should not combine fade animation with first scroll.",
             !source.contains("Crossfade(\n            targetState = asyncListState(messages)") &&
-                source.contains("when (asyncListState(messages))"),
+                source.contains("when (asyncListState(messages))") &&
+                source.contains("ConnectionStatus.Connected") &&
+                source.contains("cached.isEmpty() || connectionState.status != ConnectionStatus.Connected") &&
+                source.contains("delay(260)"),
         )
     }
 

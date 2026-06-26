@@ -9,6 +9,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
 
 fun mobileWebSocketUrl(baseUrl: String): String {
@@ -26,6 +27,8 @@ sealed interface MobileRealtimeEvent {
     data object Hello : MobileRealtimeEvent
     data object Pong : MobileRealtimeEvent
     data class Presence(val conversationId: String, val presence: String) : MobileRealtimeEvent
+    data class Conversations(val conversations: List<MobileConversation>) : MobileRealtimeEvent
+    data class Messages(val conversationId: String, val messages: List<MobileMessage>) : MobileRealtimeEvent
     data class Message(val conversationId: String, val message: MobileMessage) : MobileRealtimeEvent
 
     companion object {
@@ -38,18 +41,18 @@ sealed interface MobileRealtimeEvent {
                     conversationId = json.optString("conversation_id"),
                     presence = json.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
                 )
+                "conversations" -> Conversations(
+                    conversations = parseRealtimeConversations(json.optJSONArray("conversations") ?: JSONArray()),
+                )
+                "messages" -> Messages(
+                    conversationId = json.optString("conversation_id"),
+                    messages = parseRealtimeMessages(json.optJSONArray("messages") ?: JSONArray()),
+                )
                 "message" -> {
                     val item = json.optJSONObject("message") ?: return null
                     Message(
                         conversationId = json.optString("conversation_id"),
-                        message = MobileMessage(
-                            id = item.optLong("id"),
-                            role = item.optString("role"),
-                            text = item.optString("text"),
-                            createdAt = item.optNullableString("created_at"),
-                            displayTime = item.optNullableString("display_time"),
-                            pending = item.optBoolean("pending"),
-                        ),
+                        message = parseRealtimeMessage(item),
                     )
                 }
                 else -> null
@@ -58,8 +61,57 @@ sealed interface MobileRealtimeEvent {
     }
 }
 
+private fun parseRealtimeConversations(items: JSONArray): List<MobileConversation> =
+    (0 until items.length()).mapNotNull { index ->
+        val item = items.optJSONObject(index) ?: return@mapNotNull null
+        MobileConversation(
+            id = item.optString("id"),
+            title = item.optString("title"),
+            subtitle = item.optString("subtitle"),
+            lastMessage = item.optString("last_message"),
+            lastMessageAt = item.optNullableString("last_message_at"),
+            unreadCount = item.optInt("unread_count"),
+            pinned = item.optBoolean("pinned"),
+            kind = item.optString("kind"),
+            presence = item.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
+        )
+    }
+
+private fun parseRealtimeMessages(items: JSONArray): List<MobileMessage> =
+    (0 until items.length()).mapNotNull { index ->
+        items.optJSONObject(index)?.let(::parseRealtimeMessage)
+    }
+
+private fun parseRealtimeMessage(item: JSONObject): MobileMessage =
+    MobileMessage(
+        id = item.optLong("id"),
+        role = item.optString("role"),
+        text = item.optString("text"),
+        createdAt = item.optNullableString("created_at"),
+        displayTime = item.optNullableString("display_time"),
+        attachments = parseRealtimeAttachments(item.optJSONArray("attachments") ?: JSONArray()),
+        pending = item.optBoolean("pending"),
+    )
+
+private fun parseRealtimeAttachments(items: JSONArray): List<MobileAttachment> =
+    (0 until items.length()).mapNotNull { index ->
+        val item = items.optJSONObject(index) ?: return@mapNotNull null
+        MobileAttachment(
+            kind = item.optString("kind"),
+            url = item.optNullableString("url"),
+            mediaPath = item.optNullableString("media_path"),
+            mimeType = item.optNullableString("mime_type"),
+            source = item.optNullableString("source"),
+            textHint = item.optNullableString("text_hint"),
+            durationMs = item.optNullableLong("duration_ms"),
+        )
+    }
+
 private fun JSONObject.optNullableString(name: String): String? =
     if (isNull(name)) null else optString(name)
+
+private fun JSONObject.optNullableLong(name: String): Long? =
+    if (isNull(name)) null else optLong(name)
 
 class MobileRealtimeClient(
     private val settingsStore: SettingsStore,

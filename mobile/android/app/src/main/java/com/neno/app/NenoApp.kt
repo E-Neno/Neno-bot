@@ -9,7 +9,7 @@ import com.neno.app.data.NenoApi
 import com.neno.app.data.NenoRepository
 import com.neno.app.data.SettingsStore
 import com.neno.app.ui.AppNav
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 
 @Composable
 fun NenoApp() {
@@ -21,10 +21,7 @@ fun NenoApp() {
         repository.startRealtime()
         try {
             repository.refreshConnection()
-            while (true) {
-                delay(30_000)
-                repository.refreshConnection()
-            }
+            awaitCancellation()
         } finally {
             repository.stopRealtime()
         }

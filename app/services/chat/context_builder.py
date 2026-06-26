@@ -19,11 +19,17 @@ def _history_content_with_time(item: dict) -> str:
     content = str(item.get("content") or "")
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     world_time = metadata.get("world_time") if isinstance(metadata, dict) else None
+    display_date = ""
     display_time = ""
     if isinstance(world_time, dict):
+        display_date = str(world_time.get("display_date") or "").strip()
         display_time = str(world_time.get("display_time") or "").strip()
     if display_time:
-        return f"【当时世界时间】{display_time}\n{content}"
+        lines = []
+        if display_date:
+            lines.append(f"【当时世界日期】{display_date}")
+        lines.append(f"【当时世界时间】{display_time}")
+        return "\n".join(lines + [content])
     return content
 
 

@@ -79,6 +79,7 @@ class SettingsStore(context: Context) {
                             put("mime_type", attachment.mimeType)
                             put("source", attachment.source)
                             put("text_hint", attachment.textHint)
+                            put("duration_ms", attachment.durationMs)
                             put("local_uri", attachment.localUri)
                         })
                     }
@@ -110,6 +111,47 @@ class SettingsStore(context: Context) {
         return result
     }
 
+    fun saveConversations(conversations: List<MobileConversation>) {
+        val arr = org.json.JSONArray()
+        conversations.forEach { conversation ->
+            arr.put(org.json.JSONObject().apply {
+                put("id", conversation.id)
+                put("title", conversation.title)
+                put("subtitle", conversation.subtitle)
+                put("last_message", conversation.lastMessage)
+                put("last_message_at", conversation.lastMessageAt)
+                put("unread_count", conversation.unreadCount)
+                put("pinned", conversation.pinned)
+                put("kind", conversation.kind)
+                put("presence", conversation.presence)
+            })
+        }
+        prefs.edit().putString(KEY_CONVERSATIONS, arr.toString()).apply()
+    }
+
+    fun getConversations(): List<MobileConversation> {
+        val raw = prefs.getString(KEY_CONVERSATIONS, "[]") ?: "[]"
+        val arr = runCatching { org.json.JSONArray(raw) }.getOrDefault(org.json.JSONArray())
+        val result = mutableListOf<MobileConversation>()
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            result.add(
+                MobileConversation(
+                    id = item.optString("id"),
+                    title = item.optString("title"),
+                    subtitle = item.optString("subtitle"),
+                    lastMessage = item.optString("last_message"),
+                    lastMessageAt = item.optNullableString("last_message_at"),
+                    unreadCount = item.optInt("unread_count"),
+                    pinned = item.optBoolean("pinned"),
+                    kind = item.optString("kind"),
+                    presence = item.optString("presence", DEFAULT_NENO_PRESENCE).ifBlank { DEFAULT_NENO_PRESENCE },
+                ),
+            )
+        }
+        return result
+    }
+
     val hermesConfigured: Boolean
         get() = hermesBaseUrl.isNotBlank() && hermesApiKey.isNotBlank()
 
@@ -128,6 +170,7 @@ class SettingsStore(context: Context) {
         private const val KEY_HERMES_SESSION_ID = "hermes_session_id"
         private const val KEY_HERMES_USER_MSGS = "hermes_user_msgs"
         private const val KEY_NENO_MESSAGES = "neno_messages"
+        private const val KEY_CONVERSATIONS = "conversations"
         private const val MAX_CACHED_NENO_MESSAGES = 100
 
         fun normalizeBaseUrl(value: String): String {
@@ -150,6 +193,10 @@ private fun parseCachedAttachments(items: org.json.JSONArray): List<MobileAttach
             mimeType = item.optNullableString("mime_type"),
             source = item.optNullableString("source"),
             textHint = item.optNullableString("text_hint"),
+            durationMs = item.optNullableLong("duration_ms"),
             localUri = item.optNullableString("local_uri"),
         )
     }
+
+private fun org.json.JSONObject.optNullableLong(name: String): Long? =
+    if (isNull(name)) null else optLong(name)

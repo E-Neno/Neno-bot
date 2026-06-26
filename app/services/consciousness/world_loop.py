@@ -513,6 +513,7 @@ class WorldLoop:
                 "ops": op_log, "micro": micro,
                 "event": (event.content if event is not None else None),
                 "sleeping": False, "phase": PHASE_ZH.get(phase, phase),
+                "real_date": now8.date().isoformat(),
                 "real_time": now8.strftime("%H:%M"),
                 "wake": wake, "wake_reason": wake_reason, "pressure": round(pressure.value, 1),
             }
@@ -552,6 +553,7 @@ class WorldLoop:
                 "action": action, "reasoning": reason, "drift": [], "ops": [],
                 "micro": micro, "event": None, "sleeping": sleeping,
                 "phase": PHASE_ZH.get(phase, phase),
+                "real_date": now8.date().isoformat(),
                 "real_time": now8.strftime("%H:%M"),
             }
             await self._world_store.write(ws)

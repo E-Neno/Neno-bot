@@ -3,6 +3,8 @@ package com.neno.app.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
@@ -59,7 +61,14 @@ fun AppNav(repository: NenoRepository) {
     AnimatedContent(
         targetState = screen,
         transitionSpec = {
-            fadeIn(animationSpec = tween(170)) togetherWith fadeOut(animationSpec = tween(120))
+            val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+            (
+                slideInHorizontally(animationSpec = tween(220)) { width -> direction * width / 5 } +
+                    fadeIn(animationSpec = tween(120))
+                ) togetherWith (
+                slideOutHorizontally(animationSpec = tween(170)) { width -> -direction * width / 8 } +
+                    fadeOut(animationSpec = tween(90))
+                )
         },
         label = "screenTransition",
     ) { currentScreen ->

@@ -73,6 +73,8 @@ async def mobile_websocket(websocket: WebSocket):
     await register_mobile_client(websocket)
     await websocket.send_json({"type": "hello", "api": "mobile-v0"})
     await _send_presence_event(websocket)
+    await _send_conversations_event(websocket)
+    await _send_messages_event(websocket)
 
     try:
         while True:
@@ -104,6 +106,25 @@ async def _send_presence_event(websocket: WebSocket):
             "type": "presence",
             "conversation_id": NENO_CONVERSATION_ID,
             "presence": await read_neno_presence(),
+        }
+    )
+
+
+async def _send_conversations_event(websocket: WebSocket):
+    await websocket.send_json(
+        {
+            "type": "conversations",
+            "conversations": [item.model_dump() for item in list_mobile_conversations()],
+        }
+    )
+
+
+async def _send_messages_event(websocket: WebSocket):
+    await websocket.send_json(
+        {
+            "type": "messages",
+            "conversation_id": NENO_CONVERSATION_ID,
+            "messages": [item.model_dump() for item in list_mobile_messages(NENO_CONVERSATION_ID, 50)],
         }
     )
 

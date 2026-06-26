@@ -19,6 +19,10 @@ class NenoRepository(
     val connectionState: StateFlow<AppConnectionState> = _connectionState.asStateFlow()
     private val _incomingNenoMessages = MutableSharedFlow<MobileMessage>(extraBufferCapacity = 32)
     val incomingNenoMessages = _incomingNenoMessages.asSharedFlow()
+    private val _nenoMessageSnapshots = MutableSharedFlow<List<MobileMessage>>(extraBufferCapacity = 4)
+    val nenoMessageSnapshots = _nenoMessageSnapshots.asSharedFlow()
+    private val _incomingConversations = MutableSharedFlow<List<MobileConversation>>(extraBufferCapacity = 8)
+    val incomingConversations = _incomingConversations.asSharedFlow()
 
     private var realtimeStarted = false
     private val realtimeClient = MobileRealtimeClient(
@@ -33,6 +37,20 @@ class NenoRepository(
                     MobileRealtimeEvent.Hello,
                     MobileRealtimeEvent.Pong -> markConnected()
                     is MobileRealtimeEvent.Presence -> markConnected(event.presence)
+                    is MobileRealtimeEvent.Conversations -> {
+                        val conversations = withHermesConversation(event.conversations)
+                        conversations.firstOrNull { it.id == "neno" }?.presence?.let(::markConnected)
+                            ?: markConnected()
+                        settingsStore.saveConversations(conversations)
+                        _incomingConversations.tryEmit(conversations)
+                    }
+                    is MobileRealtimeEvent.Messages -> {
+                        markConnected()
+                        if (event.conversationId == "neno") {
+                            replaceCachedNenoMessages(event.messages)
+                            _nenoMessageSnapshots.tryEmit(event.messages)
+                        }
+                    }
                     is MobileRealtimeEvent.Message -> {
                         markConnected()
                         if (event.conversationId == "neno") {
@@ -78,6 +96,9 @@ class NenoRepository(
     }
 
     suspend fun refreshConnection(): AppConnectionState {
+        if (isRealtimeConnected()) {
+            return _connectionState.value
+        }
         runCatching { checkStatus() }
         return _connectionState.value
     }
@@ -86,16 +107,11 @@ class NenoRepository(
         runCatching { api.conversations() }
             .onSuccess { conversations ->
                 markConnected(conversations.firstOrNull { it.id == "neno" }?.presence)
+                settingsStore.saveConversations(withHermesConversation(conversations))
             }
             .onFailure { markFailure(it) }
             .getOrElse { defaultConversations() }
-            .let { convs ->
-                if (settingsStore.hermesConfigured && convs.none { it.id == "hermes" }) {
-                    convs + hermesConversation()
-                } else {
-                    convs
-                }
-            }
+            .let(::withHermesConversation)
 
     suspend fun loadNenoMessages(): MobileMessagesResult =
         runCatching { api.messages("neno") }
@@ -110,6 +126,11 @@ class NenoRepository(
                     presence = _connectionState.value.presence ?: DEFAULT_NENO_PRESENCE,
                 )
             }
+
+    fun cachedNenoMessages(): List<MobileMessage> = settingsStore.getNenoMessages()
+
+    fun cachedConversations(): List<MobileConversation> =
+        withHermesConversation(settingsStore.getConversations().ifEmpty { defaultConversations() })
 
     suspend fun uploadAttachment(
         kind: String,
@@ -249,7 +270,13 @@ class NenoRepository(
         _connectionState.value = _connectionState.value.connected(presence)
     }
 
+    private fun isRealtimeConnected(): Boolean =
+        realtimeStarted && _connectionState.value.status == ConnectionStatus.Connected
+
     private fun markFailure(error: Throwable) {
+        if (isRealtimeConnected() && error.message?.contains("403") != true) {
+            return
+        }
         _connectionState.value = _connectionState.value.failed(error)
     }
 
@@ -261,6 +288,17 @@ class NenoRepository(
             .sortedBy { it.id }
         settingsStore.saveNenoMessages(merged)
     }
+
+    private fun replaceCachedNenoMessages(messages: List<MobileMessage>) {
+        settingsStore.saveNenoMessages(messages.filterNot { it.pending }.sortedBy { it.id })
+    }
+
+    private fun withHermesConversation(conversations: List<MobileConversation>): List<MobileConversation> =
+        if (settingsStore.hermesConfigured && conversations.none { it.id == "hermes" }) {
+            conversations + hermesConversation()
+        } else {
+            conversations
+        }
 
     private var hermesSessionId: String?
         get() = settingsStore.hermesSessionId

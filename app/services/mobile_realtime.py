@@ -53,6 +53,23 @@ def publish_mobile_event(payload: dict[str, Any]) -> None:
         )
 
 
+def _model_dump(item: Any) -> dict[str, Any]:
+    if hasattr(item, "model_dump"):
+        return item.model_dump()
+    return item.dict()
+
+
+def publish_mobile_conversations() -> None:
+    from app.services.mobile_api_service import list_mobile_conversations
+
+    publish_mobile_event(
+        {
+            "type": "conversations",
+            "conversations": [_model_dump(item) for item in list_mobile_conversations()],
+        }
+    )
+
+
 def _message_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     role = row.get("role")
     if role not in {"user", "assistant"}:
@@ -90,3 +107,4 @@ def publish_mobile_message(message_id: int | None) -> None:
             "message": payload,
         }
     )
+    publish_mobile_conversations()

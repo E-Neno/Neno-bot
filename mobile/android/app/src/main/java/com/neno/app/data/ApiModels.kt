@@ -43,6 +43,7 @@ data class MobileAttachment(
     val mimeType: String? = null,
     val source: String? = null,
     val textHint: String? = null,
+    val durationMs: Long? = null,
     val localUri: String? = null,
 )
 

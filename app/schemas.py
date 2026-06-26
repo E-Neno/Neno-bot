@@ -12,6 +12,7 @@ class MediaAttachment(BaseModel):
     mime_type: str | None = Field(default=None, max_length=128)
     source: str | None = Field(default=None, max_length=64)
     text_hint: str | None = Field(default=None, max_length=500)
+    duration_ms: int | None = Field(default=None, ge=0, le=3_600_000)
 
 
 class ChatRequest(BaseModel):

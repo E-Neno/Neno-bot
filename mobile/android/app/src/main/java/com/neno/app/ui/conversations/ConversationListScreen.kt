@@ -56,10 +56,17 @@ fun ConversationListScreen(
     onOpenSettings: () -> Unit,
     onOpenTools: () -> Unit,
 ) {
-    var conversations by remember { mutableStateOf<List<MobileConversation>?>(null) }
+    var conversations by remember(repository) { mutableStateOf<List<MobileConversation>?>(repository.cachedConversations()) }
 
     LaunchedEffect(repository) {
+        conversations = repository.cachedConversations()
         conversations = repository.loadConversations()
+    }
+
+    LaunchedEffect(repository) {
+        repository.incomingConversations.collect { snapshot ->
+            conversations = snapshot
+        }
     }
 
     BoxWithConstraints(

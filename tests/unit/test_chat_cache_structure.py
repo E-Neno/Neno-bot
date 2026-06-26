@@ -75,7 +75,12 @@ def test_history_messages_include_frozen_world_time():
             {
                 "role": "user",
                 "content": "last night",
-                "metadata": {"world_time": {"display_time": "23:41"}},
+                "metadata": {
+                    "world_time": {
+                        "display_date": "2026-06-26",
+                        "display_time": "23:41",
+                    }
+                },
             },
         ],
         message="continue",
@@ -83,7 +88,24 @@ def test_history_messages_include_frozen_world_time():
 
     content = msgs[1]["content"]
     assert isinstance(content, list)
-    assert content[0]["text"] == "【当时世界时间】23:41\nlast night"
+    assert content[0]["text"] == "【当时世界日期】2026-06-26\n【当时世界时间】23:41\nlast night"
+
+
+def test_history_messages_keep_legacy_world_time_without_date():
+    msgs, _ = build_chat_messages(
+        history=[
+            {
+                "role": "user",
+                "content": "old row",
+                "metadata": {"world_time": {"display_time": "08:56"}},
+            },
+        ],
+        message="continue",
+    )
+
+    content = msgs[1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["text"] == "【当时世界时间】08:56\nold row"
 
 
 def test_empty_history_no_crash_system_still_cached():
