@@ -543,9 +543,6 @@ export function buildConsciousnessPanel(panel, header) {
   livingCard.appendChild(createElement("div", "status-label", "反思余波"));
   livingCard.appendChild(createElement("div", "small panel-list", "还没加载"));
   livingCard.lastChild.id = "cLivingLifeResidue";
-  livingCard.appendChild(createElement("div", "status-label", "下一轮预览"));
-  livingCard.appendChild(createElement("div", "small panel-list", "还没加载"));
-  livingCard.lastChild.id = "cLivingLoopPreview";
   livingCard.appendChild(createElement("div", "status-label", "最近经历"));
   livingCard.appendChild(createElement("div", "small panel-list", "还没加载"));
   livingCard.lastChild.id = "cLivingExperiences";

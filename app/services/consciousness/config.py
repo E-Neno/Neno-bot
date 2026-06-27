@@ -58,11 +58,9 @@ class ConsciousnessConfig(BaseModel):
     heartbeat_interval_seconds: int = 300
 
     # Living World（默认关闭）
-    life_loop_enabled: bool = _env_bool("CONSCIOUSNESS_LIFE_LOOP_ENABLED", False)
     reflection_enabled: bool = _env_bool("CONSCIOUSNESS_REFLECTION_ENABLED", False)
     reflection_model_enabled: bool = _env_bool("CONSCIOUSNESS_REFLECTION_MODEL_ENABLED", False)
     expression_gate_enabled: bool = _env_bool("CONSCIOUSNESS_EXPRESSION_GATE_ENABLED", False)
-    life_loop_interval_seconds: int = int(os.getenv("CONSCIOUSNESS_LIFE_LOOP_INTERVAL_SECONDS", "1200"))
     reflection_hour: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_HOUR", "5"))
     reflection_minute: int = int(os.getenv("CONSCIOUSNESS_REFLECTION_MINUTE", "0"))
 

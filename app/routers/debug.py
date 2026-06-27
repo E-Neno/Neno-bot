@@ -791,32 +791,12 @@ def _living_world_life(state: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-async def _living_world_loop_preview() -> dict[str, Any]:
-    """只读预览：临时构造 LifeLoop 跑 dry_run。
-
-    不调用 start()（无写者协程）、不写库、不接 scheduler、不调用真实模型。
-    任何异常降级为 success=false，绝不 500。
-    """
-    try:
-        from app.services.consciousness.config import ConsciousnessConfig
-        from app.services.consciousness.experience_recorder import ExperienceRecorder
-        from app.services.consciousness.life_loop import LifeLoop
-        from app.services.consciousness.state_store import StateStore
-
-        cfg = ConsciousnessConfig()
-        loop = LifeLoop(StateStore(db=None, config=cfg), ExperienceRecorder(), cfg)
-        return await loop.dry_run("debug_living_world")
-    except Exception as exc:  # debug 只读预览不允许 500
-        return {"success": False, "reason": str(exc)}
-
-
 @router.get("/consciousness/living-world", dependencies=[Depends(require_admin_token)])
 async def consciousness_living_world(
     experience_limit: int = Query(30, ge=1, le=200),
     reflection_limit: int = Query(10, ge=1, le=50),
     memory_limit: int = Query(10, ge=1, le=50),
     experience_status: str | None = Query(None, max_length=64),
-    dry_run: bool = Query(False),
 ):
     state = _get_state_json()
     life = _living_world_life(state)
@@ -832,8 +812,6 @@ async def consciousness_living_world(
         "reflection_runs": _living_world_reflection_runs(reflection_limit),
         "long_term_memory": _living_world_memories(memory_limit),
     }
-    if dry_run:
-        payload["loop_preview"] = await _living_world_loop_preview()
     return payload
 
 

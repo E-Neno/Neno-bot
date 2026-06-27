@@ -653,7 +653,6 @@ function renderLivingList(boxId, items, renderItem, emptyText) {
 export function renderLivingWorld(data) {
   const life = data?.life || data?.state?.life || {};
   const residue = data?.life_residue || life.residue || {};
-  const previewLife = data?.loop_preview?.would_update_life || null;
 
   setOptionalText("cLivingWhere", formatPlace(life.place, life.environment));
   setOptionalText("cLivingActivityLabel", formatActivity(life.activity_label, life.current_activity));
@@ -663,30 +662,6 @@ export function renderLivingWorld(data) {
   setOptionalText("cLivingLifeAttention", life.attention || "-");
   setOptionalText("cLivingContinuity", life.continuity_note || "还没有形成连续生活片段");
   setOptionalText("cLivingLifeResidue", formatResidue(residue));
-
-  const previewBox = document.getElementById("cLivingLoopPreview");
-  if (previewBox) {
-    clearChildren(previewBox);
-    if (!data?.loop_preview) {
-      previewBox.textContent = "没有请求 dry-run 预览";
-    } else if (!data.loop_preview.success) {
-      previewBox.textContent = `预览失败：${data.loop_preview.reason || "未知原因"}`;
-    } else if (!previewLife) {
-      previewBox.textContent = "预览没有返回下一轮生活状态";
-    } else {
-      const row = document.createElement("div");
-      row.className = "check-item";
-      const head = document.createElement("div");
-      head.className = "check-name";
-      head.textContent = `下一轮可能会：${firstLine(previewLife.activity_label, previewLife.current_activity)}`;
-      row.appendChild(head);
-      appendDetail(row, "地点", formatPlace(previewLife.place, previewLife.environment));
-      appendDetail(row, "原因", previewLife.activity_reason);
-      appendDetail(row, "连续性", previewLife.continuity_note);
-      appendDetail(row, "动作", data.loop_preview.action || "would_update");
-      previewBox.appendChild(row);
-    }
-  }
 
   renderLivingList("cLivingExperiences", data?.experiences || [], (row, item) => {
     const head = document.createElement("div");
@@ -728,7 +703,7 @@ export async function loadLivingWorld() {
   try {
     setOptionalText("cLivingWorldStatus", "加载中...");
     const data = await requestJson(
-      "/debug/consciousness/living-world?dry_run=true",
+      "/debug/consciousness/living-world",
       { method: "GET", headers: getAdminHeaders() },
       "加载 Living World 失败："
     );

@@ -59,9 +59,9 @@ flowchart LR
 | `world_pressure.py` | 压力触发决策引擎：salience/accumulate/should_wake/on_wake/is_hard 纯函数，门控 LLM 调用 |
 | `world_loop.py` | 正式融合循环与控制台快照的单一实现入口 |
 
-旧的 `LifeLoop`、`LifeSimulation` 和 `ActivityEpisodeStore` 仍承担早期生活线与反思输入。
-`WorldLoop` 已复用 `ExperienceRecorder`、`ActivityEpisodeStore`、`MemoryRecall`、
-`ReflectionEngine` 和 `StateStore`，但两套生活推进模型尚未完全收敛。
+`WorldLoop` 复用 `ExperienceRecorder`、`ActivityEpisodeStore`、`MemoryRecall`、
+`ReflectionEngine` 和 `StateStore`，是生产**唯一**的生活推进模型。
+旧 `LifeLoop`/`LifeSimulation` 已退役删除（生产从未挂载，仅一个 debug 预览曾用过）。
 
 ## 4. 世界状态
 
@@ -196,7 +196,7 @@ flowchart LR
 
 | 方法 | 路径 | 行为 |
 |---|---|---|
-| `GET` | `/debug/consciousness/living-world` | 读取旧 LifeLoop、经历、反思和长期记忆视图 |
+| `GET` | `/debug/consciousness/living-world` | 读取生活状态、经历、反思和长期记忆视图（旧 LifeLoop dry-run 预览已移除）|
 | `GET` | `/debug/consciousness/world-live` | 只读新世界快照，不启动写者；额外含 `self` 块（`context`=self_context「此刻的你」/`facts`=自我库 `subject="neno"`/`pending_count`=睡着攒的消息数/`events`=魂事件流，最近在前）|
 | `POST` | `/debug/consciousness/world-tick` | 手动执行一次正式 `WorldLoop.tick()` 并写库 |
 
@@ -225,20 +225,20 @@ Living World 直接使用：
 
 这些是代码现实，不得在文档或交付中隐藏：
 
+> 双循环已收敛：旧 `LifeLoop`/`LifeSimulation` 与演示脚本 `scripts/world_live_server.py` 已退役删除，
+> 生产世界推进为 `WorldLoop` 单一模型，演示可视化由 app 内 `/test` 承担。`source="life_simulation"` 仅作经历来源标签保留。
+
 1. 世界已扩到九房间（含出门外部场所），但实体规则与长期事务深度仍有限——深度靠历史/关系/涌现，不靠堆物品。
 2. 确定性 fallback 仍是固定路线；真实 LLM 能增加选择，但不会自动补齐世界规则。
 3. `LifeEventSource` 当前按每 tick 概率触发，尚未实现严格的“每日事件上限”。
-4. `scripts/world_live_server.py` 仍保留独立 tick 逻辑，没有完全复用正式 `WorldLoop`，存在行为分叉风险。
-5. 旧 `LifeLoop/LifeSimulation` 与新 `WorldLoop` 并存，状态所有权还需进一步收敛。
-6. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
-7. 用户消息进世界、在场决策（Phase 5）、**意图通道（驱动世界行动）均已落地**（见 §5c）。刀①「她自己活成自己」
+4. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
+5. 用户消息进世界、在场决策（Phase 5）、**意图通道（驱动世界行动）均已落地**（见 §5c）。刀①「她自己活成自己」
    四块（移动/自我库/学习/意图通道）已实现并上线；但全是慢热机制，**真验收（她真不真/假不假）需用户连续跑数日体验**，尚未实跑。
-8. 测试时序 flaky：`test_reflection_engine` 的 c15 已修（加 `_safe_now()` 锚下午 + 显式 target_day，unit 套件稳定全绿）。
-   仍待去抖：① **`test_wx_session_submit_flow.py`** 系统性时序 flaky（真线程+实时聚合窗、负载敏感）——需给
-   `SessionAggregationController` 注入可控时钟，别 piecemeal 调 sleep（放宽默认窗会误伤跨窗测试）；
-   ② **`test_life_loop.py`** 少量断言按时段选活动（旧 LifeLoop 遗留，与 WorldLoop 无关），随墙钟时段偶发挂。
-9. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
-10. 精力已改真实时间积分、作息改精力阈值涌现（解决「总在睡」「夜里掉不动」两个 P0），单元测试已覆盖纯函数与 tick 集成；但**涌现作息曲线与多日牵挂因果仍待真实运行时长时段验收**（需开后端连续观察就寝相位是否锚夜、不漂移）——代码就绪，体感未实测。
+6. 测试时序 flaky：`test_reflection_engine` 的 c15 已修（加 `_safe_now()` 锚下午 + 显式 target_day，unit 套件稳定全绿）。
+   仍待去抖：**`test_wx_session_submit_flow.py`** 系统性时序 flaky（真线程+实时聚合窗、负载敏感）——需给
+   `SessionAggregationController` 注入可控时钟，别 piecemeal 调 sleep（放宽默认窗会误伤跨窗测试）。
+7. 滑行接续与压力门控只作用于 LLM 开启路径；`world_llm_enabled=False` 的纯 mock 行为保持不变，但 mock 路线本身仍是确定性固定动作。
+8. 精力已改真实时间积分、作息改精力阈值涌现（解决「总在睡」「夜里掉不动」两个 P0），单元测试已覆盖纯函数与 tick 集成；但**涌现作息曲线与多日牵挂因果仍待真实运行时长时段验收**（需开后端连续观察就寝相位是否锚夜、不漂移）——代码就绪，体感未实测。
 
 因此，当前可以称为“已接入应用、可持续运行的公寓世界引擎纵向实现”，
 不能称为用户目标意义上的完整虚拟生活已经完成。

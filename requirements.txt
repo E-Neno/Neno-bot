@@ -5,6 +5,7 @@ python-dotenv
 pydantic
 httpx
 pytest
+pytest-asyncio
 pilk
 dashscope
 apscheduler
