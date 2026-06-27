@@ -92,6 +92,24 @@ def test_build_guidance_reflects_decision():
     assert "只挑一条" in g                       # single 策略
 
 
+def test_build_guidance_split_disabled_degrades_to_single():
+    # 默认关：split 决策不应给「拆成几条」的指令，降级成 single（防伪多条）。
+    d = SelectionDecision(focus=[12], ignore=[], hooked_by=None,
+                          reply_strategy="split", should_respond=True)
+    with patch("app.services.chat.selection_layer.config.REPLY_SPLIT_ENABLED", False):
+        g = build_selection_guidance(d, _BATCH)
+    assert "拆成" not in g and "只挑一条" in g
+
+
+def test_build_guidance_split_enabled_keeps_split():
+    # 一键回退：开关打开时 split 仍给原指令。
+    d = SelectionDecision(focus=[12], ignore=[], hooked_by=None,
+                          reply_strategy="split", should_respond=True)
+    with patch("app.services.chat.selection_layer.config.REPLY_SPLIT_ENABLED", True):
+        g = build_selection_guidance(d, _BATCH)
+    assert "拆成" in g
+
+
 def test_select_response_sync_parses():
     raw = '{"focus":[12],"ignore":[11,13],"hooked_by":12,"reply_strategy":"single","should_respond":true}'
     d = select_response_sync(_BATCH, {"mood": "平静"}, model_name="m", api_key="k", url="u",

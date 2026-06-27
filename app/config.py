@@ -63,6 +63,10 @@ MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 SELECTION_LAYER_ENABLED = os.getenv("CHAT_SELECTION_LAYER_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SELECTION_TIMEOUT = int(os.getenv("CHAT_SELECTION_TIMEOUT", "8"))
 SELECTION_THINKING_OFF = {"thinking": {"type": "disabled"}}  # MiMo 关思考；换 OpenRouter 模型时置空
+# 回复拆条实验：选择层出 split 时是否真给下游「拆成几条」的指令。默认关——
+# 怀疑「为了多条而发」的伪多条是被这条指令逼出来的（表演自然 ≠ 自然）；关了让 split 降级成 single，
+# 跑一天对比是否更像人。一键回退：设 CHAT_REPLY_SPLIT_ENABLED=true 恢复旧行为。
+REPLY_SPLIT_ENABLED = os.getenv("CHAT_REPLY_SPLIT_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 # 声音自我：从她真实回话里结晶「她说话的样子」喂回 prompt（风格从她怎么说话长出来，不写死）。默认关。
 VOICE_SELF_ENABLED = os.getenv("CHAT_VOICE_SELF_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 VOICE_SELF_MIN_NEW_REPLIES = int(os.getenv("CHAT_VOICE_SELF_MIN_NEW_REPLIES", "15"))  # 攒够这么多新回复才重蒸馏

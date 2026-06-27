@@ -40,17 +40,32 @@ Neno + Hermes。走 Cloudflare Tunnel:电脑**主动外连** Cloudflare,**不开
 | --- | --- | --- |
 | Neno 后端 | 8000 | 仓库根目录下:`python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`(读 `.env`) |
 | Hermes | 8642 | 见 Hermes 服务自己的启动方式 |
-| 隧道 | — | `%USERPROFILE%\cloudflared\cloudflared.exe --config %USERPROFILE%\.cloudflared\config.yml tunnel run neno` |
+| 隧道 | — | `"C:\Program Files (x86)\cloudflared\cloudflared.exe" --config %USERPROFILE%\.cloudflared\config.yml tunnel run neno-xuanye-work`(或直接跑 `scripts/start-cloudflared-tunnel.ps1`) |
 
 想免手动重启 → 把 cloudflared 装成 Windows 服务开机自启:`cloudflared service install`
 (uvicorn / Hermes 也可各自做成自启)。
 
+### Neno 后端的开机自启 + 重启命令(已配)
+
+- **开机自启**:「启动」文件夹放了两个快捷方式(用户级,免管理员),登录后隐藏后台各起一个:
+  - `NenoBackend.lnk` → `scripts/start-neno-backend.ps1`(后端,端口已占用则跳过)
+  - `NenoTunnel.lnk` → `scripts/start-cloudflared-tunnel.ps1`(隧道,已在跑则跳过)
+
+  位置:`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`。撤销:删对应 lnk 即可。
+  (Hermes 仍需自己另起。)
+- **重启命令 `nereboot`**:任意 PowerShell 里输 `nereboot` = 停掉旧实例 + 重起
+  (改了 `.env` / prompt / app 代码后跑它生效)。函数写在 PowerShell `$PROFILE`
+  (pwsh 7 与 Windows PowerShell 5.1 两处都写了),**新开终端**才加载。底层是
+  `scripts/neno-reboot.ps1`,直接跑这个脚本等效。
+- 绑定 `127.0.0.1`(只本机 + cloudflared 可达,不暴露局域网);要局域网直连改成 `0.0.0.0`。
+- 偶发首次启动抖动(import 撞包)→ 再 `nereboot` 一次即可。
+
 ## 文件位置
 
-- cloudflared 客户端:`%USERPROFILE%\cloudflared\cloudflared.exe`
+- cloudflared 客户端:`C:\Program Files (x86)\cloudflared\cloudflared.exe`
 - 隧道配置:`%USERPROFILE%\.cloudflared\config.yml`
 - 授权证书 / 隧道凭据:`%USERPROFILE%\.cloudflared\cert.pem`、`<tunnel-id>.json` —— **保密,别提交**
-- 隧道:名字 `neno`,id `faa7156e-7174-493c-a721-95d9b415247c`
+- 隧道:名字 `neno-xuanye-work`,id `858e3ff1-3a90-4870-8e83-3c86a3ad4d77`(以 `config.yml` 为准)
 - 隧道日志:`%USERPROFILE%\.cloudflared\run.err.log`
 
 ## 改隧道配置后

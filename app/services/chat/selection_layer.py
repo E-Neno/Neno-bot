@@ -14,6 +14,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from app import config
 from app.llm.openrouter_client import chat_with_openrouter
 from app.utils.logging_utils import log_event
 
@@ -218,10 +219,14 @@ def build_selection_guidance(decision: SelectionDecision, messages: list[dict]) 
         lines.append("- 可以略过、不必逐条回：" + "；".join(f"「{snip(i)}」" for i in decision.ignore))
     if decision.hooked_by is not None:
         lines.append(f"- 你被这条勾住了，回应里带点情绪偏向它：「{snip(decision.hooked_by)}」")
+    # split 实验门：默认关时，split 降级成 single——别下「拆成几条」的指令（逼出伪多条）。
+    effective = decision.reply_strategy
+    if effective == "split" and not config.REPLY_SPLIT_ENABLED:
+        effective = "single"
     strat = {
         "single": "只挑一条回就好，别面面俱到",
         "merge": "综合起来回成一条",
         "split": "可以拆成几句/几条分别说，自然点（用空行分隔不同条）",
-    }.get(decision.reply_strategy, "综合起来回成一条")
+    }.get(effective, "综合起来回成一条")
     lines.append(f"- 回复方式：{strat}")
     return "\n".join(lines)
