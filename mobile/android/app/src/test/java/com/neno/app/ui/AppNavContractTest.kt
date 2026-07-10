@@ -23,6 +23,17 @@ class AppNavContractTest {
         )
     }
 
+    @Test
+    fun toolsTabOpensNativeAgentShell() {
+        val navSource = readMainSource("com/neno/app/ui/AppNav.kt")
+        val shellSource = readMainSource("com/neno/app/ui/agent/AgentShellScreen.kt")
+
+        assertTrue(navSource.contains("AgentShell"))
+        assertTrue(navSource.contains("AgentShellScreen"))
+        assertTrue(shellSource.contains("手机 Agent"))
+        assertTrue(shellSource.contains("默认权限"))
+    }
+
     private fun readMainSource(relativePath: String): String {
         val userDir = Path.of(System.getProperty("user.dir"))
         val candidates = listOf(

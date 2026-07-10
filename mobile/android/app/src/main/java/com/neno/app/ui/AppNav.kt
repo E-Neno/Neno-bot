@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.neno.app.data.MobileConversation
 import com.neno.app.data.NenoRepository
+import com.neno.app.ui.agent.AgentShellScreen
 import com.neno.app.ui.chat.HermesChatScreen
 import com.neno.app.ui.chat.NenoChatScreen
 import com.neno.app.ui.conversations.ConversationListScreen
@@ -44,6 +45,7 @@ private enum class AppScreen {
     Conversations,
     NenoChat,
     HermesChat,
+    AgentShell,
     Settings,
     UnsupportedContact,
 }
@@ -87,8 +89,7 @@ fun AppNav(repository: NenoRepository) {
                 },
                 onOpenSettings = { screen = AppScreen.Settings },
                 onOpenTools = {
-                    unsupportedTitle = "工具"
-                    screen = AppScreen.UnsupportedContact
+                    screen = AppScreen.AgentShell
                 },
             )
 
@@ -101,6 +102,10 @@ fun AppNav(repository: NenoRepository) {
 
             AppScreen.HermesChat -> HermesChatScreen(
                 repository = repository,
+                onBack = { screen = AppScreen.Conversations },
+            )
+
+            AppScreen.AgentShell -> AgentShellScreen(
                 onBack = { screen = AppScreen.Conversations },
             )
 

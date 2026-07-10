@@ -1,6 +1,6 @@
 # Neno Android App Handoff
 
-> Status date: 2026-06-24.
+> Status date: 2026-06-30.
 > Audience: Claude or another coding agent continuing the native Android app.
 
 ## Read First
@@ -86,6 +86,19 @@ Implemented UI details:
 - `NenoRepository.connectionState` is the app-wide connection state. `NenoApp.kt` starts `MobileRealtimeClient` while the app composition is alive and still runs periodic HTTP status refresh as a fallback.
 - Settings is now a connection/status page. It shows `已连接` / `未连接` / `令牌无效`, has a lower top offset for real devices, and hides raw server/token fields behind a long press on the title.
 - Settings stores server URL and mobile token in `SharedPreferences`; do not commit real tokens.
+
+Phone Agent v0 additions:
+
+- Protocol document: `docs/phone-agent-protocol.md`
+- Backend protocol schema: `app/phone_agent_schemas.py`
+- Backend WebSocket skeleton: `app/routers/phone_agent.py`
+- PC controller endpoint: `WS /agent/ws?device_id=<local-device-id>`
+- Android APK endpoint: `WS /mobile/agent/ws?device_id=<local-device-id>`; keep Android agent traffic under `/mobile/*`.
+- Android protocol models: `mobile/android/app/src/main/java/com/neno/app/data/AgentProtocol.kt`
+- Native Agent Shell screen: `mobile/android/app/src/main/java/com/neno/app/ui/agent/AgentShellScreen.kt`
+- Bottom navigation `工具` now opens the native `AgentShellScreen` instead of the unsupported-contact placeholder.
+- Current Agent Shell is static UI only: it does not execute Accessibility, root, notification, or kernel-touch actions yet.
+- The WebSocket skeleton only sends protocol hello, idle presence, pong, and observation ack. It is not a task planner, action dispatcher, or safety-confirmation engine yet.
 
 ## Verified State
 
@@ -198,3 +211,18 @@ Backend smoke checks on 2026-06-24:
 - `POST /mobile/uploads?kind=file&filename=smoke.txt` returned 200 and a `MediaAttachment`.
 
 Real-device APK install was not re-run for this attachment pass because `adb devices` was empty. `adb mdns services` saw `192.168.1.5:44043`, but direct `adb connect` was refused, likely because the phone-side wireless debugging session had expired.
+
+Additional verification on 2026-06-30 for Phone Agent v0 backend:
+
+```powershell
+& .\venv\Scripts\python.exe -m pytest tests\integration\test_phone_agent_protocol.py -q
+```
+
+Result: 6 passed. Existing FastAPI/Pydantic deprecation warnings remain unrelated.
+
+Android unit tests were not executed in this shell because `JAVA_HOME` is unset and no `java` command is available in `PATH`. Re-run when JDK is available:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.neno.app.data.AgentProtocolTest"
+.\gradlew.bat :app:testDebugUnitTest --tests "com.neno.app.ui.AppNavContractTest"
+```

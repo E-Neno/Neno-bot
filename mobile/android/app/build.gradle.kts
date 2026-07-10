@@ -9,7 +9,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.neno.app"
+        applicationId = "com.hxie7.phoneagent"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

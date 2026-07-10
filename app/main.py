@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
-from app.routers import chat, context, debug, memory, mobile, platform, proactive, relationship, session, stats, system
+from app.routers import chat, context, debug, memory, mobile, phone_agent, platform, proactive, relationship, session, stats, system
 from app.services.consciousness import ConsciousnessEngine
 from app.services.proactive_scheduler import start_proactive_scheduler, stop_proactive_scheduler
 from app.storage.db import init_db
@@ -34,6 +34,7 @@ app.include_router(session.router)
 app.include_router(memory.router)
 app.include_router(relationship.router)
 app.include_router(mobile.router)
+app.include_router(phone_agent.router)
 app.include_router(platform.router)
 app.include_router(stats.router)
 app.include_router(proactive.router)
