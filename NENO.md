@@ -82,7 +82,7 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 1.  **`session_aggregation_controller.py` & `session_submit_controller.py`**：进程级内存锁。异常如果不慎遗漏将导致永久死锁，阻断特定用户的所有交互。
 2.  **`history_digest.py`**：Token 账房。修改压缩阈值或越界条件，将直接导致模型上下文溢出 (HTTP 400)。
 3.  **`context_builder.py`**：任何对 List Append 顺序的调换，都会清零 API 缓存命中率。
-4.  **`multimodal_input_service.py`**：边界。绝对禁止将原始 Image payload 直接送入 SQLite Message 表。
+4.  **视觉输入链路**：边界。持久历史仍是文本投影；当前轮可以把 image block 送入主多模态模型。绝对禁止将原始 Image payload、base64 或 provider-ready data URL 写入 SQLite Message 表。
 
 ## 10. Single Point of Failure (系统级崩溃命门)
 

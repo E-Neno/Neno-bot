@@ -69,6 +69,29 @@ def test_no_dynamic_context_message_block_only():
     assert not _cache_blocks(user["content"])
 
 
+def test_current_turn_image_blocks_follow_last_user_text_and_never_enter_history():
+    msgs, _ = build_chat_messages(
+        history=[
+            {"role": "user", "content": "旧图片的文本投影 visual_asset_id: vimg_old"},
+            {"role": "assistant", "content": "我看到了"},
+        ],
+        message="[用户发送了一张图片]\n用户附带文字：看这个",
+        current_turn_image_inputs=["data:image/png;base64,abc"],
+    )
+
+    history_text = str(msgs[1]["content"]) + str(msgs[2]["content"])
+    user_blocks = msgs[-1]["content"]
+
+    assert "image_url" not in history_text
+    assert user_blocks[-2]["type"] == "text"
+    assert user_blocks[-2]["text"].startswith("【对方刚说】")
+    assert user_blocks[-1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,abc"},
+    }
+    assert not _cache_blocks(user_blocks)
+
+
 def test_history_messages_include_frozen_world_time():
     msgs, _ = build_chat_messages(
         history=[

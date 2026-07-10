@@ -79,6 +79,69 @@ def init_db():
             conn.execute("ALTER TABLE messages ADD COLUMN preview_payload_json TEXT")
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS visual_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_uid TEXT NOT NULL UNIQUE,
+                sha256 TEXT NOT NULL UNIQUE,
+                mime_type TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                width INTEGER,
+                height INTEGER,
+                source TEXT,
+                original_filename TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                deleted_at DATETIME
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_visual_assets_created ON visual_assets(created_at)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS visual_asset_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                message_id INTEGER,
+                session_id TEXT NOT NULL,
+                trace_id TEXT,
+                relation TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_visual_asset_links_session
+            ON visual_asset_links(session_id, created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_visual_asset_links_asset
+            ON visual_asset_links(asset_id, relation)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS visual_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                observation TEXT NOT NULL,
+                model TEXT NOT NULL,
+                trace_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_visual_observations_asset
+            ON visual_observations(asset_id, created_at)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL,

@@ -11,6 +11,7 @@ from app.services.chat_service import run_chat_turn
 from app.services.chat.voice_asr_service import VoiceASRError, transcribe_voice
 from app.services.mobile_file_parser import MobileFileParseError, parse_file_attachment
 from app.services.mobile_upload_service import public_mobile_upload_url
+from app.services.visual_input_service import archive_current_turn_images
 from app.storage.db import get_message_by_id, get_session_messages
 from app.utils.logging_utils import log_event
 from app.utils.logging_utils import new_trace_id
@@ -238,6 +239,15 @@ def normalize_mobile_message(
 
     image_attachment = next((item for item in attachments if item.kind == "image"), None)
     if image_attachment is not None:
+        visual_projection = archive_current_turn_images(
+            message=base_text,
+            attachments=[image_attachment],
+            session_id=config.MOBILE_DEFAULT_SESSION_ID,
+            trace_id=trace_id,
+            input_record=input_record,
+        )
+        if visual_projection is not None:
+            return visual_projection
         try:
             normalized = normalize_multimodal_message(
                 message=base_text,

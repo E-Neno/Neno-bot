@@ -1,14 +1,18 @@
+import json
+import re
 import threading
 import time
 from copy import deepcopy
 
+from app import config
+from app.schemas import MediaAttachment
 from app.config import (
     CHAT_MODEL_NAME, MIMO_API_KEY, MIMO_BASE_URL, MIMO_MODEL,
     SELECTION_LAYER_ENABLED, SELECTION_THINKING_OFF, SELECTION_TIMEOUT,
     VOICE_SELF_ENABLED, WORLD_PRESENCE_GATE_ENABLED,
 )
 from app.services.chat.context_builder import build_chat_messages, load_chat_contexts
-from app.services.chat.llm_gateway import generate_chat_reply
+from app.services.chat.llm_gateway import generate_chat_reply, resolve_multimodal_image_input
 from app.services.chat.memory_candidate_service import process_memory_candidate
 from app.services.chat.selection_layer import build_selection_guidance, select_response_sync
 from app.services.chat.voice_self import maybe_refresh_voice
@@ -25,7 +29,15 @@ from app.services.relationship_service import (
     get_relationship_state_for_api,
 )
 from app.storage.db import add_message
+from app.services.visual_asset_store import (
+    add_visual_asset_link,
+    get_visual_asset_by_uid,
+    resolve_visual_asset_path,
+)
+from app.services.visual_recall_tool import inspect_visual_asset, search_visual_memory
 from app.utils.logging_utils import log_event, new_trace_id
+
+_VISUAL_RECALL_RE = re.compile(r"<visual_recall>(.*?)</visual_recall>", re.DOTALL)
 
 
 def _inject_selection_guidance(messages: list[dict], guidance: str) -> None:
@@ -39,9 +51,163 @@ def _inject_selection_guidance(messages: list[dict], guidance: str) -> None:
     block = {"type": "text", "text": guidance}
     content = last.get("content")
     if isinstance(content, list) and content:
-        content.insert(len(content) - 1, block)  # 插到【对方刚说】之前
+        insert_at = len(content)
+        for index, item in enumerate(content):
+            if isinstance(item, dict) and str(item.get("text") or "").startswith("【对方刚说】"):
+                insert_at = index
+                break
+        content.insert(insert_at, block)  # 插到【对方刚说】之前
     elif isinstance(content, str):
         last["content"] = [block, {"type": "text", "text": content}]
+
+
+def resolve_current_turn_image_inputs(
+    input_record: dict | None,
+    *,
+    trace_id: str | None = None,
+) -> list[str]:
+    visual_assets = (input_record or {}).get("visual_assets")
+    if not isinstance(visual_assets, list):
+        return []
+
+    image_inputs: list[str] = []
+    for item in visual_assets:
+        if not isinstance(item, dict):
+            continue
+        asset_uid = str(item.get("asset_uid") or "").strip()
+        if not asset_uid:
+            continue
+        asset = get_visual_asset_by_uid(asset_uid)
+        if asset is None or asset.deleted_at:
+            continue
+        try:
+            image_input = resolve_multimodal_image_input(
+                MediaAttachment(
+                    kind="image",
+                    media_path=str(resolve_visual_asset_path(asset)),
+                    mime_type=asset.mime_type,
+                    source="visual_memory",
+                    asset_uid=asset.asset_uid,
+                ),
+                trace_id=trace_id,
+            )
+        except Exception as exc:
+            log_event(
+                "visual_memory",
+                "current_turn_image_resolve_failed",
+                trace_id=trace_id,
+                asset_uid=asset_uid,
+                level="warning",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            continue
+        if image_input:
+            image_inputs.append(image_input)
+    return image_inputs
+
+
+def _link_visual_assets_for_records(
+    records: list[dict],
+    message_ids: list[int],
+    *,
+    session_id: str,
+    trace_id: str | None,
+    relation: str,
+) -> None:
+    for message_id, record in zip(message_ids, records):
+        metadata = record.get("metadata") if isinstance(record, dict) else None
+        visual_assets = metadata.get("visual_assets") if isinstance(metadata, dict) else None
+        if not isinstance(visual_assets, list):
+            continue
+        for item in visual_assets:
+            if not isinstance(item, dict):
+                continue
+            asset_uid = str(item.get("asset_uid") or "").strip()
+            if not asset_uid:
+                continue
+            try:
+                add_visual_asset_link(
+                    asset_uid=asset_uid,
+                    message_id=message_id,
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    relation=relation,
+                )
+            except Exception as exc:
+                log_event(
+                    "visual_memory",
+                    "visual_asset_link_failed",
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    asset_uid=asset_uid,
+                    relation=relation,
+                    level="warning",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+
+
+def _maybe_run_visual_recall_loop(
+    *,
+    reply: str,
+    messages: list[dict],
+    session_id: str,
+    trace_id: str | None,
+) -> str:
+    if not bool(getattr(config, "VISUAL_RECALL_ENABLED", False)):
+        return reply
+    match = _VISUAL_RECALL_RE.search(reply or "")
+    if match is None:
+        return reply
+
+    try:
+        payload = json.loads(match.group(1).strip())
+    except Exception as exc:
+        log_event(
+            "visual_memory",
+            "visual_recall_parse_failed",
+            trace_id=trace_id,
+            session_id=session_id,
+            level="warning",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        return reply
+
+    query = str(payload.get("query") or "").strip()
+    question = str(payload.get("question") or query or "这张图里最重要的信息是什么？").strip()
+    asset_uid = str(payload.get("asset_uid") or "").strip()
+    recall_text = ""
+    try:
+        if not asset_uid:
+            search_result = search_visual_memory(
+                query=query or question,
+                session_id=session_id,
+                limit=int(getattr(config, "VISUAL_RECALL_MAX_CANDIDATES", 5)),
+            )
+            candidates = search_result.get("candidates") or []
+            if candidates:
+                asset_uid = str(candidates[0].get("asset_uid") or "").strip()
+        if asset_uid:
+            inspected = inspect_visual_asset(asset_uid, question=question, trace_id=trace_id)
+            recall_text = f"【视觉回想】\nasset_uid: {asset_uid}\n观察：{inspected.get('observation') or ''}"
+        else:
+            recall_text = "【视觉回想】\n没有找到足够匹配的历史图片。"
+    except Exception as exc:
+        log_event(
+            "visual_memory",
+            "visual_recall_failed",
+            trace_id=trace_id,
+            session_id=session_id,
+            level="warning",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        recall_text = "【视觉回想】\n刚刚没能成功重看那张旧图，只能根据当前文字继续。"
+
+    _inject_selection_guidance(messages, recall_text)
+    return generate_chat_reply(messages, trace_id=trace_id)
 
 
 def run_chat_turn(
@@ -62,7 +228,13 @@ def run_chat_turn(
     )
 
     try:
-        contexts = load_chat_contexts(session_id, message, trace_id=trace_id)
+        current_turn_image_inputs = resolve_current_turn_image_inputs(input_record, trace_id=trace_id)
+        contexts = load_chat_contexts(
+            session_id,
+            message,
+            trace_id=trace_id,
+            current_turn_image_inputs=current_turn_image_inputs,
+        )
         history = contexts["history"]
         relationship_context = contexts["relationship_context"]
         messages = contexts["messages"]
@@ -98,15 +270,21 @@ def run_chat_turn(
             for record in deferred_records:
                 meta = deepcopy(record.get("metadata") or {})
                 meta["world_presence_deferred"] = True
-                deferred_ids.append(
-                    add_message(
-                        session_id, "user", str(record.get("content") or ""),
-                        trace_id=trace_id,
-                        message_type=str(record.get("message_type") or "text"),
-                        source=str(record.get("source") or (input_record or {}).get("source") or "chat"),
-                        metadata=meta,
-                    )
+                message_id = add_message(
+                    session_id, "user", str(record.get("content") or ""),
+                    trace_id=trace_id,
+                    message_type=str(record.get("message_type") or "text"),
+                    source=str(record.get("source") or (input_record or {}).get("source") or "chat"),
+                    metadata=meta,
                 )
+                deferred_ids.append(message_id)
+            _link_visual_assets_for_records(
+                deferred_records,
+                deferred_ids,
+                session_id=session_id,
+                trace_id=trace_id,
+                relation="user_sent",
+            )
             # 消息进世界：记成她活过的一刻经历（睡着也算——醒后才注意到的一段经历）。
             exp_id = record_incoming_message_experience(message, deferred_ids, trace_id=trace_id)
             stash_pending_message(
@@ -192,6 +370,13 @@ def run_chat_turn(
                     preview_payload=preview_payload,
                 )
             )
+        _link_visual_assets_for_records(
+            user_records,
+            user_message_ids,
+            session_id=session_id,
+            trace_id=trace_id,
+            relation="user_sent",
+        )
 
         # 消息进世界：把「有人找我」记成她活过的一刻经历（unspoken；她回了再翻成 expressed）。
         msg_experience_id = record_incoming_message_experience(
@@ -275,6 +460,12 @@ def run_chat_turn(
             model=CHAT_MODEL_NAME,
         )
         reply = generate_chat_reply(messages, trace_id=trace_id)
+        reply = _maybe_run_visual_recall_loop(
+            reply=reply,
+            messages=messages,
+            session_id=session_id,
+            trace_id=trace_id,
+        )
         log_event(
             "chat",
             "model_response_ok",
@@ -282,6 +473,14 @@ def run_chat_turn(
             reply_len=len(reply or ""),
             latency_ms=int((time.perf_counter() - model_started) * 1000),
         )
+        if current_turn_image_inputs:
+            _link_visual_assets_for_records(
+                user_records,
+                user_message_ids,
+                session_id=session_id,
+                trace_id=trace_id,
+                relation="current_turn_viewed",
+            )
 
         assistant_message_id = add_message(
             session_id,

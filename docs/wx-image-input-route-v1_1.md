@@ -1,15 +1,16 @@
-# WeChat Image Input Route v1.1
+# WeChat Image Input Route v1.2
 
-Date: 2026-05-03
+Date: 2026-07-07
 
 ## Supported Scope
 
 Current supported range is:
 
-- WeChat image input
-- Visual model understanding
-- Normalized text passed into the existing chat main chain
-- Normal text reply returned to the user
+- WeChat image input with local `media_path`
+- Permanent visual asset archival
+- Text projection stored in the chat history
+- Current-turn image block passed to the main multimodal chat model
+- Caption-only normalization retained as fallback when visual memory is disabled or archival fails
 
 Not included in this route:
 
@@ -17,48 +18,57 @@ Not included in this route:
 - TTS
 - image generation
 - video
+- automatic replay of old image bytes into every future prompt
 
 ## Current Route
 
-The image input path is:
+The preferred image input path is:
 
 1. Upstream WeChat image event reaches `openclaw-weixin`.
 2. Bridge preserves image metadata on the downstream event.
 3. Neno receives `attachments` with `media_path` for the local image file.
-4. Backend reads the local file from disk.
-5. File bytes are converted to a base64 `data:` URL.
-6. The base64 image is sent to OpenRouter multimodal.
-7. Visual output is normalized into stable text for the chat main chain.
-8. Existing `run_chat_turn()` continues as plain text chat.
+4. If `VISUAL_MEMORY_ENABLED=true`, backend archives the local file into `data/visual_assets`.
+5. `messages.content` receives only a text projection, for example:
+
+   ```text
+   [用户发送了一张图片]
+   用户附带文字：...
+   visual_asset_id: vimg_...
+   ```
+
+6. `run_chat_turn()` resolves the current turn asset to an image block after history and dynamic context.
+7. The main chat model receives the current image and text together.
+8. Existing memory, relationship, digest, preview, and world-intent paths continue to see only the text projection.
+
+If archival cannot be used, the old route remains available:
+
+```text
+image attachment -> multimodal caption -> normalized text -> plain text chat turn
+```
 
 ## Why Not Use The WeChat Attachment URL Directly
 
-We do not rely on the raw WeChat attachment URL as the primary multimodal input
-for two reasons:
+We do not rely on the raw WeChat attachment URL as the primary multimodal input because:
 
-- The WeChat-side dispatch data is not a stable, direct, provider-ready image
-  URL for OpenRouter. The useful image payload is preserved locally through the
-  patched bridge path, not as a guaranteed remote public URL.
-- The local `media_path` is the asset Neno can actually read at reply time. It
-  avoids depending on upstream URL lifetime, accessibility, and provider-side
-  fetch behavior.
+- The WeChat-side dispatch data is not a stable, direct, provider-ready image URL for OpenRouter.
+- The useful image payload is preserved locally through the patched bridge path.
+- The permanent asset store can dedupe by SHA-256 and survive mobile upload pruning.
 
-## Why The Final Choice Is Local File To Base64
+## Persistence Boundary
 
-The local file to base64 route is the most reliable current path because:
+The system follows `Text-Persistent, Multimodal-Live Turn`:
 
-- the image is already available on disk
-- the backend fully controls the payload sent to OpenRouter
-- it avoids remote fetch failures caused by expired, private, or unreachable
-  upstream URLs
-- the route is easy to audit end to end
+- SQLite `messages.content` stores text projection only.
+- `metadata_json` stores `asset_uid` and image metadata, never base64 or `data:image/...`.
+- Current-turn image blocks are temporary prompt input, not historical prompt content.
+- Historical images are recalled through `visual_memory.search` and `visual_memory.inspect`.
 
 ## Operational Notes
 
-- Multimodal audit logs should be enough to answer:
+- Multimodal audit logs should answer:
   - did an image attachment reach the backend
-  - did multimodal normalization start
-  - did normalization succeed or fail
-- The normalized text must keep the fact that the user already sent an image.
-- If multimodal understanding fails, the user-facing message should stay
-  natural and should not expose provider internals.
+  - was it archived into visual memory
+  - did the current turn request include an image block
+  - did fallback caption normalization run
+- If visual memory archival fails, user-facing behavior should degrade naturally through the existing caption fallback.
+- Visual recall observations are append-only rows in `visual_observations`; they must not retroactively mutate old message metadata.

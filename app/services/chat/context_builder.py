@@ -43,6 +43,7 @@ def build_chat_messages(
     self_state_context: str | None = None,
     voice_context: str | None = None,
     past_events: str | None = None,
+    current_turn_image_inputs: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     # ── 稳定前缀（可缓存）：系统人设 + 历史摘要，缓存断点打在末尾 ──
     # 这段几乎不变，单独成缓存块。
@@ -88,8 +89,12 @@ def build_chat_messages(
     _add("【关于对方】", build_memory_context_message(memory_context or {}))
     if time_context:
         _add("【此刻】", build_time_context_message(time_context))
-    # 这波消息：永远最后一块
+    # 这波消息：永远最后一个文本块；当前轮图片作为 image_url block 紧随其后。
     blocks.append({"type": "text", "text": "【对方刚说】\n" + message})
+    for image_input in current_turn_image_inputs or []:
+        value = str(image_input or "").strip()
+        if value:
+            blocks.append({"type": "image_url", "image_url": {"url": value}})
 
     messages.append({"role": "user", "content": blocks})
     used_memories = list((memory_context or {}).get("selected_memories") or [])
@@ -101,6 +106,7 @@ def load_chat_contexts(
     message: str,
     trace_id: str | None = None,
     readonly: bool = False,
+    current_turn_image_inputs: list[str] | None = None,
 ) -> dict:
     history = get_recent_messages_by_tokens(session_id, token_limit=HISTORY_TOKEN_LIMIT)
     time_context = build_time_context(session_id)
@@ -153,6 +159,7 @@ def load_chat_contexts(
         self_state_context=self_state_context,
         voice_context=voice_context,
         past_events=past_events,
+        current_turn_image_inputs=current_turn_image_inputs,
     )
     return {
         "history": history,

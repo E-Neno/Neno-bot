@@ -179,7 +179,7 @@ Prompt 的顺序不是代码整洁度决定的，而是由 **Anthropic Cache Eco
 ## 10. Hard Invariants & Hidden Contracts (系统不变量与隐式契约)
 
 *   **Hard Invariant: Strict Session Serialization**：同用户消息必须串行。
-*   **Hard Invariant: Text-Only Core Interface**：所有带图 Payload 必须在进核心网前被强制降维成文字。
+*   **Hard Invariant: Text-Persistent, Multimodal-Live Turn**：持久聊天历史、摘要、记忆、关系和世界意图仍只接收文本投影；当前轮可在最后动态 user message 中追加 image block 给主多模态模型。旧图片不自动重放进 prompt，只能由受控视觉回想工具读取。
 *   **Hard Invariant: Monotonic Digest Cursor**：消化指针永远只能往高 ID 指。
 *   **Hidden Contract: Append Order Coupling**：Prompt 排列顺序必须服务于 Cache API 经济学原理，而非语义可读性。
 *   **Hidden Contract: Proactive Blind Spot**：允许系统在特定的极短毫秒级窗口内产生逻辑重影，用作不引重型消息队列的妥协代价。

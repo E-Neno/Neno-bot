@@ -485,6 +485,73 @@ def test_mobile_send_message_normalizes_image_attachment(client, monkeypatch):
     assert "图片内容" not in body["user_message"]["text"]
 
 
+def test_mobile_image_visual_memory_archives_without_caption_normalization(client, monkeypatch, tmp_path):
+    import app.config as config
+    import app.services.mobile_api_service as mobile_service
+    from app.storage.db import add_message
+
+    image = tmp_path / "screen.png"
+    image.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + (6).to_bytes(4, "big")
+        + (7).to_bytes(4, "big")
+        + b"\x08\x02\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+    monkeypatch.setattr(config, "VISUAL_MEMORY_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "VISUAL_ASSET_ROOT", str(tmp_path / "data" / "visual_assets"), raising=False)
+    captured: dict[str, Any] = {}
+
+    def fail_normalize_multimodal_message(*, message, attachments, trace_id=None):
+        raise AssertionError("visual memory path should not call caption normalization")
+
+    def fake_run_chat_turn(session_id, message, trace_id=None, input_record=None):
+        captured.update({"message": message, "input_record": input_record})
+        user_id = add_message(
+            "mobile:neno",
+            "user",
+            message,
+            trace_id=trace_id,
+            message_type="image",
+            source="mobile",
+            metadata=input_record,
+        )
+        return {"reply": "", "trace_id": trace_id, "user_message_id": user_id, "assistant_message_id": None}
+
+    monkeypatch.setattr(mobile_service, "normalize_multimodal_message", fail_normalize_multimodal_message)
+    monkeypatch.setattr(mobile_service, "run_chat_turn", fake_run_chat_turn)
+
+    response = client.post(
+        "/mobile/conversations/neno/messages",
+        headers=mobile_headers(monkeypatch),
+        json={
+            "text": "看这个",
+            "attachments": [
+                {
+                    "kind": "image",
+                    "media_path": str(image),
+                    "mime_type": "image/png",
+                    "source": "mobile",
+                    "text_hint": "screen.png",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["message"].startswith("[用户发送了一张图片]")
+    assert "用户附带文字：看这个" in captured["message"]
+    assert "图片内容" not in captured["message"]
+    visual_assets = captured["input_record"]["visual_assets"]
+    assert visual_assets[0]["asset_uid"].startswith("vimg_")
+    assert visual_assets[0]["width"] == 6
+    assert captured["input_record"]["attachments"][0]["asset_uid"] == visual_assets[0]["asset_uid"]
+    encoded = str(captured["input_record"])
+    assert "base64" not in encoded
+    assert "data:image" not in encoded
+
+
 def test_mobile_send_message_returns_400_when_image_normalization_fails(client, monkeypatch):
     import app.services.mobile_api_service as mobile_service
     from app.services.chat.multimodal_input_service import MultimodalInputError

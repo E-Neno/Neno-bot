@@ -57,6 +57,13 @@ CHAT_MAX_TOKENS = _env_int("CHAT_MAX_TOKENS", 220)
 # 都是「换行 + 英文角色词」，她真实中文回复绝不会这么写，几乎不会误伤。
 CHAT_STOP_SEQUENCES = ["\nAssistant", "\nHuman", "\nassistant", "\nUser"]
 VISION_MODEL_NAME = os.getenv("OPENROUTER_VISION_MODEL", CHAT_MODEL_NAME)
+VISUAL_MEMORY_ENABLED = _env_bool("VISUAL_MEMORY_ENABLED", False)
+VISUAL_ASSET_ROOT = os.getenv("VISUAL_ASSET_ROOT", "data/visual_assets").strip() or "data/visual_assets"
+VISUAL_MAX_IMAGE_BYTES = _env_int("VISUAL_MAX_IMAGE_BYTES", 8 * 1024 * 1024)
+VISUAL_RECALL_ENABLED = _env_bool("VISUAL_RECALL_ENABLED", False)
+VISUAL_RECALL_MODEL = os.getenv("VISUAL_RECALL_MODEL", VISION_MODEL_NAME).strip() or VISION_MODEL_NAME
+VISUAL_RECALL_MAX_CANDIDATES = _env_int("VISUAL_RECALL_MAX_CANDIDATES", 5)
+VISUAL_RECALL_TIMEOUT = _env_int("VISUAL_RECALL_TIMEOUT", 60)
 MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 # 理解+选择层（真人感取舍）：极简 JSON 决策，要快。用 MiMo（复用上面 MIMO_* 凭据）+ 关深度思考
 # （thinking={"type":"disabled"} 把 ~15s 压到 ~1.2s，决策质量不变）。默认关（示例配置惯例）。

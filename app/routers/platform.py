@@ -21,6 +21,7 @@ from app.services.chat.multimodal_input_service import (
 )
 from app.services.chat.voice_asr_service import transcribe_voice, VoiceASRError
 from app.services.chat_service import run_chat_turn
+from app.services.visual_input_service import archive_current_turn_images
 from app.services.proactive_service import record_platform_proactive_target
 from app.services.session_aggregation_controller import (
     AggregatedSubmitItem,
@@ -156,6 +157,18 @@ def _build_aggregated_user_message(source_messages: list[AggregatedSourceMessage
             f"[第{index}条][{message_type}][arrival_seq={source.ticket.arrival_seq}]\n{source.message}"
         )
     return "\n\n".join(parts)
+
+
+def _collect_batch_visual_assets(source_messages: list[AggregatedSourceMessage]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    for source in source_messages:
+        raw_assets = source.input_record.get("visual_assets")
+        if not isinstance(raw_assets, list):
+            continue
+        for item in raw_assets:
+            if isinstance(item, dict):
+                assets.append(deepcopy(item))
+    return assets
 
 
 def _batch_trace_id(batch: AggregatedSubmitItem) -> str:
@@ -538,62 +551,72 @@ def preprocess_platform_message(
             input_record["pipeline"]["asr"]["failed_at"] = "missing_media_path"
 
     if has_image_attachment:
-        try:
-            normalized_message = normalize_multimodal_message(
-                message=raw_message,
-                attachments=attachments,
-                trace_id=trace_id,
-            )
-        except MultimodalInputError as exc:
-            input_record["pipeline"]["vision"]["success"] = False
-            input_record["pipeline"]["normalization"] = {
-                "status": "failed",
-                "failed_at": "vision",
-                "error": str(exc),
-            }
-            if submit_ticket is not None:
-                snapshot = session_submit_controller.mark_state(
-                    ticket=submit_ticket,
-                    submit_state="failed",
-                    phase="preprocess",
-                    message_type=str(input_record.get("message_type") or "text"),
+        visual_projection = archive_current_turn_images(
+            message=raw_message,
+            attachments=attachments,
+            session_id=session_id,
+            trace_id=trace_id,
+            input_record=input_record,
+        )
+        if visual_projection is not None:
+            message = visual_projection
+        else:
+            try:
+                normalized_message = normalize_multimodal_message(
+                    message=raw_message,
+                    attachments=attachments,
+                    trace_id=trace_id,
+                )
+            except MultimodalInputError as exc:
+                input_record["pipeline"]["vision"]["success"] = False
+                input_record["pipeline"]["normalization"] = {
+                    "status": "failed",
+                    "failed_at": "vision",
+                    "error": str(exc),
+                }
+                if submit_ticket is not None:
+                    snapshot = session_submit_controller.mark_state(
+                        ticket=submit_ticket,
+                        submit_state="failed",
+                        phase="preprocess",
+                        message_type=str(input_record.get("message_type") or "text"),
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        failed_phase="preprocess",
+                    )
+                    _write_submit_debug(input_record, snapshot=snapshot)
+                log_event(
+                    "platform",
+                    "multimodal_normalize_failed",
+                    trace_id=trace_id,
+                    platform=platform,
+                    chat_type=chat_type,
+                    user_id=user_id,
+                    session_id=session_id,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
-                    failed_phase="preprocess",
                 )
-                _write_submit_debug(input_record, snapshot=snapshot)
+                raise HTTPException(status_code=400, detail=MULTIMODAL_USER_ERROR_MESSAGE) from exc
+
+            if not normalized_message:
+                raise HTTPException(status_code=400, detail="normalized message must not be blank")
+
+            input_record["pipeline"]["vision"]["success"] = True
+            input_record["pipeline"]["normalization"] = {
+                "status": "success",
+                "failed_at": None,
+            }
             log_event(
                 "platform",
-                "multimodal_normalize_failed",
+                "multimodal_normalize_ok",
                 trace_id=trace_id,
                 platform=platform,
                 chat_type=chat_type,
                 user_id=user_id,
                 session_id=session_id,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
+                normalized_message_len=len(normalized_message),
             )
-            raise HTTPException(status_code=400, detail=MULTIMODAL_USER_ERROR_MESSAGE) from exc
-
-        if not normalized_message:
-            raise HTTPException(status_code=400, detail="normalized message must not be blank")
-
-        input_record["pipeline"]["vision"]["success"] = True
-        input_record["pipeline"]["normalization"] = {
-            "status": "success",
-            "failed_at": None,
-        }
-        log_event(
-            "platform",
-            "multimodal_normalize_ok",
-            trace_id=trace_id,
-            platform=platform,
-            chat_type=chat_type,
-            user_id=user_id,
-            session_id=session_id,
-            normalized_message_len=len(normalized_message),
-        )
-        message = normalized_message
+            message = normalized_message
     else:
         if raw_message is None:
             raise HTTPException(status_code=400, detail="message must not be blank")
@@ -769,6 +792,14 @@ def _submit_aggregated_platform_batch(
             "received_at": batch.opened_at,
         },
     }
+    batch_visual_assets = _collect_batch_visual_assets(batch.source_messages)
+    if batch_visual_assets:
+        batch_input_record["visual_assets"] = batch_visual_assets
+        batch_input_record["visual"] = {
+            "archived": True,
+            "current_turn_view_requested": True,
+            "projection_status": "text_only",
+        }
     snapshot = session_submit_controller.mark_state(
         ticket=submit_ticket,
         submit_state="preprocessing",
