@@ -232,6 +232,29 @@ def test_world_view_has_phase2_light_and_anchor_layers():
     assert ".world-neno.anchored" in css
 
 
+def test_world_view_keeps_controls_inside_observatory_stage():
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    observatory_controls = (
+        ".observatory-shell .world-step-controls {\n"
+        "  gap:8px;\n"
+        "  left:20px;\n"
+        "  right:auto;\n"
+        "  bottom:20px;\n"
+        "  transform:none;\n"
+        "}"
+    )
+
+    assert observatory_controls in css
+
+
+def test_world_view_flips_sprite_without_flipping_thought_label():
+    css = (STATIC / "world-view.css").read_text(encoding="utf-8")
+
+    assert ".world-neno.face-left img { transform:scaleX(-1); }" in css
+    assert ".world-neno.face-left { transform:scaleX(-1); }" not in css
+
+
 def test_world_view_has_ambient_environment_layers():
     layout = (STATIC / "js" / "layout.js").read_text(encoding="utf-8")
     consciousness = (STATIC / "js" / "consciousness.js").read_text(encoding="utf-8")

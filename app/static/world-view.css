@@ -404,7 +404,7 @@ body.world-console-active {
 
 .world-neno img { display:block;width:100%;height:auto; }
 .world-neno.walking { animation:world-walk .55s ease-in-out infinite; }
-.world-neno.face-left { transform:scaleX(-1); }
+.world-neno.face-left img { transform:scaleX(-1); }
 .world-neno.reading { transform:translateY(9px) scale(.92); }
 .world-neno.sleeping { transform:translateY(12px) scale(.94);filter:brightness(.88) drop-shadow(0 13px 14px rgba(0,0,0,.42)); }
 .world-neno.anchored { filter:drop-shadow(0 16px 16px rgba(0,0,0,.5)); }
@@ -1063,7 +1063,9 @@ body.world-console-active::before {
 .observatory-shell .world-step-controls {
   gap:8px;
   left:20px;
+  right:auto;
   bottom:20px;
+  transform:none;
 }
 
 .observatory-shell .world-step-button,
