@@ -611,28 +611,19 @@ private fun ChatHeader(
 
 @Composable
 private fun DateDivider() {
-    Row(
+    Box(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(1.dp)
-                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.70f)),
-        )
         Text(
             text = "今天",
-            modifier = Modifier.padding(horizontal = 14.dp),
-            color = MaterialTheme.colorScheme.secondary,
-            fontSize = 13.sp,
-            lineHeight = 18.sp,
-        )
-        Box(
             modifier = Modifier
-                .weight(1f)
-                .height(1.dp)
-                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.70f)),
+                .clip(RoundedCornerShape(999.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                .padding(horizontal = 10.dp, vertical = 3.dp),
+            color = MaterialTheme.colorScheme.secondary,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
         )
     }
 }
@@ -820,9 +811,9 @@ private fun TypingBubble() {
     ) {
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
-            shadowElevation = 2.dp,
+            shadowElevation = 0.dp,
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -887,11 +878,11 @@ private fun MessageBubble(
                 }
                 if (displayText.isNotBlank()) {
                     Surface(
-                        modifier = Modifier.widthIn(max = 210.dp),
+                        modifier = Modifier.widthIn(max = 244.dp),
                         color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
-                        shadowElevation = 2.dp,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.24f else 0.72f)),
+                        shadowElevation = 0.dp,
                     ) {
                         Text(
                             text = displayText,
@@ -903,7 +894,7 @@ private fun MessageBubble(
                     }
                 }
                 Row(
-                    modifier = Modifier.widthIn(max = 210.dp),
+                    modifier = Modifier.widthIn(max = 244.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start,
                 ) {
@@ -936,11 +927,11 @@ private fun MessageBubble(
                 }
                 if (displayText.isNotBlank()) {
                     Surface(
-                        modifier = Modifier.widthIn(max = 210.dp),
+                        modifier = Modifier.widthIn(max = 244.dp),
                         color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
-                        shadowElevation = 2.dp,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.24f else 0.72f)),
+                        shadowElevation = 0.dp,
                     ) {
                         Text(
                             text = displayText,
@@ -973,11 +964,11 @@ private fun MessageBubble(
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 210.dp),
+                .widthIn(max = 244.dp),
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.40f else 0.72f)),
-            shadowElevation = 2.dp,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (message.fromUser) 0.24f else 0.72f)),
+            shadowElevation = 0.dp,
         ) {
             Column(modifier = Modifier.padding(start = 11.dp, top = 7.dp, end = 10.dp, bottom = 6.dp)) {
                 voiceAttachments.forEach { attachment ->

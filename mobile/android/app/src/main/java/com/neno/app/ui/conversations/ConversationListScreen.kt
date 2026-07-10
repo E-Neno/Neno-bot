@@ -164,9 +164,9 @@ private fun Header() {
             text = "Neno",
             modifier = Modifier.weight(1f),
             color = MaterialTheme.colorScheme.onBackground,
-            fontSize = 28.sp,
-            lineHeight = 32.sp,
-            fontWeight = FontWeight.ExtraBold,
+            fontSize = 26.sp,
+            lineHeight = 30.sp,
+            fontWeight = FontWeight.Bold,
         )
     }
 }
@@ -355,13 +355,11 @@ private fun PinnedConversationCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(84.dp)
-            .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.10f))
-            .clip(RoundedCornerShape(16.dp))
+            .height(78.dp)
+            .clip(RoundedCornerShape(0.dp))
             .clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.72f)),
+        shape = RoundedCornerShape(0.dp),
     ) {
         Row(
             modifier = Modifier
@@ -386,7 +384,7 @@ private fun PinnedConversationCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "置顶",
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 11.sp,
                         lineHeight = 14.sp,
                     )
@@ -436,6 +434,12 @@ private fun PinnedConversationCard(
             }
         }
     }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outline),
+    )
 }
 
 @Composable

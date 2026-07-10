@@ -10,19 +10,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 private val NenoLightColors = lightColorScheme(
-    background = Color(0xFFFFFCF8),
-    surface = Color(0xFFFFFCF8),
-    surfaceVariant = Color(0xFFF2EEE8),
-    primary = Color(0xFFE96332),
+    background = Color(0xFFFFFFFF),
+    surface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFFF6F6F6),
+    primary = Color(0xFF111111),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFFFE7D7),
-    onPrimaryContainer = Color(0xFF2B1A12),
-    secondary = Color(0xFF5D5A55),
-    secondaryContainer = Color(0xFFF1EAE3),
-    tertiary = Color(0xFF6B7463),
-    onBackground = Color(0xFF141414),
-    onSurface = Color(0xFF161616),
-    outline = Color(0xFFE3DDD5),
+    primaryContainer = Color(0xFFF1F1F1),
+    onPrimaryContainer = Color(0xFF161616),
+    secondary = Color(0xFF7A7A7A),
+    secondaryContainer = Color(0xFFF4F4F4),
+    tertiary = Color(0xFF39A56A),
+    onBackground = Color(0xFF111111),
+    onSurface = Color(0xFF262626),
+    outline = Color(0xFFE9E9E9),
 )
 
 private val NenoTypography = Typography(

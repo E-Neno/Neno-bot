@@ -183,27 +183,23 @@ fun NenoBrandIcon(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFFEAF4FF),
-                        Color(0xFFD6E9FF),
-                        Color(0xFFBFD8FF),
-                    ),
-                    start = Offset.Zero,
-                    end = Offset.Infinite,
-                ),
-            ),
+            .background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            val ink = Color(0xFF13233F)
+            val ink = Color(0xFF111111)
             val stroke = w * 0.075f
 
+            drawRoundRect(
+                color = Color(0xFFE9E9E9),
+                cornerRadius = CornerRadius(w * 0.30f, w * 0.30f),
+                style = Stroke(width = w * 0.035f),
+            )
+
             drawCircle(
-                color = Color.White.copy(alpha = 0.42f),
+                color = Color.Black.copy(alpha = 0.035f),
                 radius = w * 0.25f,
                 center = Offset(w * 0.28f, h * 0.22f),
             )
@@ -239,56 +235,59 @@ fun PhotoAvatar(
 ) {
     Box(
         modifier = modifier
-            .clip(CircleShape)
-            .background(Color(0xFFE8E1D8)),
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.size(96.dp)) {
+            drawRoundRect(
+                color = Color(0xFFE9E9E9),
+                cornerRadius = CornerRadius(size.width * 0.28f, size.width * 0.28f),
+                style = Stroke(width = size.width * 0.025f),
+            )
             when (kind) {
                 AvatarKind.Neno -> {
-                    drawRect(
-                        Brush.linearGradient(
-                            colors = listOf(Color(0xFFF0ECE5), Color(0xFF6F6A61), Color(0xFF161615)),
-                            start = Offset(0f, 0f),
-                            end = Offset(size.width, size.height),
-                        ),
-                    )
-                    repeat(5) { i ->
-                        val x = size.width * (0.18f + i * 0.14f)
-                        drawRect(Color.White.copy(alpha = 0.28f), Offset(x, 0f), Size(size.width * 0.05f, size.height))
+                    repeat(4) { index ->
+                        val x = size.width * (0.16f + index * 0.13f)
+                        drawRoundRect(
+                            color = Color.Black.copy(alpha = 0.07f - index * 0.01f),
+                            topLeft = Offset(x, 0f),
+                            size = Size(size.width * 0.07f, size.height),
+                            cornerRadius = CornerRadius(size.width * 0.035f, size.width * 0.035f),
+                        )
                     }
-                    drawCircle(Color(0xFF0E0E0D).copy(alpha = 0.55f), radius = size.width * 0.36f, center = Offset(size.width * 0.30f, size.height * 0.82f))
+                    drawCircle(
+                        color = Color.Black.copy(alpha = 0.045f),
+                        radius = size.width * 0.30f,
+                        center = Offset(size.width * 0.32f, size.height * 0.84f),
+                    )
                 }
 
                 AvatarKind.Atlas -> {
-                    drawRect(
-                        Brush.verticalGradient(listOf(Color(0xFFBCD1DC), Color(0xFFF8F0DE), Color(0xFF4D5D42))),
+                    drawCircle(
+                        color = Color(0xFF111111),
+                        radius = size.width * 0.12f,
+                        center = Offset(size.width * 0.50f, size.height * 0.50f),
                     )
-                    drawCircle(Color.White.copy(alpha = 0.75f), size.width * 0.20f, Offset(size.width * 0.31f, size.height * 0.28f))
-                    drawRect(Color(0xFF5F6C44), Offset(0f, size.height * 0.62f), Size(size.width, size.height * 0.38f))
                 }
 
                 AvatarKind.Sage -> {
-                    drawRect(
-                        Brush.linearGradient(listOf(Color(0xFFE4E0CC), Color(0xFFADB39B), Color(0xFFECE7D5))),
+                    drawLine(
+                        color = Color(0xFF111111),
+                        start = Offset(size.width * 0.32f, size.height * 0.68f),
+                        end = Offset(size.width * 0.68f, size.height * 0.32f),
+                        strokeWidth = size.width * 0.06f,
+                        cap = StrokeCap.Round,
                     )
-                    drawLine(Color(0xFF566145), Offset(size.width * 0.48f, size.height * 0.84f), Offset(size.width * 0.55f, size.height * 0.24f), strokeWidth = size.width * 0.035f, cap = StrokeCap.Round)
-                    drawCircle(Color(0xFF7E8C67), size.width * 0.18f, Offset(size.width * 0.40f, size.height * 0.45f))
-                    drawCircle(Color(0xFF687752), size.width * 0.15f, Offset(size.width * 0.63f, size.height * 0.34f))
                 }
 
                 AvatarKind.Hush -> {
-                    drawRect(
-                        Brush.radialGradient(listOf(Color(0xFFD9A757), Color(0xFF5A3319), Color(0xFF15100D))),
-                    )
                     drawRoundRect(
-                        Color(0xFFF5D58D),
-                        topLeft = Offset(size.width * 0.38f, size.height * 0.32f),
-                        size = Size(size.width * 0.24f, size.height * 0.20f),
-                        cornerRadius = CornerRadius(size.width * 0.04f, size.width * 0.04f),
+                        color = Color(0xFF111111),
+                        topLeft = Offset(size.width * 0.35f, size.height * 0.35f),
+                        size = Size(size.width * 0.30f, size.height * 0.30f),
+                        cornerRadius = CornerRadius(size.width * 0.08f, size.width * 0.08f),
                     )
-                    drawRect(Color(0xFF2B1B12), Offset(size.width * 0.47f, size.height * 0.52f), Size(size.width * 0.06f, size.height * 0.18f))
-                    drawLine(Color(0xFFE8B85D), Offset(size.width * 0.30f, size.height * 0.70f), Offset(size.width * 0.70f, size.height * 0.70f), strokeWidth = size.width * 0.03f)
                 }
             }
         }
