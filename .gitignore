@@ -60,3 +60,9 @@ tmp/
 
 # Continue editor agent files
 .continue/
+
+# UI preview screenshots (root-level, not shipped assets)
+/*.png
+
+# Remote session upload scratch
+.codex-remote-attachments/
