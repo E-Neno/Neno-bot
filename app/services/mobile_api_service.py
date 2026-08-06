@@ -358,9 +358,9 @@ def send_mobile_message(
         text=normalized_text,
         created_at=None,
     )
-    # 选择层选择不回、或在场门控把消息暂存时，没有助手回复：
+    # 主脑选择 defer/leave_unanswered，或物理在场门把消息暂存时，没有助手回复：
     # assistant_message_id 为 None、reply 为空。此时返回 assistant_message=None，
-    # 由客户端给出「她晚点回你」的软提示，绝不能 int(None) 崩成 500。
+    # 由客户端给出中性的送达提示，绝不能 int(None) 崩成 500。
     assistant_message_id = result.get("assistant_message_id")
     reply = result.get("reply") or ""
     assistant_message: MobileMessage | None = None

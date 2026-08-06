@@ -35,6 +35,8 @@ _SYSTEM_PROMPT = """你在模拟一个独居年轻女性 Neno 的日常生活。
 - 别老待在一个房间里做同类的事。看到[有点闷]时，自然地换个房间，或者出门走走——
   出门的路：先到玄关(entryway)，再到小区楼下(building_entrance)，那边能去咖啡馆/便利店/小公园。
 - 尽量推进[今日计划]里当前时段的意图；可以被世界变化临时打断，但别忘了主线。
+- 有[主脑已经决定的生活方向]时优先落实。它是你自己的最高执行层下达的方向，不是对方的请求；
+  你负责把它翻译成当前世界里合法、自然的一步，不能绕过物理规则。
 - 钱够且确有需要时，可以买点东西（create_object）；坏掉/不想要的东西可以扔掉（destroy_object）；不必每步都买卖。
 
 只输出一个 JSON 对象，不要任何解释或额外文字，格式：
@@ -89,6 +91,7 @@ class WorldBrain:
         threads=None,
         restless: str = "",
         wishes=None,
+        directives=None,
     ) -> str:
         """给 LLM 的世界上下文：世界约束 + 时段 + 内在状态 + 计划 + 最近行动 + 记忆。
 
@@ -156,6 +159,10 @@ class WorldBrain:
         # 活泼度：待太久/没出门的"闷"信号（只是感觉，换不换地方/出不出门她自己定）
         if restless:
             lines.append(f"[有点闷] {restless}")
+        directive_list = [str(item).strip() for item in (directives or []) if str(item).strip()]
+        if directive_list:
+            lines.append("[主脑已经决定的生活方向｜优先落实] " + "；".join(directive_list[:5]))
+            lines.append("这些是你自己的执行指令；在当前物理条件允许的范围内优先落实成自然的一步。")
         # 意图通道（capstone）：对方最近说的话，也许是想让你做点什么——但只是"也许"。
         # 无常：放不放在心上、要不要做、什么时候做，全由你自己定；只是闲聊或你不想动，就不动。
         wish_list = [str(w).strip() for w in (wishes or []) if str(w).strip()]
@@ -202,6 +209,7 @@ class WorldBrain:
         threads=None,
         restless: str = "",
         wishes=None,
+        directives=None,
     ) -> ActionPlan:
         if not self._config.world_llm_enabled:
             return self._mock_decide(state)
@@ -209,11 +217,13 @@ class WorldBrain:
             return await self._llm_decide(
                 state, nstate=nstate, phase=phase, plan=plan,
                 memories=memories, recent=recent, event=event, threads=threads,
-                restless=restless, wishes=wishes,
+                restless=restless, wishes=wishes, directives=directives,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("world LLM decide failed, falling back to mock: %s", exc)
-            return self._mock_decide(state)
+            plan = self._mock_decide(state)
+            plan.decision_source = "fallback_mock"
+            return plan
 
     async def _llm_decide(
         self,
@@ -228,6 +238,7 @@ class WorldBrain:
         threads=None,
         restless: str = "",
         wishes=None,
+        directives=None,
     ) -> ActionPlan:
         if not OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -238,7 +249,7 @@ class WorldBrain:
                 "content": self._build_user_message(
                     state, nstate=nstate, phase=phase, plan=plan,
                     memories=memories, recent=recent, event=event, threads=threads,
-                    restless=restless, wishes=wishes,
+                    restless=restless, wishes=wishes, directives=directives,
                 ),
             },
         ]
@@ -254,6 +265,7 @@ class WorldBrain:
         plan = _parse_plan(raw)
         if plan is None:
             raise ValueError(f"unparseable LLM output: {raw[:200]!r}")
+        plan.decision_source = "llm"
         return plan
 
     def _mock_decide(self, state: WorldState) -> ActionPlan:
@@ -266,6 +278,7 @@ class WorldBrain:
                     WorldOp(op="set_state", object="kettle", state="boiling", reason="烧水")
                 ],
                 micro_event="等水开的时候发了会呆",
+                decision_source="mock",
             )
         return ActionPlan(
             action="read_book",
@@ -275,6 +288,7 @@ class WorldBrain:
                 WorldOp(op="set_state", object="book", state="reading", reason="翻开书"),
             ],
             micro_event="读得有点入神",
+            decision_source="mock",
         )
 
 

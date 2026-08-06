@@ -13,7 +13,7 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 
 ## 2. State Model Contract (状态契约)
 
-*   **SQLite 作为绝对单一真相源 (Source of Truth)**：`messages`、`memories`、`relationship_state` 和 `debug_events` 全部由 SQLite 管理。不要引入 Redis。
+*   **SQLite 作为绝对单一真相源 (Source of Truth)**：`messages`、`memories`、`relationship_state`、`debug_events`、`executive_decisions` 和 `executive_commands` 全部由 SQLite 管理。不要引入 Redis。
 *   **Digest 状态锚点**：`history_digest.json`（在文件系统）与 `messages`（在 DB）独立存储，两者没有强一致性事务包裹。其同步依靠 `last_baked_message_id` 游标实现，绝不能改变单向累加逻辑。
 *   **Metadata Snapshot (状态冻结)**：`messages` 表的 `metadata_json` 会将消息发生那一刻的上下文决策（记忆提取、关系阶段）拍下快照并冻结落盘。**绝对禁止在写完数据库后对 metadata 进行追溯修改**。
 
@@ -31,8 +31,9 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
     动态块已**重构为多个独立标签块**（废了 `【当前情境】` 大壳，见 `build_chat_messages`）：
     `【此刻的你】`(种子+self_context+睡醒+牵挂) / `【你说话的调】`(声音自我 `voice_self`) / `【你和对方】`(关系) /
     `【往事】`(隔久了的时间框 `build_past_context`) / `【关于对方】`(memory) / `【此刻】`(时间) /
-    `【你的取舍】`(选择层指导，仅 burst) / **`【对方刚说】`（永远最后一块——wx 测试切分 + 选择层 insert-before 都依赖）**。
+    `【你的取舍】`(旧出口兼容，仅 burst) / **`【对方刚说】`（永远最后一块——wx 测试切分 + 动态指导 insert-before 都依赖）**。
     `system.txt` 已砍成真人感壳（只留底线，不写死风格；风格由 `【你说话的调】` 从她真实回话长出来）。
+*   **统一主脑与隔离出口**：开启 `CHAT_EXECUTIVE_LAYER_ENABLED` 后，上述完整动态上下文只供 TRIAGE / 私有涌念 / 主脑裁决读取。用户可见出口由 `build_executive_output_messages` 重建，只保留可缓存 system+digest、历史、声音样本、主脑裁定的回应点/长度/拍数、当前消息和当前图片；**不得把 self_state / 关系 / 记忆 / 当前时间原块重新塞回出口**。
 *   **Cache Prefix Stability (缓存前缀稳定规则)**：Anthropic 的 Prompt Cache 严格依赖前缀一致性。静态 System、缓变 Digest（每积攒 200 Token 才变化一次）放最前并绑定 `ephemeral`；**动态内容（self_context / 关系 / 时间 / memory）绝不能排在历史之前**，否则每次变化都打断「系统+历史」大前缀，缓存永久 miss。两个断点位置不可移。内部动态组成可演进，但此结构是红线。
 *   **优先级抢占**：动态块内排在后面的 `memory` 凭借 LLM 近因效应，覆盖前面的关系语调。
 
@@ -52,6 +53,7 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
 
 *   **Degrade vs Crash (宁可降级，绝不崩溃)**：如果关系更新出错，回退到旧状态；如果 Digest 主模型（free）失败，使用 Fallback 模型，双双失败则挂起压缩并使用原始超长上下文。
 *   **Fallback 优先级**：在遇到非预期数据时（例如多模态解析报错），拦截错误并在 `debug_events` 中记录异常，但不可让整个 Chat Loop 宕机。
+*   **主脑链 fail-open**：TRIAGE 失败按 shallow 继续；私有涌念可部分失败；主脑失败默认正常回复；隔离出口失败退回旧 prompt。任何下层异常都不能替 Neno 做出沉默决定。
 
 ## 7.1 Living World Contract (虚拟生活世界契约)
 
@@ -67,6 +69,7 @@ Neno 是一个高内聚、重观测、状态驱动的“单体智能体引擎”
     **聊天侧不写 `WorldState`**（详见 `docs/living-world.md` §5c）。世界状态进主聊天**只能走 self_context 这一受控只读通道**
     （`build_self_state_context` 读 `life_world_state.self_context`，置于 `messages[last]` 动态区、缓存安全、
     **绝不写回自我库**）；**禁止在别处手动偷接世界状态、禁止破坏装配顺序**。入口仍须服从 Session 串行化。
+*   **主脑世界命令**：主聊天只能把 `world_intents` 追加到 `executive_commands`，不得直接应用物理动作。`WorldLoop` 将 queued 命令作为 `directives` 交给 `WorldBrain`；只有真实世界 LLM 成功接收才消费，生成的 `world_ops` 仍必须经过 `action_validator`。
 *   **完成定义**：房间、事件、日计划和 LLM 决策只构成可运行基础。
     未通过持续生活、因果延续和多日模拟验收前，不得宣称完整世界引擎完成。
 

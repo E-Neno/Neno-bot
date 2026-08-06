@@ -1,8 +1,8 @@
-"""她在不在状态 —— 给主聊天用的同步入口（④：判断交给她自己，不是规则表）。
+"""物理在场门与 pending 存取。
 
 只保留一道**物理门**：她睡着 = 真没看见 → 攒着，不调 LLM（这不是判断，是她没意识）。
-其余「要不要现在回、回得多上心」全交给对话 LLM 在她真实状态下临场决定：它要么自然地回，
-要么只输出 `DEFER_MARKER`（暂不回）。没有 high/mid/low 桶、没有阈值表。
+其余「要不要现在回、回得多上心」由聊天 Executive 输出结构化 action 决定，没有 high/mid/low 桶。
+`DEFER_MARKER` / `is_defer_reply` 仅为旧接口兼容，当前聊天主链不再生成或消费特殊字符串。
 
 睡着时漏掉的消息攒进 life_world_state.pending_messages，等她醒来/缓过来由 world_loop 重新
 让她考虑。`reconsider_after` 是冷却：她说了「暂不回」后，别每拍都拿 Opus 再问一遍。
@@ -20,7 +20,7 @@ from .world_store import WorldStore
 
 _recorder = ExperienceRecorder()
 
-# 她不想现在回时输出的标记（prompt 里告诉她可以这么做）
+# 旧接口兼容：当前聊天 prompt 不再要求模型输出该标记。
 DEFER_MARKER = "[暂不回]"
 # 她「暂不回」后，多久才让 world_loop 拿 Opus 再问一次（秒，真实时间）
 DEFER_COOLDOWN_SECONDS = 180.0

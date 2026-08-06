@@ -120,6 +120,22 @@ def test_prompt_includes_state_memory_plan_recent():
     assert "afternoon" in user_msg       # 时段进了 prompt
 
 
+def test_prompt_distinguishes_main_executive_directives_from_user_wishes():
+    wd, brain = _brain(True)
+    st = seed_world_state(wd)
+
+    prompt = brain._build_user_message(
+        st,
+        wishes=["对方说也许可以出去走走"],
+        directives=["去阳台透口气"],
+    )
+
+    assert "对方最近说的" in prompt
+    assert "主脑已经决定的生活方向" in prompt
+    assert "去阳台透口气" in prompt
+    assert "优先落实" in prompt
+
+
 def test_prompt_always_includes_seed_and_optional_self_context():
     wd, brain = _brain(True)
     st = seed_world_state(wd)

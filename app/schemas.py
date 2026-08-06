@@ -62,8 +62,8 @@ class PlatformMessageResponse(BaseModel):
     success: bool
     reply: str
     session_id: str
-    # Phase 5 在场模型：reply_later=她睡着/沉浸，本轮不回，等醒来/空了再补；
-    # 网桥见此应静默（不发文本、不弹失败文案）。
+    # reply_later=之后重新考虑；chose_silence=主脑明确不回。
+    # 两者本轮都应让网桥静默（不发文本、不弹失败文案）。
     world_action: str | None = None
 
 

@@ -72,7 +72,7 @@ def build_chat_messages(
     messages.extend(hist)
 
     # ── 动态上下文（每次都变，放缓存断点之后）：每块一个独立标签、空则跳过。──
-    # 不再用「当前情境」大壳；【对方刚说】永远是最后一块（wx 测试 + 选择层指导 insert-before 都依赖）。
+    # 不再用「当前情境」大壳；【对方刚说】永远是最后文本块（wx 测试 + 动态指导 insert-before 都依赖）。
     blocks: list[dict] = []
 
     def _add(label: str, body: str | None) -> None:
@@ -99,6 +99,40 @@ def build_chat_messages(
     messages.append({"role": "user", "content": blocks})
     used_memories = list((memory_context or {}).get("selected_memories") or [])
     return messages, used_memories
+
+
+def build_executive_output_messages(
+    *,
+    contexts: dict,
+    message: str,
+    output_guidance: str,
+    current_turn_image_inputs: list[str] | None = None,
+) -> list[dict]:
+    """构造隔离出口 prompt：保留缓存前缀、历史、声音样本和当前输入。
+
+    主脑看过的 self_state / 关系 / 记忆 / 当前时间不进入这里，避免出口把内部状态
+    当成聊天素材主动汇报。主脑只通过 output_guidance 暴露已经裁定的回应面。
+    """
+    messages, _ = build_chat_messages(
+        history=list(contexts.get("history") or []),
+        message=message,
+        history_digest=str(contexts.get("history_digest") or "") or None,
+        voice_context=str(contexts.get("voice_context") or "") or None,
+        current_turn_image_inputs=current_turn_image_inputs,
+    )
+    guidance = (output_guidance or "").strip()
+    if not guidance or not messages:
+        return messages
+    content = messages[-1].get("content")
+    if not isinstance(content, list):
+        return messages
+    insert_at = len(content)
+    for index, block in enumerate(content):
+        if isinstance(block, dict) and str(block.get("text") or "").startswith("【对方刚说】"):
+            insert_at = index
+            break
+    content.insert(insert_at, {"type": "text", "text": guidance})
+    return messages
 
 
 def load_chat_contexts(
@@ -168,6 +202,8 @@ def load_chat_contexts(
         "memory_context": memory_context,
         "history_digest": history_digest,
         "self_state_context": self_state_context,
+        "voice_context": voice_context,
+        "past_events": past_events,
         "messages": messages,
         "used_memories": used_memories,
     }

@@ -1,8 +1,9 @@
-"""理解 + 选择层：一波消息 → 选择性回应决策。
+"""TRIAGE 参谋层：一波消息 → 注意力、深度与情绪建议。
 
 真人感的核心：**取舍 = 真人，无差别全回 = 脚本**。拿到累积的一波消息后，基于「消息内容」+
 「她此刻的内部状态（心情/关注点/与对方关系/记忆摘要）」，决定回哪条、忽略哪条、被哪条勾住、
-怎么回、到底回不回。只产出极简 JSON 决策（不产正文，正文交给下游第三层），一次 LLM 调用压延迟。
+怎么回、是否值得回应。只产出极简 JSON 建议，不产正文，也没有最终沉默权；主脑开启时由
+Executive 最终拍板，兼容模式才沿用旧 `should_respond` 行为。一次廉价 LLM 调用压低延迟。
 
 铁律：这一层**绝不能因为自己崩了就让聊天不回**。任何失败/关闭 → `fallback_decision`（退回当前
 「全回、综合成一条、回」的行为），下游照常生成回复。
@@ -19,13 +20,17 @@ from app.llm.openrouter_client import chat_with_openrouter
 from app.utils.logging_utils import log_event
 
 _VALID_STRATEGY = ("merge", "split", "single")
+_VALID_DEPTH = ("silent", "shallow", "deep")
 
 _SYSTEM_PROMPT = """你是一个人的「注意力与取舍」。给你刚收到的一条或一波消息，和你此刻的内部状态，
 你要像真人一样**选择性**地决定回应什么——不是有消息就一定回、不是每条都平均用力（那是脚本），
 而是结合你现在的状态（在忙什么、累不累、心情、和对方多熟）做出取舍。
 
 只输出一个极简 JSON，**不要回复正文、不要任何解释**：
-{"focus":[消息id],"ignore":[消息id],"hooked_by":消息id或null,"reply_strategy":"merge|split|single","should_respond":true或false}
+{"focus":[消息id],"ignore":[消息id],"hooked_by":消息id或null,"reply_strategy":"merge|split|single","should_respond":true或false,"depth":"silent|shallow|deep","emotion":{"hit":true或false,"tone":"具体感受或空字符串","intensity":0到1}}
+
+- 你是参谋，不是最终拍板者。should_respond/depth 都是建议，最终由主脑决定。
+- depth：silent=几乎没东西值得说；shallow=普通短回应；deep=真的戳中、复杂、需要权衡或会影响以后。
 
 - should_respond：到底回不回。**这是状态驱动的**——你正专注做某件事、很累、心情差、或对方只是寒暄而你没兴致时，
   **哪怕只有一条消息，也可以这会儿先不回**（过会儿想起来再说，不是没看见）；对方说了要紧/戳到你的事，则倾向回。
@@ -45,6 +50,10 @@ class SelectionDecision:
     hooked_by: int | None
     reply_strategy: str
     should_respond: bool
+    depth: str = "shallow"
+    emotion_hit: bool = False
+    emotion_tone: str = ""
+    emotion_intensity: float = 0.0
 
 
 def _ids_of(messages: list[dict] | None) -> list[int]:
@@ -61,7 +70,8 @@ def fallback_decision(messages: list[dict] | None) -> SelectionDecision:
     """退回当前行为：全回、综合成一条、回。选择层关闭或任何失败都走这里——绝不因它而不回。"""
     ids = _ids_of(messages)
     return SelectionDecision(
-        focus=ids, ignore=[], hooked_by=None, reply_strategy="merge", should_respond=True
+        focus=ids, ignore=[], hooked_by=None, reply_strategy="merge", should_respond=True,
+        depth="shallow",
     )
 
 
@@ -115,6 +125,20 @@ def parse_decision(raw: str, messages: list[dict]) -> SelectionDecision:
     should = data.get("should_respond")
     should_respond = should if isinstance(should, bool) else True
 
+    depth = data.get("depth")
+    if depth not in _VALID_DEPTH:
+        depth = "shallow"
+
+    emotion = data.get("emotion") if isinstance(data.get("emotion"), dict) else {}
+    emotion_hit = emotion.get("hit") if isinstance(emotion.get("hit"), bool) else False
+    emotion_tone = emotion.get("tone") if isinstance(emotion.get("tone"), str) else ""
+    emotion_tone = emotion_tone.strip()[:80]
+    try:
+        emotion_intensity = float(emotion.get("intensity", 0.0))
+    except (TypeError, ValueError):
+        emotion_intensity = 0.0
+    emotion_intensity = max(0.0, min(1.0, emotion_intensity))
+
     # 被勾住的那条必然在 focus 里
     if hooked_by is not None and hooked_by not in focus:
         focus.append(hooked_by)
@@ -125,6 +149,8 @@ def parse_decision(raw: str, messages: list[dict]) -> SelectionDecision:
     return SelectionDecision(
         focus=focus, ignore=ignore, hooked_by=hooked_by,
         reply_strategy=strategy, should_respond=should_respond,
+        depth=depth, emotion_hit=emotion_hit, emotion_tone=emotion_tone,
+        emotion_intensity=emotion_intensity,
     )
 
 
@@ -151,7 +177,7 @@ def build_selection_prompt(messages: list[dict], state: dict | None) -> str:
         mid = m.get("id")
         content = str(m.get("content", "")).replace("\n", " ").strip()
         lines.append(f"  [{mid}] {content}")
-    lines.append("\n基于你现在的状态，决定取舍。只输出那个 JSON。")
+    lines.append("\n基于你现在的状态，给出取舍和 depth 建议（silent|shallow|deep）。只输出那个 JSON。")
     return "\n".join(lines)
 
 

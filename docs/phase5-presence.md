@@ -1,5 +1,10 @@
 # Phase 5：对话↔世界（在场模型 Presence）
 
+> **2026-07-10 更新（统一主脑）**：物理睡眠仍是唯一硬门；醒着后的 `reply_now / defer / leave_unanswered`
+> 由主聊天 Executive 输出结构化决策。`DEFER_MARKER` 仍仅作兼容常量，当前主链不生成或消费它。
+> pending 冷却到期表示“重新考虑”，不会绕过主脑强制回复。最新实现以 `docs/living-world.md` §5d 为准；
+> 本文下方基于 `[暂不回]` 特殊字符串的流程只保留为历史记录。
+
 > **2026-06-16 更新（刀① prompt 重构）**：`[暂不回]`（`DEFER_MARKER`）已从聊天 prompt 移除，醒着聊天路径不再消费它——
 > 「醒着但不想回」的内容感知判断作废，**presence 现仅剩物理睡眠门**（睡着→攒 `pending_messages`、零 LLM）。
 > `DEFER_MARKER`/`is_defer_reply` 常量在 `presence.py` 保留未删但不再注入/消费。本文下方含 DEFER 注入的描述为历史记录，以此条为准。详见 `docs/living-world.md` §5b。

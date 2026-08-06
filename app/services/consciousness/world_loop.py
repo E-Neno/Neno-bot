@@ -7,6 +7,12 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 from app.config import WORLD_PRESENCE_GATE_ENABLED, WORLD_PRESENCE_WX_AUTO_SEND
+from app.services.executive_store import (
+    list_queued_executive_commands,
+    mark_executive_commands_consumed,
+    mark_executive_commands_failed,
+    record_executive_command_error,
+)
 from app.utils.logging_utils import log_event
 
 from .action_validator import validate_ops
@@ -369,6 +375,41 @@ class WorldLoop:
                 except Exception as exc:  # noqa: BLE001 — 取意图失败绝不阻断 tick
                     _log.warning("intent channel fetch error: %s", exc)
 
+            # 主脑命令是 Neno 自己已经拍板的生活方向，与用户消息愿望分开。
+            # 只在世界 LLM 路径读取；没醒或 LLM 降级时保持 queued，绝不假消费。
+            _executive_commands: list[dict] = []
+            _directives: list[str] = []
+            if cfg.world_llm_enabled:
+                try:
+                    fetched_commands = await asyncio.to_thread(
+                        list_queued_executive_commands, limit=5
+                    )
+                    invalid_command_ids: list[int] = []
+                    for item in fetched_commands:
+                        if item.get("command_type") != "world_intent":
+                            invalid_command_ids.append(int(item["id"]))
+                            continue
+                        intent = str(
+                            (item.get("payload") or {}).get("intent") or ""
+                        ).strip()
+                        if not intent:
+                            invalid_command_ids.append(int(item["id"]))
+                            continue
+                        _executive_commands.append(item)
+                        _directives.append(intent)
+                    if invalid_command_ids:
+                        await asyncio.to_thread(
+                            mark_executive_commands_failed,
+                            invalid_command_ids,
+                            "invalid_world_intent_payload",
+                        )
+                    if _directives:
+                        event_kinds.append("executive_command")
+                except Exception as exc:  # noqa: BLE001 — 命令读取失败不阻断世界推进
+                    _log.warning("executive command fetch error: %s", exc)
+                    _executive_commands = []
+                    _directives = []
+
             now_real = time.time()
             hard = is_hard(event_kinds, cfg)
             pressure = accumulate(pressure, event_kinds, cfg, now=now_real)
@@ -413,8 +454,23 @@ class WorldLoop:
                     drifted, nstate=nstate, phase=phase, plan=plan_dp,
                     memories=memories, recent=recent_ctx, event=event,
                     threads=active_threads, restless="；".join(_restless),
-                    wishes=_wishes,
+                    wishes=_wishes, directives=_directives,
                 )
+                if _executive_commands:
+                    command_ids = [int(item["id"]) for item in _executive_commands]
+                    try:
+                        if getattr(plan_obj, "decision_source", "unknown") == "llm":
+                            await asyncio.to_thread(
+                                mark_executive_commands_consumed, command_ids
+                            )
+                        else:
+                            await asyncio.to_thread(
+                                record_executive_command_error,
+                                command_ids,
+                                "world_brain_fallback",
+                            )
+                    except Exception as exc:  # noqa: BLE001 — 审计状态失败不阻断 tick
+                        _log.warning("executive command status error: %s", exc)
                 action, reason, micro, ops = (
                     plan_obj.action, plan_obj.reasoning, plan_obj.micro_event, plan_obj.world_ops,
                 )
@@ -645,6 +701,9 @@ class WorldLoop:
                         for p in items:
                             p["reconsider_after"] = now + DEFER_COOLDOWN_SECONDS
                         ws.pending_messages = (ws.pending_messages or []) + items
+                        continue
+                    if (result or {}).get("unanswered"):
+                        # 主脑明确选择不回：从 pending 结束，但不能伪装成「已经表达」。
                         continue
                     # 她回应了这些消息 → 把对应的经历从 unspoken 翻成 expressed
                     for p in items:

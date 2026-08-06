@@ -1,6 +1,6 @@
 # Neno 多层思考与「真人感」重构 · 设计
 
-> 状态：设计草案，**待实现**。
+> 状态：已被 `2026-07-10-unified-executive-multilayer-thinking-design.md` 取代；不要按本文旧权限图继续实现。
 > 来源：2026-06 与用户的设计对话 + 对开源同类 `Shikigami-Lab/Shikigami-Protocol` 的调研。
 > 配套必读：`NENO.md` §4（缓存契约红线）、`docs/living-world.md`。
 

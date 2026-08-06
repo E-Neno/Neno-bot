@@ -49,7 +49,7 @@ session_aggregation_controller = SessionAggregationController(
     window_seconds=config.WX_SESSION_AGGREGATE_WINDOW_SECONDS,
 )
 
-SUPPORTED_PLATFORMS = {"qq", "wx", "test"}
+SUPPORTED_PLATFORMS = {"qq", "wx", "wecom", "test"}
 SUPPORTED_CHAT_TYPES = {"private", "group"}
 MAX_MESSAGE_LENGTH = 2000
 
@@ -292,7 +292,8 @@ def parse_platform_message_context(req: PlatformMessageRequest) -> dict[str, str
     chat_type = clean_required(req.chat_type, "chat_type")
 
     if platform not in SUPPORTED_PLATFORMS:
-        raise HTTPException(status_code=400, detail="platform must be one of: qq, wx, test")
+        allowed_platforms = ", ".join(sorted(SUPPORTED_PLATFORMS))
+        raise HTTPException(status_code=400, detail=f"platform must be one of: {allowed_platforms}")
     if chat_type not in SUPPORTED_CHAT_TYPES:
         raise HTTPException(status_code=400, detail="chat_type must be private or group")
 

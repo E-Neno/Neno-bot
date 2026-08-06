@@ -70,6 +70,10 @@ MEMORY_MODEL_NAME = os.getenv("OPENROUTER_MEMORY_MODEL", "openai/gpt-4o-mini")
 SELECTION_LAYER_ENABLED = os.getenv("CHAT_SELECTION_LAYER_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SELECTION_TIMEOUT = int(os.getenv("CHAT_SELECTION_TIMEOUT", "8"))
 SELECTION_THINKING_OFF = {"thinking": {"type": "disabled"}}  # MiMo 关思考；换 OpenRouter 模型时置空
+# 统一主脑会增加一次主模型裁决；按项目惯例默认关闭，显式开启后替代选择层的最终拍板权。
+EXECUTIVE_LAYER_ENABLED = _env_bool("CHAT_EXECUTIVE_LAYER_ENABLED", False)
+MULTILAYER_THINKING_ENABLED = _env_bool("CHAT_MULTILAYER_THINKING_ENABLED", EXECUTIVE_LAYER_ENABLED)
+EXECUTIVE_TIMEOUT = _env_int("CHAT_EXECUTIVE_TIMEOUT", 60)
 # 回复拆条实验：选择层出 split 时是否真给下游「拆成几条」的指令。默认关——
 # 怀疑「为了多条而发」的伪多条是被这条指令逼出来的（表演自然 ≠ 自然）；关了让 split 降级成 single，
 # 跑一天对比是否更像人。一键回退：设 CHAT_REPLY_SPLIT_ENABLED=true 恢复旧行为。
@@ -98,8 +102,8 @@ except Exception:  # 文件缺失或损坏时降级，不让配置导入阻断�
 # read-only 零模型成本；置 false 可退回纯人设无状态聊天。
 CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED = _env_bool("CONSCIOUSNESS_CHAT_SELF_STATE_ENABLED", True)
 
-# Phase 5：在场门控。她睡着/沉浸时由世界状态决定「晚点回」，攒进 pending，
-# 等 world_loop 在她空下来/醒来那拍捡起来回。改变聊天回复时机，默认关闭，
+# Phase 5：物理在场门控。她睡着时攒进 pending；醒来后由主脑重新考虑。
+# 改变聊天回复时机，默认关闭，
 # 需配合 world_loop_enabled 常驻循环消费 pending 才有意义。
 WORLD_PRESENCE_GATE_ENABLED = _env_bool("WORLD_PRESENCE_GATE_ENABLED", False)
 # 捡起 pending 后，平台来源(WX/QQ)的回复是否真发回去。默认 dry_run(只建候选+演练不真发)，

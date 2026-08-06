@@ -15,6 +15,17 @@ Before editing code, read these files in order:
 
 The Android app is a native Kotlin + Jetpack Compose app under `mobile/android/`. It is not the backend web console, not Expo, not React Native, and not a WebView wrapper.
 
+## Android Client Boundary
+
+The repository now contains two independent Android clients:
+
+- `mobile/android/` is the original Neno native v0 client described by this handoff.
+- `mobile/operit/` is the complete Operit Neno fork, migrated into this repository on 2026-08-07.
+
+The Operit fork is the richer client that reuses Operit chat, media, Agent, Root, plugin, and Tavern surfaces.
+Its Neno entry still calls the backend only through `/mobile/*` and must not route Neno through a character-card
+prompt or a second local model. See `mobile/operit/README.NENO.md` before changing that client.
+
 ## Product Direction
 
 The user-approved direction is a Chinese Android chat app, closer to a real messaging app than an AI tool homepage.
@@ -81,7 +92,7 @@ Implemented UI details:
 - The mic button currently opens an audio picker. It is not a press-and-hold recorder yet.
 - The camera action currently reuses image picking. It is not a real camera capture flow yet.
 - On send failure the optimistic bubble is removed, the typed text is restored into the input box, and a Chinese error bar with `点这里重试` resends the draft.
-- If the backend returns no assistant message (presence gate stashed it), the chat shows a soft Chinese hint `她看到了，晚点回你。` instead of a silent gap.
+- If the backend returns no assistant message (sleeping, deferred, or deliberate non-reply), the chat shows the neutral hint `消息已送达`; it must not promise that Neno will reply later.
 - The conversation list refreshes the Neno last-message preview on every return because the `when`-based nav in `AppNav.kt` disposes and re-runs `ConversationListScreen`'s `LaunchedEffect`.
 - `NenoRepository.connectionState` is the app-wide connection state. `NenoApp.kt` starts `MobileRealtimeClient` while the app composition is alive and still runs periodic HTTP status refresh as a fallback.
 - Settings is now a connection/status page. It shows `已连接` / `未连接` / `令牌无效`, has a lower top offset for real devices, and hides raw server/token fields behind a long press on the title.

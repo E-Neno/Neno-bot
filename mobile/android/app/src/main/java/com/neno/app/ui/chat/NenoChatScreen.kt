@@ -179,8 +179,8 @@ fun NenoChatScreen(
                         add(response.userMessage)
                         response.assistantMessage?.let(::add)
                     }
-                    // 在场门控可能让她暂不回（assistantMessage 为空），给一句不打扰的提示。
-                    softNotice = if (response.assistantMessage == null) "她看到了，晚点回你。" else null
+                    // 空回复可能是睡着、延后或明确不回，只确认送达，不替她承诺之后一定回复。
+                    softNotice = if (response.assistantMessage == null) "消息已送达" else null
                 },
                 onFailure = { error ->
                     // 失败时回收乐观气泡，并把刚才打的字还回输入框，别让用户白打。
@@ -253,7 +253,7 @@ fun NenoChatScreen(
                                         add(displayUserMessage)
                                         response.assistantMessage?.let(::add)
                                     }
-                                    softNotice = if (response.assistantMessage == null) "她看到了，晚点回你。" else null
+                                    softNotice = if (response.assistantMessage == null) "消息已送达" else null
                                 },
                                 onFailure = { error ->
                                     messages = messages.orEmpty().filterNot { it.id == localId }

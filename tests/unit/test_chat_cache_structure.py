@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.config import SYSTEM_PROMPT
-from app.services.chat.context_builder import build_chat_messages
+from app.services.chat.context_builder import build_chat_messages, build_executive_output_messages
 
 
 def _cache_blocks(content):
@@ -190,3 +190,41 @@ def test_dynamic_context_is_labeled_blocks_and_not_cached():
     assert "时间上下文：" not in user_text
     assert "当前本地时间" not in user_text
     assert "是否跨天" not in user_text
+
+
+def test_executive_output_prompt_physically_excludes_private_world_state():
+    contexts = {
+        "history": [
+            {"role": "user", "content": "上一句"},
+            {"role": "assistant", "content": "上一句回复"},
+        ],
+        "history_digest": "稳定历史摘要",
+        "self_state_context": "【此刻的你】\n你在客厅，精力只剩 17。",
+        "relationship_context": "你已经非常信任对方。",
+        "memory_context": {"selected_memories": [{"content": "对方怕被抛下"}]},
+        "time_context": {"time_segment": "深夜"},
+        "voice_context": "真实样本：嗯，先缓一下。",
+        "past_events": "三小时前的事情已经过去了。",
+    }
+
+    messages = build_executive_output_messages(
+        contexts=contexts,
+        message="我今天被裁了",
+        output_guidance="【你已经做出的回应决定】\n只表达：先问他现在怎么样。",
+        current_turn_image_inputs=["data:image/png;base64,abc"],
+    )
+
+    encoded = str(messages)
+    assert "你在客厅" not in encoded
+    assert "精力只剩 17" not in encoded
+    assert "非常信任" not in encoded
+    assert "对方怕被抛下" not in encoded
+    assert "深夜" not in encoded
+    assert "真实样本" in encoded
+    assert "先问他现在怎么样" in encoded
+    assert messages[-1]["content"][-1]["type"] == "image_url"
+    text_blocks = [
+        block["text"] for block in messages[-1]["content"]
+        if block.get("type") == "text"
+    ]
+    assert text_blocks[-1].startswith("【对方刚说】")

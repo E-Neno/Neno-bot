@@ -91,11 +91,11 @@ flowchart LR
 3. 判断睡眠和醒来——**只看精力阈值**（醒着且 `value<20` 入睡、睡着且 `value>=90` 醒来），作息从精力自然涌现，不再受时段闸门约束；昼夜调制把就寝软锚在夜里。醒来时运行昨日反思并生成新计划；睡眠时 tick 不调 LLM，但精力照常按真实时间回血。
 4. 对物品执行自然漂移。
 5. 尝试派生生活事件，并把合法事件操作应用到世界。
-6. **压力门控**：把本 tick 事件映射成 salience 种类 → `accumulate` 累积压力 → `should_wake`（用真实秒算 min_gap/预算）。三分支：
+6. **压力门控**：先收集用户消息 `wishes` 与 queued 主脑命令 `directives`，再把本 tick 事件映射成 salience 种类 → `accumulate` 累积压力 → `should_wake`（用真实秒算 min_gap/预算）。`executive_command=50`，属于 hard event，但仍受 min_gap/预算护栏。三分支：
    - `wake 且 world_llm_enabled` → 真实 LLM 决策 + `on_wake` 清零压力；
    - `world_llm_enabled` 但未唤醒 → 滑行接续（继续上一非瞬态动作，不产生新 ops）；
    - `world_llm_enabled=False` → 确定性 `routine_decide`（行为与门控前一致）。
-7. 校验并应用最多一组 `world_ops`。
+7. 醒来时把 `wishes`（用户也许想让她做）和 `directives`（Neno 主脑已经拍板）分开交给 `WorldBrain`。只有返回计划的 `decision_source=llm` 才把对应命令标记 consumed；fallback mock 保持 queued 并记录错误。随后校验并应用最多一组 `world_ops`。
 8. 写回世界、压力状态、经历、episode、精力和情绪；`last_tick` 记录 `wake/wake_reason/pressure`。
 9. 返回控制台快照（世界时钟即真实 UTC+8）。
 
@@ -117,7 +117,7 @@ flowchart LR
   ③ live 睡醒 + presence。整段放 `messages[last]` 动态区，缓存安全（见 NENO.md §4）。`world_brain` 也读种子+self_context。
 - **关系连续化**：`build_relationship_context` 不再读 `prompts/stages/stage_X.txt`，改为按关系分值确定性生成连续短句、
   并入「此刻的你」块；关系打分/积分漏斗模型未变。
-- **presence**：醒着聊天路径不再注入 `[暂不回]`；「不回」只剩物理睡眠门（睡着 → 攒 `pending_messages`、零 LLM）。
+- **presence**：睡着仍是唯一物理硬门（睡着 → 攒 `pending_messages`、零 LLM）。醒着后的 reply/defer/leave_unanswered 由统一主脑最终决定，不再由规则或 TRIAGE 截断。
 
 ## 5c. 世界动作扩展、自我库结晶与意图通道（刀①收尾）
 
@@ -138,20 +138,21 @@ flowchart LR
   **架构铁律**：聊天侧**不写 WorldState**（避免和 `world_loop` 读改写竞争）；`world_loop` 在「真想」分支读
   `intent_cursor` 之后的新 `kind="message"` 经历当 wishes 喂 `world_brain.decide(wishes=)`，喂过推进 cursor。
   world_brain 用无常措辞「对方最近说的（也许想让你做点什么，但你可以不）」暴露——做不做是她的，不是命令。
+- **主脑命令通道（`executive_commands` + `world_brain` directives）**：主聊天 Executive 的 `world_intents` 先追加到独立 SQLite 表，聊天侧不碰 `WorldState`。`world_loop` 将 queued 命令作为“你自己的最高执行层已经决定的方向”交给世界脑翻译成当前条件下合法的一步；真实 LLM 未成功接收时不消费，所有物理 op 仍过 validator。
 - **买东西店内门控（`create_object`）**：买（`create_object`）现在要求人在 `shops`（便利店/咖啡馆）里，
   validator 加 `not_in_shop`（`shops` 为空的老世界不门控，退回任意房间可买）。不再家里凭空造物——
   去店里买、再 `relocate` 带回家，和移动东西天然组合。`持有`（买进她的 inventory 而非房间）仍未做。
 
-## 5d. 聊天侧「真人感」栈（统一判断 / 声音自我 / 往事 / prompt 重构）
+## 5d. 聊天侧统一主脑与多层思考
 
 聊天回合（`turn_orchestrator`）在「读世界状态（§5b）」之上，加一层**真人感判断与表达**。物理睡眠门（presence）仍是最前的硬底。
 
-- **统一判断层（`selection_layer.py`）**：醒着时**单条/一波都走这一个 LLM 判断**（用户要"互补不分割"）——
-  把她此刻全部状态（self_state_context 在哪/在干嘛/累/心情/牵挂 + **自我库 `list_self_facts_sync`**（判「戳到她」）+ 关系 + 记忆）喂进去，
-  出极简 JSON `{focus,ignore,hooked_by,reply_strategy,should_respond}`。**模型 MiMo + 关深度思考**（`thinking:{"type":"disabled"}` 把 15s→1.3s；
-  `chat_with_openrouter` 加 `extra_body` 透传）。`should_respond=false`→**攒 pending+不回**（世界欠回复牵挂让她之后想起）；
-  要回且 burst→取舍指导 insert 进 `【对方刚说】` 之前。**兜底铁律**：关/崩/超时 → `fallback_decision` 全回，绝不阻断聊天。
-  开关 `CHAT_SELECTION_LAYER_ENABLED`。
+- **TRIAGE（`selection_layer.py`）**：MiMo + 关深度思考，只给 `{focus,ignore,hooked_by,should_respond,depth,emotion}` 建议。`should_respond` 不再有最终沉默权；失败按 shallow 正常回。
+- **深路私有涌念（`inner_deliberation.py`）**：仅 `depth=deep` 时并行跑 approach / boundary / association 三股独立反应。单股失败少一股继续，内容不入用户可见 prompt。
+- **最高决策层（`chat_executive.py`）**：主聊天模型读取完整私有状态、TRIAGE、涌念和当前原图，输出 `ExecutiveDecision`：`reply_now | defer | leave_unanswered`、回应点、字数/拍数、高层世界意图和记忆候选。主脑失败默认正常回复，不能无故沉默。
+- **隔离出口（`build_executive_output_messages`）**：沿用同一主模型，但只见 system+digest、历史、`voice_self`、裁定后的回应点/上限、当前消息与当前图片；不见原始 self_state / 关系 / 记忆 / 时间，结构上阻断“汇报房间和精力”。出口失败退回旧 prompt。
+- **延迟重考虑**：`defer` 才进入 pending；`leave_unanswered` 明确结束且不伪标为 expressed。冷却到期只重新调用主脑，不会绕过它强制生成回复；带图消息从视觉资产归档重新加载原图。
+- **决策审计与世界命令**：每次主脑裁决追加到 `executive_decisions`；每条 `world_intent` 作为 queued `executive_commands` 交给 §5c 命令通道。
 - **声音自我（`voice_self.py`）**：从她**真实 assistant 回话**蒸馏「她说话的样子」（MiMo 关思考），存 `long_term_memory subject="neno_voice"`
   单条+游标，攒够 `VOICE_SELF_MIN_NEW_REPLIES` 条新回复才刷、**回复后台 daemon thread fire-and-forget** 不阻塞，喂进 `【你说话的调】`。
   风格从她怎么说话长出来，不靠 system 写死。开关 `CHAT_VOICE_SELF_ENABLED`。
@@ -166,6 +167,12 @@ flowchart LR
 
 | 环境变量 | 默认值 | 作用 |
 |---|---:|---|
+| `CHAT_SELECTION_LAYER_ENABLED` | `false` | 开启廉价 TRIAGE 建议层 |
+| `CHAT_SELECTION_TIMEOUT` | `8` | TRIAGE 与私有涌念单次超时秒数 |
+| `CHAT_EXECUTIVE_LAYER_ENABLED` | `false` | 开启主聊天最高决策层与隔离出口 |
+| `CHAT_MULTILAYER_THINKING_ENABLED` | 跟随 Executive | deep 时开启三股私有涌念；示例配置显式为 `false` |
+| `CHAT_EXECUTIVE_TIMEOUT` | `60` | 主脑裁决超时秒数 |
+| `WORLD_PRESENCE_GATE_ENABLED` | `false` | 开启物理睡眠门与 defer pending 消费；需配合常驻 WorldLoop |
 | `CONSCIOUSNESS_WORLD_LOOP_ENABLED` | `false` | 注册常驻世界 tick |
 | `CONSCIOUSNESS_WORLD_LOOP_INTERVAL` | `8` | 真实秒数间隔 |
 | `CONSCIOUSNESS_WORLD_SIM_MIN_PER_TICK` | `30` | **已废弃于时间推进**（世界时钟改真实 UTC+8）；仅 `recent_actions` 的 `ago_min` 仍用 |
@@ -218,6 +225,8 @@ Living World 直接使用：
 - `long_term_memory`
 - `life_activity_episodes`
 - `life_world_state`
+- `executive_decisions`
+- `executive_commands`
 
 仍保持单机 SQLite，不引入 Redis、外部队列或第二套数据库。
 
@@ -232,8 +241,7 @@ Living World 直接使用：
 2. 确定性 fallback 仍是固定路线；真实 LLM 能增加选择，但不会自动补齐世界规则。
 3. `LifeEventSource` 当前按每 tick 概率触发，尚未实现严格的“每日事件上限”。
 4. 日计划完成判定主要依赖短文本匹配，长期目标、习惯和未完成事务仍较浅。
-5. 用户消息进世界、在场决策（Phase 5）、**意图通道（驱动世界行动）均已落地**（见 §5c）。刀①「她自己活成自己」
-   四块（移动/自我库/学习/意图通道）已实现并上线；但全是慢热机制，**真验收（她真不真/假不假）需用户连续跑数日体验**，尚未实跑。
+5. 用户消息进世界、统一主脑、意图/命令双通道均已落地（见 §5c/§5d）；但“像真人”是连续相处的体感指标，**仍需用户连续跑数日验收**，单元测试只能证明权限、降级和数据流正确。
 6. 测试时序 flaky：`test_reflection_engine` 的 c15 已修（加 `_safe_now()` 锚下午 + 显式 target_day，unit 套件稳定全绿）。
    仍待去抖：**`test_wx_session_submit_flow.py`** 系统性时序 flaky（真线程+实时聚合窗、负载敏感）——需给
    `SessionAggregationController` 注入可控时钟，别 piecemeal 调 sleep（放宽默认窗会误伤跨窗测试）。
@@ -249,7 +257,7 @@ Living World 直接使用：
   置于 `messages[last]` 动态区、缓存安全、绝不写回）；**禁止在别处手动偷接世界状态、禁止破坏 `context_builder.py` 装配顺序**（见 NENO.md §4）。
 - 不绕过 `action_validator` 直接应用 LLM 操作（新 op `relocate`/`learn` 也必须各有一条校验法律）。
 - **自我库写入路径**：`subject="neno"` 的自我事实只能由 reflection 从落账经历结晶，聊天/别处写不进（防伪的命）；self_context 只读、绝不写回。
-- **意图通道**：聊天侧**不写 `WorldState`**（避免与 `world_loop` 读改写竞争）；用户消息→意图候选只由 `world_loop` 读 `kind="message"` 经历完成，做不做交世界 LLM（无常）。
+- **意图/命令双通道**：聊天侧**不写 `WorldState`**；用户消息由 `world_loop` 读成可忽略的 `wishes`，主脑 `world_intents` 只能追加到 `executive_commands` 并由 `world_loop` 读成 `directives`。两者最终产生的物理 op 都必须过 validator。
 - 不新增并行发送链路；主动发送仍必须走既有 candidate 管道。
 - 不让演示脚本成为比正式 `WorldLoop` 更权威的实现。
 - 不读取或提交真实 SQLite 数据、`.env`、`.codegraphcontext` 索引。

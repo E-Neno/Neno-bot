@@ -448,6 +448,48 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS executive_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                trigger_type TEXT NOT NULL,
+                action TEXT NOT NULL,
+                depth TEXT NOT NULL,
+                decision_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_executive_decisions_trace
+            ON executive_decisions(trace_id, created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS executive_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                decision_id INTEGER NOT NULL,
+                trace_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                command_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                created_at TEXT NOT NULL,
+                consumed_at TEXT,
+                error TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_executive_commands_status
+            ON executive_commands(status, created_at, id)
+            """
+        )
 
 
 def add_message(

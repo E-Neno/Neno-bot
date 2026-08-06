@@ -91,6 +91,8 @@ class TestSalienceOf:
         assert salience_of("kettle_broken", config) == 50.0
         assert salience_of("message_in", config) == 40.0
         assert salience_of("plant_thirsty", config) == 10.0
+        assert salience_of("executive_command", config) == 50.0
+        assert is_hard(["executive_command"], config) is True
 
     def test_unknown_kind_returns_zero(self, config: ConsciousnessConfig) -> None:
         assert salience_of("alien_landing", config) == 0.0

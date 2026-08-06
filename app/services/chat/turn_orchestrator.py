@@ -8,13 +8,28 @@ from app import config
 from app.schemas import MediaAttachment
 from app.config import (
     CHAT_MODEL_NAME, MIMO_API_KEY, MIMO_BASE_URL, MIMO_MODEL,
+    EXECUTIVE_LAYER_ENABLED, EXECUTIVE_TIMEOUT, MULTILAYER_THINKING_ENABLED,
     SELECTION_LAYER_ENABLED, SELECTION_THINKING_OFF, SELECTION_TIMEOUT,
     VOICE_SELF_ENABLED, WORLD_PRESENCE_GATE_ENABLED,
 )
-from app.services.chat.context_builder import build_chat_messages, load_chat_contexts
+from app.services.chat.chat_executive import (
+    build_output_guidance,
+    decide_chat_turn_sync,
+    enforce_executive_runtime_capabilities,
+)
+from app.services.chat.context_builder import (
+    build_chat_messages,
+    build_executive_output_messages,
+    load_chat_contexts,
+)
+from app.services.chat.inner_deliberation import deliberate_sync
 from app.services.chat.llm_gateway import generate_chat_reply, resolve_multimodal_image_input
 from app.services.chat.memory_candidate_service import process_memory_candidate
-from app.services.chat.selection_layer import build_selection_guidance, select_response_sync
+from app.services.chat.selection_layer import (
+    build_selection_guidance,
+    fallback_decision,
+    select_response_sync,
+)
 from app.services.chat.voice_self import maybe_refresh_voice
 from app.services.consciousness.memory_recall import list_self_facts_sync
 from app.services.chat.preview_service import build_chat_messages_preview_from_contexts
@@ -28,16 +43,80 @@ from app.services.relationship_service import (
     apply_relationship_update,
     get_relationship_state_for_api,
 )
-from app.storage.db import add_message
+from app.storage.db import add_message, get_message_by_id
 from app.services.visual_asset_store import (
     add_visual_asset_link,
     get_visual_asset_by_uid,
     resolve_visual_asset_path,
 )
+from app.services.executive_store import record_executive_decision
 from app.services.visual_recall_tool import inspect_visual_asset, search_visual_memory
 from app.utils.logging_utils import log_event, new_trace_id
 
 _VISUAL_RECALL_RE = re.compile(r"<visual_recall>(.*?)</visual_recall>", re.DOTALL)
+
+
+def _generate_chat_reply_with_fallback(
+    messages: list[dict],
+    *,
+    fallback_messages: list[dict] | None = None,
+    trace_id: str | None = None,
+) -> str:
+    """Generate from the isolated outlet; fall back to the legacy prompt on outlet failure."""
+    try:
+        return generate_chat_reply(messages, trace_id=trace_id)
+    except Exception as exc:
+        if fallback_messages is None or fallback_messages is messages:
+            raise
+        log_event(
+            "chat", "executive_output_fallback", trace_id=trace_id,
+            level="warning", error_type=type(exc).__name__, error_message=str(exc),
+        )
+        return generate_chat_reply(fallback_messages, trace_id=trace_id)
+
+
+def _render_recent_dialogue_for_decision(history: list[dict]) -> str:
+    lines: list[str] = []
+    for item in (history or [])[-12:]:
+        role = "对方" if item.get("role") == "user" else "你"
+        content = str(item.get("content") or "").strip().replace("\n", " ")[:300]
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines)[-2400:]
+
+
+def _build_private_decision_state(
+    *,
+    contexts: dict,
+    used_memories: list[dict],
+    history: list[dict],
+    relationship_context: str | None,
+    trace_id: str | None,
+    session_id: str,
+) -> dict[str, str]:
+    try:
+        self_facts = "；".join(list_self_facts_sync(limit=6))
+    except Exception as exc:  # noqa: BLE001 — 自我事实不可用时不能阻断回复
+        self_facts = ""
+        log_event(
+            "chat", "decision_self_facts_warning", trace_id=trace_id,
+            session_id=session_id, level="warning",
+            error_type=type(exc).__name__, error_message=str(exc),
+        )
+    time_context = contexts.get("time_context")
+    return {
+        "state": str(contexts.get("self_state_context") or ""),
+        "self": self_facts,
+        "relationship": str(relationship_context or ""),
+        "memory": "；".join(
+            str(item.get("content") or "")
+            for item in used_memories if isinstance(item, dict)
+        )[:300],
+        "time": json.dumps(time_context, ensure_ascii=False, default=str) if time_context else "",
+        "past_events": str(contexts.get("past_events") or ""),
+        "history_digest": str(contexts.get("history_digest") or ""),
+        "recent_dialogue": _render_recent_dialogue_for_decision(history),
+    }
 
 
 def _inject_selection_guidance(messages: list[dict], guidance: str) -> None:
@@ -104,6 +183,32 @@ def resolve_current_turn_image_inputs(
             continue
         if image_input:
             image_inputs.append(image_input)
+    return image_inputs
+
+
+def resolve_persisted_turn_image_inputs(
+    user_message_ids: list[int],
+    *,
+    trace_id: str | None = None,
+) -> list[str]:
+    """Reload archived images for a pending turn so reconsideration stays multimodal."""
+    image_inputs: list[str] = []
+    seen: set[str] = set()
+    for message_id in user_message_ids or []:
+        try:
+            item = get_message_by_id(int(message_id))
+        except Exception as exc:  # noqa: BLE001 — 单条坏记录不能阻断整批 pending
+            log_event(
+                "visual_memory", "pending_image_lookup_failed", trace_id=trace_id,
+                message_id=message_id, level="warning",
+                error_type=type(exc).__name__, error_message=str(exc),
+            )
+            continue
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        for value in resolve_current_turn_image_inputs(metadata, trace_id=trace_id):
+            if value not in seen:
+                seen.add(value)
+                image_inputs.append(value)
     return image_inputs
 
 
@@ -383,30 +488,141 @@ def run_chat_turn(
             message, user_message_ids, trace_id=trace_id
         )
 
-        # ── 统一判断层：醒着时所有消息（单条/一波）都走这一个判断，把她此刻全部状态喂进去 ──
-        # 「回不回（含忙/累/不想回）+ 取舍」由这一个 LLM 判断综合涌现，不再分割成多套门（互补）。
-        # 物理睡眠门在上面（真没意识，零 LLM，是硬底不是分割）。崩/关 → fallback 全回，绝不阻断。
-        decision = None
+        # ── 醒着路径：TRIAGE 只建议，主脑开启时由 Executive 唯一拍板 ──
+        # 物理睡眠门在上面（真没意识，零 LLM）。任一下层崩/关都 fail-open 到正常回复。
+        batch = [
+            {"id": uid, "content": str(rec.get("content") or "")}
+            for uid, rec in zip(user_message_ids, user_records)
+        ]
+        decision = fallback_decision(batch)
+        decision_state: dict[str, str] = {}
+        if (SELECTION_LAYER_ENABLED or EXECUTIVE_LAYER_ENABLED) and user_message_ids:
+            decision_state = _build_private_decision_state(
+                contexts=contexts,
+                used_memories=used_memories,
+                history=list(contexts.get("history") or []),
+                relationship_context=relationship_context,
+                trace_id=trace_id,
+                session_id=session_id,
+            )
+            decision_state["defer_available"] = str(
+                bool(WORLD_PRESENCE_GATE_ENABLED)
+            ).lower()
+
         if SELECTION_LAYER_ENABLED and user_message_ids and MIMO_API_KEY:
-            batch = [
-                {"id": uid, "content": str(rec.get("content") or "")}
-                for uid, rec in zip(user_message_ids, user_records)
-            ]
-            sel_state = {
-                "state": contexts.get("self_state_context") or "",  # 此刻的你：在哪/在干嘛/累/心情/牵挂
-                "self": "；".join(list_self_facts_sync(limit=6)),    # 她活成的自己（自我库）→ 判「戳到她」
-                "relationship": relationship_context or "",
-                "memory": "；".join(
-                    str(m.get("content") or "") for m in used_memories if isinstance(m, dict)
-                )[:300],
-            }
             decision = select_response_sync(
-                batch, sel_state,
+                batch, decision_state,
                 model_name=MIMO_MODEL, api_key=MIMO_API_KEY,
                 url=MIMO_BASE_URL.rstrip("/") + "/chat/completions",
                 timeout=SELECTION_TIMEOUT, extra_body=SELECTION_THINKING_OFF,
                 trace_id=trace_id,
             )
+
+        if EXECUTIVE_LAYER_ENABLED:
+            impulses = []
+            if MULTILAYER_THINKING_ENABLED and decision.depth == "deep":
+                impulses = deliberate_sync(
+                    messages=batch,
+                    state=decision_state,
+                    model_name=MIMO_MODEL,
+                    api_key=MIMO_API_KEY,
+                    url=MIMO_BASE_URL.rstrip("/") + "/chat/completions",
+                    timeout=SELECTION_TIMEOUT,
+                    trace_id=trace_id,
+                    extra_body=SELECTION_THINKING_OFF,
+                )
+            executive = decide_chat_turn_sync(
+                message=message,
+                batch=batch,
+                state=decision_state,
+                triage=decision,
+                impulses=impulses,
+                model_name=CHAT_MODEL_NAME,
+                current_turn_image_inputs=current_turn_image_inputs,
+                trace_id=trace_id,
+                timeout=EXECUTIVE_TIMEOUT,
+            )
+            raw_executive_action = executive.action
+            executive = enforce_executive_runtime_capabilities(
+                executive,
+                can_defer=bool(WORLD_PRESENCE_GATE_ENABLED),
+                fallback_message=message,
+            )
+            if raw_executive_action != executive.action:
+                log_event(
+                    "chat", "main_executive_defer_unavailable", trace_id=trace_id,
+                    session_id=session_id, level="warning",
+                )
+            log_event(
+                "chat", "main_executive_decided", trace_id=trace_id,
+                session_id=session_id, action=executive.action,
+                depth=decision.depth, impulse_count=len(impulses),
+            )
+            try:
+                record_executive_decision(
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    trigger_type="chat",
+                    action=executive.action,
+                    depth=decision.depth,
+                    decision=executive.to_dict(),
+                    world_intents=executive.world_intents,
+                )
+            except Exception as exc:  # noqa: BLE001 — 审计落库失败不能阻断聊天
+                log_event(
+                    "chat", "main_executive_persist_warning", trace_id=trace_id,
+                    session_id=session_id, level="warning",
+                    error_type=type(exc).__name__, error_message=str(exc),
+                )
+
+            if executive.action in {"defer", "leave_unanswered"}:
+                if executive.action == "defer":
+                    stash_pending_message(
+                        {
+                            "session_id": session_id, "message": message,
+                            "user_message_ids": user_message_ids, "trace_id": trace_id,
+                            "experience_id": msg_experience_id,
+                            "source": str((input_record or {}).get("source") or "chat"),
+                            "platform": str((input_record or {}).get("platform") or ""),
+                            "chat_type": str((input_record or {}).get("chat_type") or ""),
+                            "user_id": str((input_record or {}).get("user_id") or ""),
+                        },
+                        cooldown=180.0,
+                        trace_id=trace_id,
+                    )
+                try:
+                    relationship_state = apply_relationship_update(session_id, message)
+                except Exception:  # noqa: BLE001
+                    relationship_state = None
+                return {
+                    "trace_id": trace_id,
+                    "user_message_id": user_message_ids[0] if user_message_ids else None,
+                    "user_message_ids": user_message_ids,
+                    "assistant_message_id": None,
+                    "message_type": str((input_record or {}).get("message_type") or "text"),
+                    "source": str((input_record or {}).get("source") or "chat"),
+                    "reply": "",
+                    "world_action": (
+                        "reply_later" if executive.action == "defer" else "chose_silence"
+                    ),
+                    "world_reason": "main_executive",
+                    "candidate_memory": memory_result["candidate_memory"],
+                    "candidate_memory_debug": memory_result.get("candidate_memory_debug"),
+                    "candidate_memory_decision": memory_result["candidate_memory_decision"],
+                    "auto_added": memory_result["auto_added_memory"],
+                    "auto_added_memory": memory_result["auto_added_memory"],
+                    "used_memories": used_memories,
+                    "relationship_state": relationship_state,
+                    "relationship_context": relationship_context,
+                }
+
+            messages = build_executive_output_messages(
+                contexts=contexts,
+                message=message,
+                output_guidance=build_output_guidance(executive),
+                current_turn_image_inputs=current_turn_image_inputs,
+            )
+        else:
             if not decision.should_respond:
                 # 甲：她这会儿选择不回。消息已在历史里；攒进 pending → 世界「欠回复」牵挂让她之后想起。
                 stash_pending_message(
@@ -449,7 +665,7 @@ def run_chat_turn(
                 }
             # 要回 + 是一波（≥2 条）→ 把取舍指导塞进回复 prompt 动态区（缓存安全）。
             # 单条没东西可取舍，回就直接回（判断已在上面做过，这里只管多条的取舍呈现）。
-            if len(user_message_ids) >= 2:
+            if SELECTION_LAYER_ENABLED and len(user_message_ids) >= 2:
                 _inject_selection_guidance(messages, build_selection_guidance(decision, batch))
 
         model_started = time.perf_counter()
@@ -459,7 +675,11 @@ def run_chat_turn(
             trace_id=trace_id,
             model=CHAT_MODEL_NAME,
         )
-        reply = generate_chat_reply(messages, trace_id=trace_id)
+        reply = _generate_chat_reply_with_fallback(
+            messages,
+            fallback_messages=(contexts["messages"] if EXECUTIVE_LAYER_ENABLED else None),
+            trace_id=trace_id,
+        )
         reply = _maybe_run_visual_recall_loop(
             reply=reply,
             messages=messages,
@@ -575,13 +795,21 @@ def run_chat_turn_from_persisted_user_messages(
     user_message_ids: list[int],
     source: str = "chat",
 ) -> dict:
-    """给「已落库但还没回」的用户消息补一条回复（Phase 5：醒来/空了捡 pending）。
+    """重新考虑「已落库但还没回」的消息（Phase 5：醒来/空了捡 pending）。
 
     用户消息此前已写库，故这里只生成并写 assistant，不再重复落库 user。
     从 history 里剔除这批 id，避免本轮消息在 prompt 中出现两次；self_state 用
-    当下（刚睡醒/空下来）的状态打底，回复自然带「我看到了」的迟到感。
+    当下（刚睡醒/空下来）的状态打底。主脑仍可回复、再次延后或明确不回。
     """
-    contexts = load_chat_contexts(session_id, message, trace_id=trace_id)
+    current_turn_image_inputs = resolve_persisted_turn_image_inputs(
+        user_message_ids, trace_id=trace_id
+    )
+    contexts = load_chat_contexts(
+        session_id,
+        message,
+        trace_id=trace_id,
+        current_turn_image_inputs=current_turn_image_inputs,
+    )
     # 延迟路径之前没做记忆抽取（睡着时零 LLM），醒来读到了才补上
     try:
         process_memory_candidate(message, trace_id=trace_id)
@@ -597,8 +825,113 @@ def run_chat_turn_from_persisted_user_messages(
         memory_context=contexts["memory_context"],
         history_digest=contexts["history_digest"],
         self_state_context=contexts.get("self_state_context"),
+        voice_context=contexts.get("voice_context"),
+        past_events=contexts.get("past_events"),
+        current_turn_image_inputs=current_turn_image_inputs,
     )
-    reply = generate_chat_reply(messages, trace_id=trace_id)
+    legacy_messages = messages
+    reconsider_contexts = dict(contexts)
+    reconsider_contexts["history"] = history
+    reconsider_contexts["messages"] = messages
+
+    if EXECUTIVE_LAYER_ENABLED:
+        by_id = {
+            int(item.get("id") or 0): str(item.get("content") or "")
+            for item in contexts.get("history") or []
+            if int(item.get("id") or 0) in excluded
+        }
+        batch = [
+            {"id": message_id, "content": by_id.get(message_id) or message}
+            for message_id in sorted(excluded)
+        ] or [{"id": 0, "content": message}]
+        decision_state = _build_private_decision_state(
+            contexts=contexts,
+            used_memories=used_memories,
+            history=history,
+            relationship_context=contexts.get("relationship_context"),
+            trace_id=trace_id,
+            session_id=session_id,
+        )
+        decision_state["defer_available"] = "true"
+        triage = fallback_decision(batch)
+        if SELECTION_LAYER_ENABLED and MIMO_API_KEY:
+            triage = select_response_sync(
+                batch,
+                decision_state,
+                model_name=MIMO_MODEL,
+                api_key=MIMO_API_KEY,
+                url=MIMO_BASE_URL.rstrip("/") + "/chat/completions",
+                timeout=SELECTION_TIMEOUT,
+                extra_body=SELECTION_THINKING_OFF,
+                trace_id=trace_id,
+            )
+        impulses = []
+        if MULTILAYER_THINKING_ENABLED and triage.depth == "deep":
+            impulses = deliberate_sync(
+                messages=batch,
+                state=decision_state,
+                model_name=MIMO_MODEL,
+                api_key=MIMO_API_KEY,
+                url=MIMO_BASE_URL.rstrip("/") + "/chat/completions",
+                timeout=SELECTION_TIMEOUT,
+                trace_id=trace_id,
+                extra_body=SELECTION_THINKING_OFF,
+            )
+        executive = decide_chat_turn_sync(
+            message=message,
+            batch=batch,
+            state=decision_state,
+            triage=triage,
+            impulses=impulses,
+            model_name=CHAT_MODEL_NAME,
+            current_turn_image_inputs=current_turn_image_inputs,
+            trace_id=trace_id,
+            timeout=EXECUTIVE_TIMEOUT,
+        )
+        try:
+            record_executive_decision(
+                trace_id=trace_id,
+                session_id=session_id,
+                trigger_type="pending_reconsideration",
+                action=executive.action,
+                depth=triage.depth,
+                decision=executive.to_dict(),
+                world_intents=executive.world_intents,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "chat", "pending_executive_persist_warning", trace_id=trace_id,
+                session_id=session_id, level="warning",
+                error_type=type(exc).__name__, error_message=str(exc),
+            )
+
+        if executive.action != "reply_now":
+            return {
+                "trace_id": trace_id,
+                "reply": "",
+                "deferred": executive.action == "defer",
+                "unanswered": executive.action == "leave_unanswered",
+                "assistant_message_id": None,
+                "used_memories": used_memories,
+            }
+        messages = build_executive_output_messages(
+            contexts=reconsider_contexts,
+            message=message,
+            output_guidance=build_output_guidance(executive),
+            current_turn_image_inputs=current_turn_image_inputs,
+        )
+
+    reply = _generate_chat_reply_with_fallback(
+        messages,
+        fallback_messages=(legacy_messages if EXECUTIVE_LAYER_ENABLED else None),
+        trace_id=trace_id,
+    )
+    reply = _maybe_run_visual_recall_loop(
+        reply=reply,
+        messages=messages,
+        session_id=session_id,
+        trace_id=trace_id,
+    )
     assistant_message_id = add_message(
         session_id, "assistant", reply, trace_id=trace_id,
         message_type="assistant", source=source,
@@ -617,6 +950,7 @@ def run_chat_turn_from_persisted_user_messages(
         "trace_id": trace_id,
         "reply": reply,
         "deferred": False,
+        "unanswered": False,
         "assistant_message_id": assistant_message_id,
         "used_memories": used_memories,
     }

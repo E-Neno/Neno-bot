@@ -164,8 +164,154 @@ class _FakeBrain:
         from types import SimpleNamespace
         return SimpleNamespace(
             action="test_action", reasoning="test_reason",
-            micro_event="test_micro", world_ops=[],
+            micro_event="test_micro", world_ops=[], decision_source="llm",
         )
+
+
+class _DirectiveBrain(_FakeBrain):
+    def __init__(self, decision_source: str = "llm"):
+        super().__init__()
+        self.decision_source = decision_source
+        self.directives = []
+
+    async def decide(self, *args, **kwargs):
+        self.directives = list(kwargs.get("directives") or [])
+        result = await super().decide(*args, **kwargs)
+        result.decision_source = self.decision_source
+        return result
+
+
+@pytest.mark.asyncio
+async def test_executive_command_hard_wakes_world_and_is_consumed_after_llm_receives_it(
+    tmp_path: Path,
+):
+    from app.services.executive_store import (
+        list_queued_executive_commands,
+        record_executive_decision,
+    )
+
+    _init_db(tmp_path)
+    decision_id = record_executive_decision(
+        trace_id="exec-world-ok",
+        session_id="s",
+        trigger_type="chat",
+        action="reply_now",
+        depth="deep",
+        decision={"action": "reply_now"},
+        world_intents=["去阳台透口气"],
+    )
+    db_storage.execute_write(
+        """
+        INSERT INTO executive_commands (
+            decision_id, trace_id, session_id, command_type,
+            payload_json, status, created_at
+        )
+        VALUES (?, 'bad-payload', 's', 'world_intent', '{}', 'queued', '0000-01-01')
+        """,
+        (decision_id,),
+    )
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_planner_enabled=False,
+        world_pressure_threshold=99999.0,
+        world_wake_min_gap_seconds=0.0,
+        world_boredom_drip=0.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _DirectiveBrain(decision_source="llm")
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+
+        await loop.tick()
+        await _drain(store)
+
+        assert brain.call_count == 1
+        assert brain.directives == ["去阳台透口气"]
+        assert list_queued_executive_commands(limit=10) == []
+        invalid = db_storage.fetch_one(
+            "SELECT status, error FROM executive_commands WHERE trace_id = 'bad-payload'"
+        )
+        assert invalid["status"] == "failed"
+        assert invalid["error"] == "invalid_world_intent_payload"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_executive_command_stays_queued_when_world_brain_falls_back(tmp_path: Path):
+    from app.services.executive_store import (
+        list_queued_executive_commands,
+        record_executive_decision,
+    )
+
+    _init_db(tmp_path)
+    record_executive_decision(
+        trace_id="exec-world-fallback",
+        session_id="s",
+        trigger_type="chat",
+        action="reply_now",
+        depth="deep",
+        decision={"action": "reply_now"},
+        world_intents=["去厨房倒杯水"],
+    )
+    cfg = ConsciousnessConfig(
+        world_llm_enabled=True,
+        world_planner_enabled=False,
+        world_pressure_threshold=99999.0,
+        world_wake_min_gap_seconds=0.0,
+        world_boredom_drip=0.0,
+    )
+    store = StateStore(db=None, config=cfg)
+    await store.start()
+    try:
+        brain = _DirectiveBrain(decision_source="fallback_mock")
+        loop = WorldLoop(store, cfg)
+        loop._brain = brain
+
+        await loop.tick()
+        await _drain(store)
+
+        queued = list_queued_executive_commands(limit=10)
+        assert len(queued) == 1
+        assert queued[0]["payload"]["intent"] == "去厨房倒杯水"
+        assert queued[0]["error"] == "world_brain_fallback"
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_deliberate_non_reply_does_not_mark_pending_experience_expressed(tmp_path: Path):
+    from app.services.consciousness.models import NenoState
+
+    _init_db(tmp_path)
+    cfg = ConsciousnessConfig(world_llm_enabled=False)
+    store = StateStore(db=None, config=cfg)
+    loop = WorldLoop(store, cfg)
+    ws = await loop._world_store.read()
+    ws.pending_messages = [
+        {
+            "session_id": "s",
+            "message": "嗯嗯",
+            "user_message_ids": [101],
+            "experience_id": 303,
+            "trace_id": "pending-unanswered",
+            "reconsider_after": 0.0,
+        }
+    ]
+
+    with patch(
+        "app.services.chat.turn_orchestrator.run_chat_turn_from_persisted_user_messages",
+        return_value={"reply": "", "deferred": False, "unanswered": True},
+    ), patch(
+        "app.services.consciousness.world_loop.mark_message_experience_expressed",
+    ) as mark:
+        consumed = await loop._consume_pending(ws, NenoState(), "发呆")
+
+    assert consumed is True
+    assert ws.pending_messages == []
+    mark.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,9 @@ sequenceDiagram
     participant SubLock as Submit RLock
     participant Context as Context Builder
     participant Memory as Memory Extractor
+    participant Triage as TRIAGE / Inner Impulses
+    participant Executive as Main Executive LLM
+    participant Outlet as Isolated Output LLM
     participant LLM as LLM Gateway
     participant DB as SQLite DB
     participant Digest as Digest Engine
@@ -45,9 +48,18 @@ sequenceDiagram
     Note over Context: Read Relationship & Memory (1-Turn Lag)
     Context->>Memory: Process Memory Candidate
     Note over Memory: [Blocking] Extract new memory (DB insert)
-    Context->>LLM: Assemble Prompt & Generate
-    Note over LLM: [Blocking] Streaming Output
-    LLM->>DB: Add Message + Metadata Snapshot
+    Context->>DB: Add User Message + Metadata Snapshot
+    Context->>Triage: Suggest depth / attention (optional)
+    Triage->>Executive: Full private state + impulses
+    Note over Executive: Final action = reply / defer / leave unanswered
+    Executive->>DB: Append executive_decision / commands
+    alt reply_now
+        Executive->>Outlet: Response points + limits only
+        Outlet->>LLM: System + history + voice + current input/image
+        LLM->>DB: Add Assistant Message
+    else defer or leave_unanswered
+        Executive->>DB: No Assistant Message (defer may enter pending)
+    end
     DB->>DB: Apply Relationship Update
     DB-->>Digest: [Async/Side-effect] maybe_update_history_digest
     DB-->>Proactive: [Side-effect] Reset anti-disturb clock
@@ -69,6 +81,7 @@ sequenceDiagram
 | **Persistent** | `life_world_state` | SQLite | 房间、物品、模拟时间、金钱、计划和最近行动。 | `WorldStore` 管理单行 JSON；坏 JSON 降级到种子世界。 |
 | **Persistent** | `life_activity_episodes` | SQLite | 连续活动片段与当天生活时间线。 | 原子替换 active episode，供反思读取。 |
 | **Persistent** | `inner_experience_log` / `dream_reflection_runs` | SQLite | 未表达经历、生活事件与跨天反思审计。 | 失败应降级，不可阻断聊天或世界循环。 |
+| **Persistent** | `executive_decisions` / `executive_commands` | SQLite | 主聊天最高决策审计与待执行世界方向。 | 决策只追加；命令由 `WorldLoop` 在真实世界 LLM 接收后消费。 |
 | **Semi-Persist**| `history_digest.json`| Filesystem | 会随时间更新。属 Token 回收站。 | 纯 JSON I/O。依赖上层 `SubmitLock` 保护免受并发写入。 |
 | **Semi-Persist**| `metadata_json` | SQLite (列) | 冻结于生成时刻，永久只读。 | 不允许后续异步补充，以防止破坏回放功能的时间线。 |
 | **Runtime** | `Aggregation Queues` | RAM (`dict`) | 寿命仅 `window_seconds`。 | **高风险**：服务器一旦重启，队列瞬间蒸发（Lost Update）。 |
@@ -92,6 +105,8 @@ flowchart TD
     WorldLoop --> Experience["inner_experience_log"]
     WorldLoop --> Episodes["life_activity_episodes"]
     WorldLoop --> Reflection["ReflectionEngine / long_term_memory"]
+    ChatExecutive["Main Chat Executive"] --> ExecutiveStore["executive_decisions / executive_commands"]
+    ExecutiveStore -->|"queued directives"| WorldLoop
 ```
 
 **所有权边界：**
@@ -104,8 +119,32 @@ flowchart TD
 - 世界循环、世界 LLM 和日计划 LLM 是三个独立开关；仓库示例配置全部关闭。
 - 用户消息已经作为 `inner_experience(kind=message)` 进入 Living World，并可作为意图候选交给 `WorldLoop` 处理；
   聊天侧仍不能直接写 `life_world_state`，也不能改变主聊天 prompt 顺序或绕过 Session 串行模型。
+- 主聊天 `world_intents` 只能追加到 `executive_commands`。`WorldLoop` 把它们作为已由 Neno 主脑拍板的
+  `directives` 交给 `WorldBrain`，真实世界 LLM 成功接收后才标记 consumed；物理操作仍走 validator。
 
 具体组件、端点、运行参数与已知缺口见 `docs/living-world.md`。
+
+## 3.2 Unified Chat Executive Boundary
+
+开启 `CHAT_EXECUTIVE_LAYER_ENABLED` 后，主聊天模型不再只是文案生成器，而是醒着路径的最高执行层：
+
+```mermaid
+flowchart LR
+    Presence["Physical sleep gate"] --> Triage["TRIAGE advice"]
+    Triage -->|"deep"| Impulses["3 private impulses"]
+    Triage --> Executive["Main Executive"]
+    Impulses --> Executive
+    Executive -->|"reply_now"| Outlet["Isolated output"]
+    Executive -->|"defer"| Pending["Pending reconsideration"]
+    Executive -->|"leave_unanswered"| Silence["Deliberate non-reply"]
+    Executive --> Commands["Append-only world commands"]
+```
+
+- TRIAGE 的 `should_respond` 只是建议，不能截断主脑；深路三股涌念也没有执行权。
+- 主脑读取 self state、关系、记忆、时间、当前原图与私有涌念，最终决定回复、延后、明确不回及高层世界方向。
+- 隔离出口物理上看不到原始 self state、关系、记忆和时间，只收到裁定后的回应面；缓存前缀顺序不变。
+- pending 到期表示重新考虑，不表示强制回复；主脑可再次 defer 或结束为 leave_unanswered。
+- 所有新层失败均 fail-open（失败后正常回复），不得因解析、网络或审计落库失败无故沉默。
 
 ---
 

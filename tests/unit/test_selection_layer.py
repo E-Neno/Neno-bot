@@ -20,13 +20,26 @@ def test_fallback_is_respond_everything():
     assert d.focus == [11, 12, 13]
     assert d.ignore == [] and d.hooked_by is None
     assert d.reply_strategy == "merge" and d.should_respond is True
+    assert d.depth == "shallow"
 
 
 def test_parse_valid_decision():
-    raw = '{"focus":[12],"ignore":[11,13],"hooked_by":12,"reply_strategy":"single","should_respond":true}'
+    raw = '{"focus":[12],"ignore":[11,13],"hooked_by":12,"reply_strategy":"single","should_respond":true,"depth":"deep","emotion":{"hit":true,"tone":"心里一沉","intensity":0.8}}'
     d = parse_decision(raw, _BATCH)
     assert d.focus == [12] and d.ignore == [11, 13]
     assert d.hooked_by == 12 and d.reply_strategy == "single" and d.should_respond is True
+    assert d.depth == "deep"
+    assert d.emotion_hit is True and d.emotion_tone == "心里一沉"
+    assert d.emotion_intensity == 0.8
+
+
+def test_parse_invalid_depth_and_emotion_use_safe_defaults():
+    raw = '{"focus":[12],"ignore":[],"hooked_by":null,"reply_strategy":"single","should_respond":true,"depth":"essay","emotion":{"hit":"yes","tone":123,"intensity":9}}'
+    d = parse_decision(raw, _BATCH)
+    assert d.depth == "shallow"
+    assert d.emotion_hit is False
+    assert d.emotion_tone == ""
+    assert d.emotion_intensity == 1.0
 
 
 def test_parse_filters_hallucinated_ids():
@@ -80,6 +93,7 @@ def test_build_prompt_sections_state_and_messages():
     p = build_selection_prompt(_BATCH, {"mood": "有点烦", "relationship": "刚熟起来"})
     assert "内部状态" in p and "有点烦" in p and "刚熟起来" in p
     assert "一波消息" in p and "[12]" in p and "我今天被裁了" in p
+    assert "depth" in p and "shallow" in p and "deep" in p
 
 
 def test_build_guidance_reflects_decision():

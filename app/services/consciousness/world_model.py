@@ -125,6 +125,10 @@ class ActionPlan(BaseModel):
     reasoning: str = ""
     world_ops: list[WorldOp] = Field(default_factory=list)
     micro_event: str | None = None
+    # 仅用于 WorldLoop 判断是否真的经过世界 LLM；不属于世界计划协议，也不序列化。
+    decision_source: Literal["unknown", "llm", "mock", "fallback_mock"] = Field(
+        default="unknown", exclude=True
+    )
 
 
 def load_world_def() -> WorldDef:

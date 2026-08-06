@@ -579,7 +579,7 @@ def test_mobile_send_message_returns_400_when_image_normalization_fails(client, 
 
 
 def test_mobile_send_message_handles_silent_reply(client, monkeypatch):
-    """选择层选择不回 / 在场门控暂存时，assistant_message_id 为 None。
+    """主脑选择不回 / 在场门控暂存时，assistant_message_id 为 None。
     必须返回 200 且 assistant_message=null，而不是 500（int(None) 崩溃）。"""
     import app.services.mobile_api_service as mobile_service
 

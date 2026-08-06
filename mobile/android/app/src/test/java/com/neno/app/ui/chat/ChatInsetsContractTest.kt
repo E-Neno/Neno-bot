@@ -9,6 +9,16 @@ import org.junit.Test
 
 class ChatInsetsContractTest {
     @Test
+    fun noReplyNoticeDoesNotPromiseAReplyThatMayNeverCome() {
+        val source = readMainSource("com/neno/app/ui/chat/NenoChatScreen.kt")
+
+        assertTrue(
+            "A null assistant response may be deliberate silence, so the notice must stay neutral.",
+            source.contains("消息已送达") && !source.contains("她看到了，晚点回你。"),
+        )
+    }
+
+    @Test
     fun chatScreensApplyImePaddingOnlyAroundTheInputArea() {
         val offenders = listOf("NenoChatScreen.kt", "HermesChatScreen.kt").filter { fileName ->
             val source = readMainSource("com/neno/app/ui/chat/$fileName")

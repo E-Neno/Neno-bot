@@ -28,6 +28,7 @@ _DEFAULT_SALIENCE: dict[str, float] = {
     # —— world_loop 内部合成触发 ——
     "kettle_broken": 50.0,
     "message_in": 40.0,
+    "executive_command": 50.0,
     "money_low": 30.0,
     "action_done": 20.0,
     "phase_change": 15.0,
